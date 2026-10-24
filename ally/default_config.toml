@@ -99,7 +99,8 @@ wink_max = 0.12            # one eye this much narrower than your usual left/rig
 smile_gate = 0.35          # smiling narrows the eyes: ignore squints above this smile score
 blink_gate = 0.5           # eyes this closed: a blink if it lasts under blink_max seconds...
 blink_max = 0.4            # ...longer is a held squint, which also closes the eyes partway
-blink_closed = 0.8         # eyes shut: never judgedpose_gate = 20             # degrees: ignore the face when it's turned further than this
+blink_closed = 0.8         # eyes shut: never judged
+pose_gate = 20            # degrees: ignore the face when it's turned further than this
 light_floor = 40           # face brightness 0-255: too dark to judge squinting below this
 lean_ratio = 1.15          # face this much wider than usual (about 13% closer) for a strong lean
 lean_weak = 1.10

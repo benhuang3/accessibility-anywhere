@@ -768,6 +768,13 @@ class SensesConfigTests(unittest.TestCase):
         tune = Tuning.from_config({"squint_delta": 0.3, "rage_clicks": 5, "lean_hold": "x"})
         self.assertEqual((tune.squint_delta, tune.rage_clicks, tune.lean_hold), (0.3, 5, 2.0))
 
+    def test_every_threshold_is_a_real_key_in_the_default_config(self):
+        # A lost line break once folded pose_gate into a comment, so it silently stopped being settable.
+        senses = config_mod.DEFAULTS["senses"]
+        for name, field in Tuning.__dataclass_fields__.items():
+            self.assertIn(name, senses, f"{name} is missing from [senses] in default_config.toml")
+            self.assertEqual(senses[name], field.default, name)
+
     def test_test_homes_keep_senses_off(self):
         text = (temp_home() / "config.toml").read_text(encoding="utf-8")
         self.assertIn("[senses]\nvision = false\ninput = false", text)
