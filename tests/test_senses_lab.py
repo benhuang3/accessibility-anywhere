@@ -13,7 +13,7 @@ from pathlib import Path
 
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
-from ally.senses import matrix
+from ally.senses import evaluate, matrix
 
 
 def _face(**over):
@@ -214,6 +214,138 @@ class RecordTests(unittest.TestCase):
         self.assertIn("card ", stdin)
         self.assertIn("Read this sentence", stdin)
         self.assertNotIn("frame", path.read_text(encoding="utf-8"))
+
+
+def _frames(t0, seconds, dt=0.1, **over):
+    n = int(round(seconds / dt))
+    return [(round(t0 + i * dt, 3), _face(**over)) for i in range(n)]
+
+
+def _dump(path: Path, alias: str, glasses: str, light: str, faces, labels, senses: dict):
+    rows = [{"rec": "meta", "alias": alias, "glasses": glasses, "light": light, "camera": 0,
+             "screen": [100, 100], "senses": senses, "commit": "test", "started": 0}]
+    for label in labels:
+        rows.append({"rec": "label", **label})
+    for t, sig in faces:
+        rows.append({"rec": "helper", "t": t, "f": sig})
+    rows.append({"rec": "input", "e": "r", "t": 10.2, "clickable": None})
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+
+_REPLAY_SENSES = {"cooldown_seconds": 0, "rearm_seconds": 0, "fps": 10, "solo": [], "window_seconds": 4,
+                  "min_confidence": 0.5}
+
+
+def _label(name, start, end, expect):
+    return {"name": name, "start": start, "end": end, "expect": expect}
+
+
+class EvaluateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="ally-eval-"))
+        self.cfg = ROOT / "config.toml"
+        self.cfg_before = self.cfg.read_bytes() if self.cfg.exists() else None
+        self.state_before = (ROOT / "state").exists()
+
+    def tearDown(self):
+        if self.cfg.exists():
+            self.assertEqual(self.cfg.read_bytes(), self.cfg_before)
+        self.assertEqual((ROOT / "state").exists(), self.state_before)
+
+    def test_report_counts_false_positives_and_misses(self):
+        faces = []
+        faces += _frames(0.0, 4.0)
+        faces += _frames(6.0, 1.5)
+        faces += _frames(10.0, 2.0)
+        faces += _frames(20.0, 3.0, squint_l=0.5, squint_r=0.5)
+        faces += _frames(24.0, 2.0)
+        faces += _frames(30.0, 0.4, squint_l=0.5, squint_r=0.5)
+        faces += _frames(40.0, 2.0)
+        faces += _frames(50.0, 4.0, squint_l=0.5, squint_r=0.5, width=0.45)
+        faces += _frames(56.0, 2.0)
+        faces += _frames(70.0, 4.0, squint_l=0.5, squint_r=0.5, width=0.45)
+        labels = [
+            _label("calibration", 0, 5, "baseline"),
+            _label("gap", 5, 9, "gap"),
+            _label("read_normal", 10, 18, "none"),
+            _label("read_tiny", 20, 28, "natural"),
+            _label("act_squint", 30, 38, "squint"),
+            _label("gap2", 38, 48, "gap"),
+            _label("lean_squint", 50, 60, "struggle"),
+            _label("gap3", 60, 68, "gap"),
+            _label("free", 70, 80, "none"),
+        ]
+        path = self.tmp / "ada-no-bright.jsonl"
+        _dump(path, "ada", "no", "bright", faces, labels, _REPLAY_SENSES)
+        run = evaluate.load_run(path)
+        totals = evaluate.score_runs([run])
+        self.assertEqual(totals.error, "")
+        self.assertGreaterEqual(totals.struggle_fp, 1)
+        self.assertGreaterEqual(totals.struggle_fn, 1)
+        by_name = {seg["segment"]: seg for seg in totals.segments}
+        self.assertEqual(by_name["read_normal"]["struggle_fp"], 0)
+        self.assertEqual(by_name["act_squint"]["struggle_fn"], 1)
+        self.assertEqual(by_name["lean_squint"]["struggle_fn"], 0)
+        self.assertGreater(by_name["lean_squint"]["latency_s"], 0)
+        self.assertGreaterEqual(by_name["free"]["struggle_fp"], 1)
+        self.assertEqual(by_name["read_tiny"]["struggle_fp"], 0)
+        self.assertGreaterEqual(totals.natural_signals, 1)
+        self.assertEqual(totals.natural_struggles, 0)
+        self.assertGreaterEqual(totals.signal_fp, 1)
+        self.assertGreaterEqual(totals.signal_fn_by[("squint", "strong")], 1)
+        md = evaluate.write_report([path], self.tmp)
+        self.assertIn("per minute", md)
+        self.assertIn("no", md)
+        csv_text = (self.tmp / "senses-report.csv").read_text(encoding="utf-8")
+        self.assertIn("__fp_per_minute__", csv_text)
+        rates = evaluate.fp_per_minute([(run, totals)])
+        self.assertEqual(rates[0]["glasses"], "no")
+        self.assertEqual(rates[0]["light"], "bright")
+        self.assertGreater(rates[0]["per_minute"], 0)
+
+    def _tuner_file(self, alias: str) -> Path:
+        faces = []
+        faces += _frames(0.0, 4.0)
+        faces += _frames(6.0, 2.0)
+        # Just over the default squint and lean lines: a struggle while the label says none.
+        faces += _frames(10.0, 3.0, squint_l=0.31, squint_r=0.31, width=0.36)
+        faces += _frames(14.0, 2.0)
+        faces += _frames(20.0, 4.0, squint_l=0.7, squint_r=0.7, width=0.55)
+        labels = [
+            _label("calibration", 0, 5, "baseline"),
+            _label("gap", 5, 9, "gap"),
+            _label("read_normal", 10, 16, "none"),
+            _label("gap2", 16, 19, "gap"),
+            _label("lean_squint", 20, 28, "struggle"),
+        ]
+        path = self.tmp / f"{alias}.jsonl"
+        _dump(path, alias, "yes", "dim", faces, labels, _REPLAY_SENSES)
+        return path
+
+    def test_tune_needs_two_people_and_clears_false_positives(self):
+        one = self._tuner_file("ada")
+        code, text = evaluate.recommendation(evaluate.load_runs([one]))
+        self.assertEqual(code, 2)
+        self.assertIn("2 people", text)
+        same = self._tuner_file("ada")
+        code, text = evaluate.recommendation(evaluate.load_runs([one, same]))
+        self.assertEqual(code, 2, text)
+
+        other = self._tuner_file("bea")
+        runs = evaluate.load_runs([one, other])
+        before = evaluate.score_runs(runs)
+        self.assertGreaterEqual(before.struggle_fp, 1)
+        self.assertEqual(before.struggle_fn, 0)
+        tune = evaluate.search(runs)
+        after = evaluate.score_runs(runs, tune)
+        self.assertEqual(after.struggle_fp, 0, evaluate.toml_snippet(tune))
+        self.assertEqual(after.struggle_fn, 0, evaluate.toml_snippet(tune))
+        code, text = evaluate.recommendation(runs)
+        self.assertEqual(code, 0, text)
+        self.assertIn("[senses]", text)
+        self.assertIn("Held-out struggle false positives: 0", text)
+        self.assertIn("Held-out false negatives: 0", text)
+        self.assertIn("Margin to the nearest false positive", text)
 
 
 if __name__ == "__main__":
