@@ -174,6 +174,9 @@ class GazeManager:
                 self.ready, self.error = True, ""
                 self.calibrated, self.error_px = bool(msg.get("calibrated")), msg.get("error_px")
                 log.info("eye tracker on (%s)", "calibrated" if self.calibrated else "needs calibration")
+            elif msg.get("camera_off"):
+                # The reader thread must not wait on the helper: closing stdin from here can deadlock.
+                threading.Thread(target=self._on_camera_off, daemon=True, name="gaze-off").start()
             elif "error" in msg:
                 self.error = str(msg["error"])[:300]
                 log.warning("eye tracker: %s", self.error)
@@ -250,6 +253,23 @@ class GazeManager:
         if on:
             self._signature, self._gave_up = None, False
         self.apply()
+
+    def _on_camera_off(self) -> None:
+        """The on-screen indicator was clicked: eye tracking off, face sensing off, camera closed."""
+        # Set the gaze switch first. set_vision() calls apply(), and if gaze were still wanted that
+        # would restart the camera for eye tracking alone.
+        self.override = False
+        senses = getattr(self.agent, "senses", None)
+        if senses is not None and hasattr(senses, "set_vision"):
+            try:
+                senses.set_vision(False)
+            except Exception:
+                log.exception("couldn't turn off face sensing")
+        self.set_enabled(False)
+        try:
+            self.agent.events.add("gaze", "Camera turned off.")
+        except Exception:
+            log.exception("couldn't record the camera-off event")
 
     # ---------------------------------------------------------------- queries
     def info(self) -> dict:
