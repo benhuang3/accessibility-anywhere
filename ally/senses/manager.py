@@ -28,6 +28,7 @@ from ..state import atomic_write
 from .detectors import (Baseline, HesitationDetector, LeanDetector, RageClickDetector, RetypeDetector, Signal,
                         SquintDetector, Tuning, gate)
 from .fusion import Fuser, Struggle
+from .contract import validate_struggle
 
 log = logging.getLogger("ally.senses")
 
@@ -293,6 +294,10 @@ class Senses:
     def _emit(self, struggle: Struggle) -> dict:
         struggle.target = self.target(struggle)
         d = struggle.to_dict()
+        problems = validate_struggle(d)
+        if problems:
+            log.error("dropping invalid struggle: %s", "; ".join(problems))
+            return None
         with self.lock:
             self.last_struggle = d
         log.info("%s", struggle.describe())

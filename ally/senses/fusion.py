@@ -72,9 +72,11 @@ class Fuser:
         self.last_emit = t
         self.recent.clear()
         src = {p.source for p in parts}
-        source = "simulate" if "simulate" in src else ("senses" if len(src) > 1 else f"senses.{src.pop()}")
+        source = "simulated" if "simulate" in src else ("senses" if len(src) > 1 else f"senses.{src.pop()}")
         detail = {"signals": [{"kind": p.kind, "tier": p.tier, "confidence": p.confidence, **p.detail}
                               for p in parts]}
+        if source == "simulated":
+            detail["simulated"] = True
         if kind != "fused":
             detail["tier"] = sig.tier
         pointer = next((p for p in parts if p.x is not None), None)

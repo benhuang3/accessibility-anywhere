@@ -19,6 +19,7 @@ from ally.log import EventLog
 from ally.senses.detectors import (Baseline, HesitationDetector, LeanDetector, RageClickDetector, RetypeDetector,
                                    Signal, SquintDetector, Tuning, gate)
 from ally.senses.fusion import KINDS, Fuser
+from ally.senses.contract import to_event, validate_struggle
 from ally.senses.manager import Senses
 
 try:
@@ -322,7 +323,10 @@ class SensesManagerTests(unittest.TestCase):
         self.assertEqual(set(d["target"]), {"app", "site", "window", "x", "y", "box"})
         self.assertEqual((d["target"]["app"], d["target"]["site"], d["target"]["window"]),
                          ("Mail", "mail.example.com", "Inbox"))
-        self.assertEqual(d["source"], "simulate")
+        self.assertEqual(d["source"], "simulated")
+        self.assertTrue(d["detail"]["simulated"])
+        self.assertEqual(validate_struggle(d), [])
+        self.assertEqual(to_event(d)["type"], "struggle")
         self.assertTrue(wait_for(lambda: got))
         self.assertEqual(got[0]["kind"], "fused")
         kinds = [e["kind"] for e in agent.events.since(0)]
