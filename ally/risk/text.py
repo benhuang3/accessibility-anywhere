@@ -86,6 +86,7 @@ def score_text(text: str, url: str = "", overlay_text: str = "", fullscreen: boo
     score = 0
     signals = []
     phrases = []
+    overlay_hit = False
     for name, pattern, points, phrase in _RULES:
         if name == "phone":
             hit, in_overlay = bool(_phone_matches(body)) or has_tel_link, bool(_phone_matches(overlay))
@@ -95,6 +96,7 @@ def score_text(text: str, url: str = "", overlay_text: str = "", fullscreen: boo
             signals.append(name)
             phrases.append(phrase)
             score += points + in_overlay
+            overlay_hit = overlay_hit or in_overlay
     if any(toll_free for _, toll_free in _phone_matches(body)):
         score += 1
     if fullscreen:
@@ -104,7 +106,10 @@ def score_text(text: str, url: str = "", overlay_text: str = "", fullscreen: boo
     allowed = is_allowlisted(url, extra_allow)
     severity = None
     if not allowed:
-        if score >= 7 and "phone" in signals and "alarm" in signals:
+        # "high" also needs a brand claim, a full-screen page or a signal inside an overlay. A phone number plus
+        # an alarming word alone matches ordinary bank and shipping help pages, so that stays "medium".
+        if (score >= 7 and "phone" in signals and "alarm" in signals
+                and ("brand" in signals or "fullscreen" in signals or overlay_hit)):
             severity = "high"
         elif score >= 4:
             severity = "medium"

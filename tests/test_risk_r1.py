@@ -117,13 +117,22 @@ class TextScoreTests(unittest.TestCase):
                 self.assertEqual(node.level, 0)
         self.assertFalse((ROOT / "ally" / "risk" / "__init__.py").exists())
 
-    def test_known_limitation_unknown_bank_help_page_scores_high(self):
+    def test_unknown_bank_help_page_is_a_nudge_not_a_block(self):
+        # Decision (Oct 24): "high" needs a brand claim, a full-screen page or an overlay signal as well as
+        # phone + alarm. A legitimate help page with a phone number and the word "locked" is only medium.
         text = "If your account is locked, contact support at 1-800-555-0100."
-        self.check_score(text, 8, "high", url="https://examplebank.test/help")
-        # The user-bank allowlist is the mitigation for this legitimate help page.
+        self.check_score(text, 8, "medium", url="https://examplebank.test/help")
         result = self.check_score(text, 8, None, url="https://examplebank.test/help",
                                   extra_allow=("examplebank.test",))
         self.assertTrue(result.allowlisted)
+
+    def test_high_needs_brand_fullscreen_or_overlay_as_well(self):
+        bare = "Your computer is infected. Do not close this window. Call support now at 1-800-555-0100."
+        self.assertEqual(score_text(bare).severity, "medium")                       # no brand named
+        self.assertEqual(score_text(bare, fullscreen=True).severity, "high")        # full-screen page
+        self.assertEqual(score_text("", overlay_text=bare).severity, "high")        # shown in a pop-up overlay
+        self.assertEqual(score_text("Windows: " + bare).severity, "high")           # brand claim
+        self.assertEqual(score_text(bare, has_tel_link=True).severity, "medium")
 
     def test_news_article(self):
         text = "Tech-support scams impersonate Microsoft. They claim viruses and demand gift cards."
