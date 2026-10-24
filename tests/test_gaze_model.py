@@ -125,19 +125,32 @@ class GazeModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / 'tiny.jsonl'
             records = [{'rec': 'meta', 'screen': [1920, 1080]}]
-            lm = self.landmarks().tolist()
             t = 0.0
-            for phase, points in [('calibration', [(100, 100), (960, 100), (1820, 100), (100, 540), (960, 540), (1820, 540)]), ('validation', [(100, 980), (960, 980), (1820, 980)])]:
+            phases = [('calibration', [(100, 100), (960, 100), (1820, 100),
+                                       (100, 980), (960, 980), (1820, 980)]),
+                      ('validation', [(100, 540), (960, 540), (1820, 540)])]
+            for phase, points in phases:
                 for i, (x, y) in enumerate(points):
                     start = t + 0.1
                     end = start + 0.3
                     records.append({'rec': 'target', 'phase': phase, 'id': i, 'x': x, 'y': y, 'shown': t, 'start': start, 'end': end})
+                    gaze_h = x / 1920 - 0.5
+                    gaze_v = y / 1080 - 0.5
+                    lm = self.landmarks(-gaze_h, gaze_v, gaze_h, gaze_v).tolist()
                     for j in range(7):
-                        records.append({'rec': 'frame', 't': start + j * 0.05, 'w': 640, 'h': 480, 'lm': lm, 'bs': {}, 'mat': None})
+                        noisy_lm = np.asarray(lm).copy()
+                        noise = (j % 3 - 1) * 0.0005
+                        for eye in (gm.RIGHT_EYE, gm.LEFT_EYE):
+                            noisy_lm[eye['iris'], 0] += noise
+                            noisy_lm[eye['iris'], 1] -= noise
+                        records.append({'rec': 'frame', 't': start + j * 0.05, 'w': 640, 'h': 480, 'lm': noisy_lm.tolist(), 'bs': {}, 'mat': None})
                     t = end + 0.1
             p.write_text('\n'.join((json.dumps(r) for r in records)), encoding='utf-8')
             rows = gaze_eval.evaluate(p)
-            self.assertTrue(rows)
-            self.assertEqual({r['phase'] for r in rows}, {'validation', 'drift'})
+            validation = [row for row in rows if row['phase'] == 'validation']
+            self.assertEqual({row['features'] for row in validation}, {'v1', 'v2'})
+            self.assertTrue(all(row['error_px'] < 50 for row in validation), validation)
+            gaze_eval.report([p])
+            self.assertTrue((Path(td) / 'gaze_eval.csv').is_file())
 if __name__ == '__main__':
     unittest.main()
