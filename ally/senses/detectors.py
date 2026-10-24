@@ -270,10 +270,13 @@ class RetypeDetector:
         self.typed_after = 0
         self.fired_at = -1e9
         self.keys = self.total_bs = 0  # lifetime counts, for this person's usual backspace share
+        self.recent_keys: collections.deque = collections.deque(maxlen=40)
+        self.normal_keys = self.normal_bs = 0
 
     def key(self, t: float, backspace: bool) -> Signal | None:
         tune = self.tune
         self.keys += 1
+        self.recent_keys.append(bool(backspace))
         if backspace:
             self.total_bs += 1
             self.backspaces.append(t)
@@ -281,15 +284,15 @@ class RetypeDetector:
                 self.backspaces.popleft()
             if len(self.backspaces) >= tune.retype_backspaces:
                 self.burst_at, self.burst_n, self.typed_after = t, len(self.backspaces), 0
-            return None
+            return self._rolling_signal(t)
         if self.burst_at is None:
-            return None
+            return self._rolling_signal(t)
         if t - self.burst_at > 2 * tune.retype_seconds:
             self.burst_at = None
-            return None
+            return self._rolling_signal(t)
         self.typed_after += 1
         if self.typed_after < 2 or t - self.fired_at < tune.rearm_seconds:
-            return None
+            return self._rolling_signal(t)
         usual = self.total_bs / self.keys if self.keys >= 200 else 0.15
         n = self.burst_n
         self.burst_at, self.fired_at = None, t
@@ -297,6 +300,21 @@ class RetypeDetector:
         conf = 0.45 + min(0.3, 0.05 * (n - tune.retype_backspaces)) - (0.1 if usual > 0.25 else 0.0)
         return Signal("retype", round(conf, 2), t, "strong" if conf >= 0.5 else "weak", "input",
                       detail={"backspaces": n, "usual_share": round(usual, 2)})
+
+    def _rolling_signal(self, t: float) -> Signal | None:
+        # Learn only keys outside a detected burst; this avoids teaching the baseline from struggle.
+        if self.burst_at is None and len(self.recent_keys) == 40:
+            self.normal_keys += 1
+            self.normal_bs += int(self.recent_keys[-1])
+        if self.normal_keys < 300 or len(self.recent_keys) < 40:
+            return None
+        n = sum(self.recent_keys)
+        usual = self.normal_bs / self.normal_keys
+        if n < 5 or n / 40 <= 2 * usual or t - self.fired_at < self.tune.rearm_seconds:
+            return None
+        self.fired_at = t
+        return Signal("retype", 0.4, t, "weak", "input",
+                      detail={"backspaces": n, "usual_share": round(usual, 2), "window": 40})
 
 
 class HesitationDetector:

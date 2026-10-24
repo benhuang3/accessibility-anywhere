@@ -192,6 +192,17 @@ class InputTests(unittest.TestCase):
         sigs = [d.key(i * 0.3, i % 3 == 0) for i in range(30)]
         self.assertFalse(any(sigs))
 
+    def test_long_normal_backspace_share_never_fires(self):
+        for share in (0.12, 0.20):
+            d, signals = RetypeDetector(self.tune), []
+            for i in range(2000):
+                # Distributed ordinary edits, with typing between deletions.
+                backspace = i % round(1 / share) == 0
+                sig = d.key(i * 0.2, backspace)
+                if sig:
+                    signals.append(sig)
+            self.assertEqual(signals, [], f"FP count at {share:.0%} backspaces: {len(signals)}")
+
     def test_hesitation(self):
         d = HesitationDetector(self.tune)
         d.move(0, 10, 10)
