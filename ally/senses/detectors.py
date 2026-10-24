@@ -24,7 +24,7 @@ class Tuning:
     squint_weak: float = 0.12       # ...or this much for a weak one
     squint_hold: float = 1.5        # seconds above it, within the last squint_window seconds
     squint_window: float = 3.0
-    wink_max: float = 0.15          # |left - right| above this is a wink, not a squint
+    wink_max: float = 0.12          # left - right this far from the person's own resting difference: a wink
     smile_gate: float = 0.35        # mean mouthSmile above this: ignore squint (cheeks narrow the eyes)
     blink_gate: float = 0.5         # mean eyeBlink above this: drop the frame, if it's brief (a blink)...
     blink_max: float = 0.4          # ...lasting under this many seconds; a held squint also scores high
@@ -79,8 +79,13 @@ class Baseline:
     created: float = 0.0
     squint_reliable: bool = True
     squint_why: str = ""
+    asym: float = 0.0  # resting eyeSquintLeft - eyeSquintRight; most faces read one eye narrower
 
     MIN_SAMPLES = 30
+
+    def wink(self, sig: dict) -> float:
+        """How far one eye is narrowed beyond the person's usual difference between the eyes."""
+        return abs(sig["squint_l"] - sig["squint_r"] - self.asym)
 
     @classmethod
     def from_samples(cls, samples: list[dict], t: float, source: str = "calibrated") -> "Baseline":
@@ -104,8 +109,9 @@ class Baseline:
         asymmetry = statistics.median(abs(s["squint_l"] - s["squint_r"]) for s in good)
         reliable = mad <= 0.06 and asymmetry <= 0.10 and light >= 40
         why = "" if reliable else "squint readings were unsteady, uneven, or too dim; squint sensing is off"
+        asym = statistics.median(s["squint_l"] - s["squint_r"] for s in good)
         return cls(round(squint, 4), round(width, 4), round(smile, 4), round(light, 1), len(good), source, t,
-                   reliable, why)
+                   reliable, why, round(asym, 4))
 
     def drift(self, sig: dict, dt: float, tau: float = 300.0) -> None:
         """Follow slow posture and light changes (minutes), never a squint or lean in progress."""
@@ -119,24 +125,26 @@ class Baseline:
     def to_dict(self) -> dict:
         return {"squint": self.squint, "width": self.width, "smile": self.smile, "light": self.light,
                 "samples": self.samples, "source": self.source, "created": self.created,
-                "squint_reliable": self.squint_reliable, "squint_why": self.squint_why}
+                "squint_reliable": self.squint_reliable, "squint_why": self.squint_why, "asym": self.asym}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Baseline | None":
         try:
             b = cls(float(d["squint"]), float(d["width"]), float(d.get("smile", 0)), float(d.get("light", -1)),
                     int(d.get("samples", 0)), str(d.get("source", "calibrated")), float(d.get("created", 0)),
-                    bool(d.get("squint_reliable", True)), str(d.get("squint_why", "")))
+                    bool(d.get("squint_reliable", True)), str(d.get("squint_why", "")), float(d.get("asym", 0.0)))
         except (KeyError, TypeError, ValueError):
             return None
         return b if 0 <= b.squint <= 0.6 and 0.05 <= b.width <= 0.95 else None
 
 
-def gate(sig: dict, tune: Tuning, blink_held: float = 0.0) -> str:
+def gate(sig: dict, tune: Tuning, blink_held: float = 0.0, wink: float | None = None) -> str:
     """Why this frame can't be trusted for squint ("" = it can).
 
     blink_held: seconds the blink score has stayed at or above blink_gate. A blink is over within
     blink_max; a hard squint pushes the score that high too, but for as long as it's held.
+    wink: one eye's narrowing beyond the person's usual left/right difference (Baseline.wink, smoothed
+    by SquintDetector); without it, the raw difference between the eyes.
     """
     if sig["blink"] >= tune.blink_closed or (sig["blink"] >= tune.blink_gate and blink_held < tune.blink_max):
         return "blink"
@@ -146,7 +154,7 @@ def gate(sig: dict, tune: Tuning, blink_held: float = 0.0) -> str:
         return "dark"
     if sig["smile"] >= tune.smile_gate:
         return "smile"
-    if abs(sig["squint_l"] - sig["squint_r"]) > tune.wink_max:
+    if (abs(sig["squint_l"] - sig["squint_r"]) if wink is None else wink) > tune.wink_max:
         return "wink"
     return ""
 
@@ -171,6 +179,8 @@ class SquintDetector:
         self.gated = ""
         self.blink_start: float | None = None  # start of the current run of high blink scores
         self.blink_last = -1e9
+        self.asyms: collections.deque = collections.deque(maxlen=5)  # about 0.5 s of left-right differences
+        self.winking = False
 
     def blink_held(self, sig: dict, t: float) -> float:
         """Seconds the blink score has been high, allowing dips of up to 0.3 s (a held squint flickers)."""
@@ -183,7 +193,16 @@ class SquintDetector:
 
     def feed(self, sig: dict, t: float, base: Baseline) -> Signal | None:
         tune = self.tune
-        self.gated = gate(sig, tune, self.blink_held(sig, t))
+        # Smoothed over ~0.5 s: one frame's jitter shouldn't restart a held squint or let a wink through.
+        self.asyms.append(sig["squint_l"] - sig["squint_r"] - base.asym)
+        wink = abs(statistics.median(self.asyms))
+        # Hysteresis: an eye reopens slowly, so a wink lasts until the difference is back under half
+        # wink_max (a real squint narrows both eyes and stays well under that).
+        if wink > tune.wink_max:
+            self.winking = True
+        elif wink < tune.wink_max / 2:
+            self.winking = False
+        self.gated = gate(sig, tune, self.blink_held(sig, t), float("inf") if self.winking else wink)
         if self.gated == "blink":
             return None  # a blink is a brief dropout, not a reason to reset
         while self.points and t - self.points[0][0] > tune.squint_window:

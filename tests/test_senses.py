@@ -82,6 +82,11 @@ class BaselineTests(unittest.TestCase):
         self.assertIsNone(Baseline.from_dict({"squint": 0.9, "width": 0.3}))
         self.assertIsNone(Baseline.from_dict({"width": 0.3}))
 
+    def test_learns_the_persons_left_right_difference(self):
+        b = Baseline.from_samples([frame(l=0.45, r=0.36) for _ in range(40)], 0.0)
+        self.assertAlmostEqual(b.asym, 0.09, places=3)
+        self.assertAlmostEqual(Baseline.from_dict(b.to_dict()).asym, 0.09, places=3)
+
     def test_drift_follows_slow_changes_only(self):
         b = Baseline(0.10, 0.30)
         b.drift(frame(0.14), 60.0)  # small change: follows a little
@@ -141,6 +146,18 @@ class SquintTests(unittest.TestCase):
         b = frame(0.36, blink=0.6)  # 0.3 s blinks between normal frames
         self.assertEqual(run(SquintDetector(self.tune), [(3, b), (5, frame()), (3, b), (5, frame()), (3, b)]), [])
         self.assertEqual(run(SquintDetector(self.tune), [(40, frame(0.5, blink=0.9))]), [])  # eyes shut
+
+    def test_wink_is_judged_against_the_persons_usual_difference(self):
+        # Numbers from a real face whose left eye always reads about 0.10 narrower than the right.
+        uneven = Baseline(squint=0.41, width=0.3, asym=0.10)
+        rest = (20, frame(l=0.46, r=0.36))
+        # A hard squint widens the raw gap to 0.11: still a squint, not a wink.
+        sigs = run(SquintDetector(self.tune), [rest, (40, frame(l=0.72, r=0.61))], base=uneven)
+        self.assertEqual([s.kind for s in sigs], ["squint"])
+        # A right wink reads 0.48 vs 0.63: 0.25 off this person's usual gap, though the raw gap is
+        # small. It stays a wink while the eye slowly reopens (0.12 off, squint score still raised).
+        wink = [rest, (15, frame(l=0.48, r=0.63)), (40, frame(l=0.58, r=0.63)), (40, frame(l=0.57, r=0.59))]
+        self.assertEqual(run(SquintDetector(self.tune), wink, base=uneven), [])
 
 
 
@@ -268,6 +285,24 @@ class InputTests(unittest.TestCase):
 class FusionTests(unittest.TestCase):
     def sig(self, kind, t, conf=0.4, tier="weak", source="vision"):
         return Signal(kind, conf, t, tier, source)
+
+    def test_a_lean_still_going_on_pairs_with_a_later_squint(self):
+        f = Fuser()
+        self.assertIsNone(f.add(self.sig("lean", 0.0, 0.95, "strong")))
+        for i in range(1, 43):  # still leaning in; the squint fires 4.3 s after the lean did
+            f.hold("lean", i / 10)
+        self.assertEqual(f.add(self.sig("squint", 4.3, 0.72, "strong")).kind, "fused")
+        g = Fuser()  # without the hold, the lean is too old to pair
+        g.add(self.sig("lean", 0.0, 0.95, "strong"))
+        self.assertIsNone(g.add(self.sig("squint", 4.3, 0.72, "strong")))
+
+    def test_hold_never_creates_or_revives_a_signal(self):
+        f = Fuser()
+        f.hold("lean", 1.0)
+        self.assertIsNone(f.add(self.sig("squint", 1.0, 0.9, "strong")))
+        f.add(self.sig("lean", 10.0, 0.9, "strong"))
+        f.hold("lean", 20.0)  # long expired
+        self.assertIsNone(f.add(self.sig("squint", 20.0, 0.9, "strong")))
 
     def test_one_signal_is_not_enough(self):
         f = Fuser()
@@ -599,6 +634,23 @@ class SensesManagerTests(unittest.TestCase):
         info = s.info()
         self.assertEqual(info["signals"], {"squint": 1, "lean": 1})
         self.assertTrue(any("lean" in row[0] for row in s.hud_lines()))
+
+    def test_lean_held_then_a_late_squint_is_one_struggle(self):
+        agent, got = fake_agent(fps=10)
+        s = Senses(agent)
+        t = 1000.0
+        for _ in range(200):  # 20 s of a resting face
+            t += 0.1
+            s.on_face(t, frame())
+        for _ in range(45):  # leaning in without squinting: the lean fires, but alone it's no struggle
+            t += 0.1
+            s.on_face(t, frame(width=0.42))
+        for _ in range(30):  # still leaning, now squinting: the squint fires over 4 s after the lean
+            t += 0.1
+            s.on_face(t, frame(0.4, width=0.42))
+        self.assertTrue(wait_for(lambda: got))
+        time.sleep(0.2)
+        self.assertEqual([g["kind"] for g in got], ["fused"])
 
     def test_smiling_and_laughing_dont_trigger(self):
         agent, got = fake_agent()

@@ -9,6 +9,7 @@ kind is squint | lean | rage_click | hesitation | retype | fused.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from dataclasses import dataclass, field
 
@@ -47,6 +48,15 @@ class Fuser:
     def configure(self, window: float, cooldown: float, solo, min_confidence: float) -> None:
         self.window, self.cooldown, self.min_confidence = window, cooldown, min_confidence
         self.solo = set(solo)
+
+    def hold(self, kind: str, t: float) -> None:
+        """The signal of this kind is still going on at t: keep it eligible for pairing.
+
+        Only refreshes a signal already waiting here; it never creates one or re-reports a struggle.
+        """
+        old = self.recent.get(kind)
+        if old is not None and t - old.ts <= self.window and t > old.ts:
+            self.recent[kind] = dataclasses.replace(old, ts=t)
 
     def add(self, sig: Signal) -> Struggle | None:
         """Returns a Struggle (without a target; the caller adds where it happened) or None."""

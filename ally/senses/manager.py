@@ -236,13 +236,20 @@ class Senses:
                 for s in (squint_signal, self.lean.feed(sig, t, self.baseline)):
                     if s is not None:
                         fired.append(s)
+                # A lean or squint that is still going on stays eligible for pairing: people keep leaning
+                # in while they start to squint, often more than window_seconds after the lean fired.
+                if self.lean.fired and self.lean.ratio >= self.tune.lean_weak:
+                    self.fuser.hold("lean", t)
+                if self.squint.latched and not self.squint.gated and self.squint.delta >= self.tune.squint_weak:
+                    self.fuser.hold("squint", t)
                 squint_near = (sig["squint_l"] + sig["squint_r"]) / 2 - self.baseline.squint >= self.tune.squint_weak
                 lean_near = sig["width"] / self.baseline.width >= self.tune.lean_weak
                 cooldown = t < self.fuser.last_emit + self.fuser.cooldown
                 snoozed = any(until > t for until in self.snoozed_until.values())
                 recent_struggle = t - self._last_struggle_t < self.fuser.window
                 if (not fired and not squint_near and not lean_near and not cooldown and not snoozed
-                        and not recent_struggle and not gate(sig, self.tune)
+                        and not recent_struggle
+                        and not gate(sig, self.tune, wink=self.baseline.wink(sig))
                         and not self.squint.latched and not self.lean.fired):
                     self.baseline.drift(sig, dt)
             hud = self.hud and time.time() - self._hud_at > 0.2
