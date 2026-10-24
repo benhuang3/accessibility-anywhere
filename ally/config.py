@@ -42,7 +42,9 @@ SPEC = {
     "speech": {"engine": ("system", "cartesia", "off"), "rate": NUM, "voice": str, "max_chars": int,
                "cartesia_voice_id": str, "cartesia_model": str},
     "voice": {"engine": ("auto", "cartesia", "whisper", "off"), "max_seconds": NUM, "silence_seconds": NUM,
-              "language": str, "beep": bool},
+              "language": str, "beep": bool, "always_listen": bool, "wake_words": list, "follow_up_seconds": NUM,
+              "whisper_model": str},
+    "gaze": {"enabled": bool, "camera": int, "fps": int, "pan_speed": NUM},
     "profile": {"page_zoom": NUM, "min_font_px": int, "page_styles": list, "screen_magnify": NUM,
                 "color_filter": ("none", "invert", "grayscale", "high_contrast")},
     "tools": {"disabled": list, "timeout_seconds": NUM},
@@ -53,7 +55,9 @@ RANGES = {
     ("agent", "port"): (1024, 65535), ("brain", "max_steps"): (1, 20), ("brain", "max_tokens"): (256, 64000),
     ("brain", "timeout_seconds"): (3, 120), ("brain", "history_turns"): (0, 20), ("speech", "rate"): (0.3, 3.0),
     ("speech", "max_chars"): (100, 200000), ("voice", "max_seconds"): (1, 60),
-    ("voice", "silence_seconds"): (0.3, 5), ("profile", "page_zoom"): (0, 5), ("profile", "min_font_px"): (0, 72),
+    ("voice", "silence_seconds"): (0.3, 5), ("voice", "follow_up_seconds"): (0, 60), ("gaze", "camera"): (0, 9),
+    ("gaze", "fps"): (5, 30), ("gaze", "pan_speed"): (0.1, 5),
+    ("profile", "page_zoom"): (0, 5), ("profile", "min_font_px"): (0, 72),
     ("profile", "screen_magnify"): (1, 16), ("tools", "timeout_seconds"): (1, 300),
 }
 
@@ -162,6 +166,9 @@ def validate(cfg: dict, known_tools: set[str] | None = None) -> tuple[list[str],
     for t in cfg.get("tools", {}).get("disabled", []) or []:
         if not isinstance(t, str):
             errors.append("tools.disabled must be a list of tool names in quotes")
+    wake = cfg.get("voice", {}).get("wake_words", ["ally"])
+    if isinstance(wake, list) and (not wake or not all(isinstance(w, str) and w.strip() for w in wake)):
+        errors.append('voice.wake_words must be a list of words in quotes, e.g. ["ally"]')
 
     commands = cfg.get("commands", {})
     if not isinstance(commands, dict):

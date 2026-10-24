@@ -139,10 +139,17 @@ async function pollStatus() {
   const chrome = s.browser.connected ? ["connected", "good"] : ["not connected", "warn"];
   const keys = { on: ["on", "good"], starting: ["starting", "warn"], off: ["off", "warn"] }[s.hotkeys.status] || ["error", "bad"];
   const voice = s.voice.listening ? ["listening", "good"] : s.voice.available ? ["ready", "good"] : ["mic button only", "warn"];
+  const wake = s.listener.status === "listening"
+    ? [s.listener.awake ? "listening now" : `say "${(s.listener.wake_words[0] || "ally")}"`, "good"]
+    : s.listener.status === "off" ? ["off", "warn"] : [s.listener.status === "starting" ? "starting" : "error", s.listener.status === "starting" ? "warn" : "bad"];
+  const eyes = { tracking: ["tracking", "good"], off: ["off", "warn"], starting: ["starting", "warn"],
+    "needs calibration": ["say \"calibrate my eyes\"", "warn"], "can't see you": ["can't see you", "warn"] }[s.gaze.status] || ["error", "bad"];
   const items = [
     chip("Brain", brain[0], brain[1]),
     chip("Chrome", chrome[0], chrome[1]),
     chip("Hotkeys", keys[0], keys[1]),
+    chip("Hands-free", wake[0], wake[1]),
+    chip("Eyes", eyes[0], eyes[1]),
     chip("Voice", voice[0], voice[1]),
     chip("Speech", s.speech.engine + (s.speech.speaking ? " (talking)" : ""), s.speech.engine === "off" ? "warn" : "good"),
   ];
@@ -153,8 +160,10 @@ async function pollStatus() {
   const list = s.hotkeys.keys.map((k) => el("li", {}, el("kbd", { text: k.keys }), " " + k.action.replaceAll("_", " ")));
   $("hotkeys").replaceChildren(...list);
   const herr = $("hotkey-error");
-  herr.hidden = !s.hotkeys.error;
-  herr.textContent = s.hotkeys.error ? "Hotkeys: " + s.hotkeys.error : "";
+  const problems = [["Hotkeys", s.hotkeys.error], ["Hands-free", s.listener.error], ["Eyes", s.gaze.error]]
+    .filter(([, e]) => e).map(([name, e]) => `${name}: ${e}`);
+  herr.hidden = !problems.length;
+  herr.textContent = problems.join(" · ");
 }
 
 async function pollEvents() {

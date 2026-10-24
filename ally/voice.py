@@ -69,28 +69,49 @@ def cartesia_stt(wav: bytes, language: str = "en", timeout: float = 30) -> str:
         raise ToolError(f"Can't reach Cartesia: {getattr(e, 'reason', e)}")
 
 
-_whisper_model = None
+_whisper_models: dict[str, object] = {}
+_whisper_lock = threading.Lock()  # one transcription at a time (push-to-talk and always-listening share it)
 
 
-def whisper_stt(wav: bytes, language: str = "en", model_name: str = "base.en") -> str:
-    global _whisper_model
+def whisper_name(model_name: str, language: str) -> str:
+    """English-only models ("base.en") can't do other languages; use the multilingual one."""
+    if language and language != "en" and model_name.endswith(".en"):
+        return model_name[:-3]
+    return model_name
+
+
+def has_whisper() -> bool:
     try:
+        return importlib.util.find_spec("faster_whisper") is not None  # cheap check, no heavy import
+    except (ImportError, ValueError):
+        return False
+
+
+def whisper_pcm(pcm: bytes, language: str = "en", model_name: str = "base.en", prompt: str = "") -> str:
+    """Transcribe 16 kHz mono 16-bit PCM on this computer (the model downloads once, ~75-500 MB)."""
+    try:
+        import numpy as np  # type: ignore
         from faster_whisper import WhisperModel  # type: ignore
     except Exception:
         raise ToolError("Offline voice needs faster-whisper: pip install faster-whisper")
-    if _whisper_model is None:
-        _whisper_model = WhisperModel(model_name, device="cpu", compute_type="int8")
-    path = tempfile_path(".wav")
-    try:
-        with open(path, "wb") as f:
-            f.write(wav)
-        segments, _info = _whisper_model.transcribe(path, language=language or None, beam_size=1, vad_filter=True)
-        return " ".join(s.text.strip() for s in segments).strip()
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+    name = whisper_name(model_name, language)
+    audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    with _whisper_lock:
+        model = _whisper_models.get(name)
+        if model is None:
+            log.info("loading speech-to-text model %s (the first time downloads it)", name)
+            model = _whisper_models[name] = WhisperModel(name, device="cpu", compute_type="int8")
+        segments, _info = model.transcribe(audio, language=language or None, beam_size=1, vad_filter=True,
+                                           condition_on_previous_text=False, initial_prompt=prompt or None)
+        # Whisper invents words for noise ("Thank you."): drop pieces it thinks aren't speech.
+        kept = [s.text.strip() for s in segments if not (s.no_speech_prob > 0.6 and s.avg_logprob < -0.7)]
+    return " ".join(kept).strip()
+
+
+def whisper_stt(wav: bytes, language: str = "en", model_name: str = "base.en", prompt: str = "") -> str:
+    with wave.open(io.BytesIO(wav), "rb") as w:
+        pcm = w.readframes(w.getnframes())
+    return whisper_pcm(pcm, language, model_name, prompt)
 
 
 class VoiceInput:
@@ -112,12 +133,7 @@ class VoiceInput:
             return e
         if os.environ.get("CARTESIA_API_KEY"):
             return "cartesia"
-        try:
-            if importlib.util.find_spec("faster_whisper") is not None:  # cheap check, no heavy import
-                return "whisper"
-        except (ImportError, ValueError):
-            pass
-        return "none"
+        return "whisper" if has_whisper() else "none"
 
     def recorder(self) -> str:
         now = time.monotonic()
@@ -146,6 +162,10 @@ class VoiceInput:
         return True, f"{self.recorder()} + {self.engine()}"
 
     def toggle(self) -> str:
+        listener = getattr(self.agent, "listener", None)
+        if listener is not None and listener.running:
+            listener.prompt()  # the microphone is already open: take the next sentence, no wake word needed
+            return "Listening..."
         with self._lock:
             if self.listening:
                 self._stop.set()
@@ -169,7 +189,9 @@ class VoiceInput:
             if self.cfg.get("beep", True):
                 a.speaker.beep("start", wait=True)
             a.events.add("voice", "Listening...")
+            t0 = time.time()
             pcm = self._record()
+            a.last_utterance = (t0, time.time())  # where the user looked while talking (eye tracker)
             if self.cfg.get("beep", True):
                 a.speaker.beep("stop", wait=False)
             if len(pcm) < RATE * 2 * 0.3:
@@ -199,8 +221,7 @@ class VoiceInput:
         if engine == "cartesia":
             return cartesia_stt(wav, lang)
         if engine == "whisper":
-            model = "base.en" if lang == "en" else "base"
-            return whisper_stt(wav, lang, model)
+            return whisper_stt(wav, lang, self.cfg.get("whisper_model", "base.en"), prompt="Ally,")
         raise ToolError("No speech-to-text engine is set up.")
 
     def _record(self) -> bytes:

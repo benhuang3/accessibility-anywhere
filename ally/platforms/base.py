@@ -54,6 +54,15 @@ def popen(argv: list[str], stdin_bytes: bytes | None = None) -> subprocess.Popen
     return p
 
 
+def edge_speed(n: float, band: float = 0.18) -> float:
+    """Pan speed for eyes at fraction n (0..1) across the view: 0 in the middle, up to -1/+1 at an edge."""
+    if n < band:
+        return -min(1.0, (band - n) / band)
+    if n > 1 - band:
+        return min(1.0, (n - (1 - band)) / band)
+    return 0.0
+
+
 def next_level(current: float, up: bool, steps: list[float] = MAG_STEPS) -> float:
     if up:
         return next((s for s in steps if s > current + 1e-3), steps[-1])
@@ -94,6 +103,33 @@ class Platform:
     # ---- screen
     def magnify(self, level: float) -> str:
         raise ToolError(f"Screen magnification isn't supported on {self.label} yet.")
+
+    def magnify_at(self, level: float, x: float, y: float, follow: str = "eyes") -> str:
+        """Magnify around a screen point. Default: put the pointer there, since macOS Zoom and the
+        GNOME magnifier follow the pointer. (Windows centers the view exactly and can follow the eyes.)"""
+        self.move_pointer(int(x), int(y))
+        return self.magnify(level)
+
+    def set_follow(self, mode: str) -> str:
+        raise ToolError(f"The magnifier can only follow the mouse on {self.label}.")
+
+    def view(self) -> tuple[float, int, int]:
+        """(zoom level, left, top) of the magnified view in unmagnified screen pixels."""
+        return self.magnify_level, 0, 0
+
+    def other_magnifier_open(self) -> bool:
+        """True if the system's own magnifier app is zooming the screen (not Ally)."""
+        return False
+
+    def set_gaze_source(self, latest, pan_speed: float = 1.0) -> None:
+        """latest() -> where the eyes are on the screen (or None); a magnifier can pan with it."""
+
+    def move_pointer(self, x: int, y: int) -> None:
+        try:
+            from pynput.mouse import Controller  # type: ignore
+        except Exception:
+            raise ToolError("Moving the pointer needs pynput: pip install pynput")
+        Controller().position = (x, y)
 
     def color_filter(self, kind: str) -> str:
         raise ToolError(f"Screen color filters aren't supported on {self.label} yet.")

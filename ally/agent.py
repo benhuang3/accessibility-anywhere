@@ -1,4 +1,5 @@
-"""The agent process: wires config, tools, brain, browser bridge, hotkeys, speech and the server."""
+"""The agent process: wires config, tools, brain, browser bridge, hotkeys, speech, the always-on
+listener, the eye tracker and the server."""
 
 from __future__ import annotations
 
@@ -13,7 +14,9 @@ from .brain import Brain, Reply
 from .bridge import Bridge
 from .config import ConfigManager
 from .context import Context
+from .gaze import GazeManager
 from .hotkeys import HotkeyManager
+from .listener import WakeListener
 from .log import EventLog, set_level, setup_logging
 from .macros import Macros
 from .paths import Paths, load_env_file
@@ -62,6 +65,10 @@ class Agent:
         self.bridge = Bridge(on_command=self._extension_command, on_connect=self._extension_connected)
         self.brain = Brain(self)
         self.voice = VoiceInput(self)
+        self.listener = WakeListener(self)
+        self.gaze = GazeManager(self)
+        self.platform.set_gaze_source(self.gaze.latest, float(self.config.data["gaze"].get("pan_speed", 1.0)))
+        self.last_utterance: tuple[float, float] | None = None  # (start, end) of the last spoken request
         self.hotkeys = HotkeyManager(self)
         self.start_hotkeys = start_hotkeys
         if not start_hotkeys:
@@ -87,6 +94,9 @@ class Agent:
         if not initial:
             if self.start_hotkeys:
                 self.hotkeys.apply()
+            self.listener.apply()
+            self.gaze.apply()
+            self.platform.set_gaze_source(self.gaze.latest, float(cfg["gaze"].get("pan_speed", 1.0)))
             self.push_profile()
 
     def save_config(self, text: str) -> tuple[bool, list, list]:
@@ -231,6 +241,8 @@ class Agent:
             "speech": {"engine": cfg["speech"]["engine"], "speaking": self.speaker.speaking,
                        "rate": self.speaker.rate(), "error": self.speaker.last_error},
             "voice": {"available": ok_voice, "detail": voice_why, "listening": self.voice.listening},
+            "listener": self.listener.info(),
+            "gaze": self.gaze.info(),
             "screen": {"magnify": self.platform.magnify_level, "color": self.platform.color},
             "config": {"error": self.config.error, "errors": self.config.errors, "warnings": self.config.warnings},
             "plugins": {"folder": str(self.plugins.folder), "errors": self.plugins.errors},
@@ -256,6 +268,8 @@ class Agent:
         self.events.add("start", f"Ally started on {self.platform.label}. Dashboard: http://127.0.0.1:{port}/")
         if self.start_hotkeys:
             self.hotkeys.apply(force=True)
+        self.listener.apply()
+        self.gaze.apply()
         threading.Thread(target=self._housekeeping, name="housekeeping", daemon=True).start()
         threading.Thread(target=self._startup_extras, name="startup", daemon=True).start()
 
@@ -265,7 +279,11 @@ class Agent:
         if self.config.data["agent"].get("announce_start", True):
             name = self.config.data["agent"]["name"]
             mode = "" if self.brain.mode() == "claude" else " in offline mode"
-            self.speaker.say(f"{name} is ready{mode}.")
+            hint = ""
+            if self.listener.wanted() and self.listener.available()[0]:
+                words = self.config.data["voice"].get("wake_words") or ["ally"]
+                hint = f" Say {str(words[0]).title()}, then what you need."
+            self.speaker.say(f"{name} is ready{mode}.{hint}")
 
     def _housekeeping(self) -> None:
         n = 0
@@ -276,6 +294,8 @@ class Agent:
                 self._check_files()
                 if n % 3 == 0 and self.start_hotkeys:
                     self.hotkeys.ensure_running()
+                if n % 3 == 0:
+                    self.gaze.ensure_running()
             except Exception:
                 log.exception("housekeeping error")
             self._stop.wait(1.0)
@@ -307,7 +327,8 @@ class Agent:
     def close(self) -> None:
         self._stop.set()
         log.info("Ally stopping (code %s)", self.exit_code)
-        for step in (self.hotkeys.stop, self.speaker.stop, self.platform.shutdown, self.bridge.close_all):
+        for step in (self.hotkeys.stop, self.listener.stop, self.gaze.stop, self.speaker.stop,
+                     self.platform.shutdown, self.bridge.close_all):
             try:
                 step()
             except Exception:

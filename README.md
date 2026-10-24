@@ -4,6 +4,10 @@ Ally runs in the background on your computer. You talk to it, type to it, or pre
 changes the screen and the web for you: bigger text, high contrast, reader view, read aloud, screen
 magnifier, color filters, and anything else you teach it.
 
+- **Hands-free**: just say "Ally, make it bigger". Ally is always listening for its name, and the speech
+  is turned into text on your computer.
+- **Knows where you're looking**: "Ally, magnify what I'm looking at" zooms the whole screen around the
+  spot your eyes are on, using the webcam. The magnified view then follows your eyes.
 - **Works everywhere**: global hotkeys and screen tools work in every app; a Chrome extension handles web pages.
 - **Easy to change**: settings, commands, hotkeys and page styles live in one file (`config.toml`) that
   reloads the moment you save. New tools are one Python function in the `plugins/` folder.
@@ -47,9 +51,40 @@ magnifier, color filters, and anything else you teach it.
 
 ## Using Ally
 
-**Say or type** (dashboard box, extension popup, voice hotkey, or `python3 run.py send "..."`):
+**Say or type** (just talk, or use the dashboard box, extension popup, voice hotkey, or `python3 run.py send "..."`):
 "this page is hard to read", "make it bigger", "read this to me", "high contrast", "reader mode",
 "summarize this page", "what's on my screen?", "invert colors", "reset".
+
+### Hands-free voice
+
+Start a request with **"Ally"** (or end with it): "Ally, zoom in", "Hey Ally, read this page",
+"Make it bigger, Ally". Say just "Ally" and it beeps; then say the request. After Ally answers, you
+have a few seconds for a short follow-up without the name ("a bit more", "smaller").
+While Ally is talking, say **"Ally, stop"**.
+
+- Needs `pip install faster-whisper`. The speech model downloads once (base.en, about 145 MB) and runs
+  on your computer, so audio never leaves it. Windows shows the microphone as in use while Ally runs.
+- Settings under `[voice]`: `always_listen`, `wake_words`, `follow_up_seconds`, and `whisper_model`
+  (`tiny.en` is faster, `small.en` more accurate).
+
+### Eye tracking
+
+1. Say **"Ally, calibrate my eyes"**. Dots appear on the screen one at a time; look at each one until
+   it moves (about 20 seconds; Esc cancels). Do this again if you move your laptop or chair a lot.
+2. Say **"Ally, I want what I'm looking at magnified"** (or "magnify what I'm looking at", "zoom in
+   here"), or press `<mod>+G`. The whole screen zooms around where your eyes were while you spoke.
+3. While zoomed in, the view follows your eyes: look near an edge and it pans that way; the middle
+   stays still for reading. Move the mouse and it follows the mouse again. Say "follow my eyes" /
+   "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
+
+- Needs `pip install mediapipe opencv-python` and a webcam. The face model downloads once (3.7 MB). Video
+  is processed on your computer and never saved; only the calibration (a few numbers) is kept, in `state/`.
+- The camera stays on while Ally runs. Say "Ally, turn off eye tracking" (until Ally restarts), or set
+  `gaze.enabled = false`.
+- A webcam is far less precise than a dedicated eye tracker: expect it to land within a few centimeters,
+  which is plenty for magnifying, plus edge panning for the rest. Light on your face helps.
+- Exact centering and following the eyes are Windows features. On macOS and Linux, Ally moves the
+  pointer to where you look and zooms there, since those magnifiers follow the pointer.
 
 **Default hotkeys** (`<mod>` = Ctrl+Alt on Windows/Linux, Ctrl+Cmd on Mac):
 
@@ -61,6 +96,7 @@ magnifier, color filters, and anything else you teach it.
 | `<mod>+=` / `<mod>+-` | Bigger / smaller (the web page if Chrome is in front, else the whole screen) |
 | `<mod>+0` | **Panic button**: undo every visual change |
 | `<mod>+M` | Screen magnifier on/off |
+| `<mod>+G` | Magnify where you're looking (eye tracker) |
 | `<mod>+E` | Describe what's on the screen |
 | `<mod>+1` | Reading mode (an example command) |
 | `<mod>+A` | Open the dashboard |
@@ -153,7 +189,7 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 
 | Web pages (Chrome) | Whole screen / system | Other |
 |---|---|---|
-| `set_page_zoom`, `set_min_font_size`, `restyle_page`, `reader_view`, `read_page`, `get_page_text`, `scroll_page`, `browser_navigate`, `open_website`, `remember_site_style` | `magnify_screen`, `color_filter`, `set_text_size`, `describe_screen`, `read_selection` | `reset_all`, `remember_preference`, `forget_preferences`, `apply_profile`, `set_speech_rate`, plus hotkey-only: `zoom_in`, `zoom_out`, `zoom_to`, `toggle_magnifier`, `listen`, `stop_speaking`, `open_dashboard`, `show_help` |
+| `set_page_zoom`, `set_min_font_size`, `restyle_page`, `reader_view`, `read_page`, `get_page_text`, `scroll_page`, `browser_navigate`, `open_website`, `remember_site_style` | `magnify_screen`, `magnify_where_i_look`, `calibrate_eye_tracker`, `magnifier_follow`, `eye_tracking`, `color_filter`, `set_text_size`, `describe_screen`, `read_selection` | `reset_all`, `remember_preference`, `forget_preferences`, `apply_profile`, `set_speech_rate`, plus hotkey-only: `zoom_in`, `zoom_out`, `zoom_to`, `toggle_magnifier`, `listen`, `stop_speaking`, `open_dashboard`, `show_help` |
 
 ---
 
@@ -169,6 +205,8 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 | Bad config edit | Last good settings stay active; the error is shown |
 | Broken plug-in | That file is skipped (old version kept); everything else runs |
 | Hotkey hook crashes | It runs in its own process and is restarted; it can't take Ally down |
+| Camera / eye tracker crashes | Same: its own process, restarted (up to 4 times in 2 minutes) |
+| Microphone unplugged or blocked | Hands-free listening shows the problem and tries again every 5 s |
 | A tool hangs | Every tool has a timeout (15 s default) |
 | Something looks wrong on screen | `<mod>+0` or "reset" undoes every visual change |
 
@@ -207,7 +245,9 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 | `ally/platforms/` | macOS, Windows and Linux adapters |
 | `ally/server.py`, `ally/websocket.py`, `ally/bridge.py` | Dashboard, API, extension link |
 | `ally/hotkeys.py`, `ally/hotkey_helper.py` | Global hotkeys in a separate process |
-| `ally/speech.py`, `ally/voice.py` | Talking and listening |
+| `ally/speech.py`, `ally/voice.py` | Talking, push-to-talk and offline speech-to-text |
+| `ally/listener.py` | Hands-free: always listening for "Ally, ..." |
+| `ally/gaze.py`, `ally/gaze_helper.py`, `ally/gaze_model.py` | Eye tracking: webcam process, calibration, gaze math |
 | `ally/supervisor.py`, `ally/autostart.py`, `ally/doctor.py` | Always-on pieces |
 | `extension/` | Chrome extension (Manifest V3) |
 | `dashboard/` | Control panel web page |
@@ -231,7 +271,7 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 
 ```
 cd tests
-python3 -m unittest test_config test_registry test_brain test_network test_runtime   # 75 tests, ~15 s (~40 s on Windows)
+python3 -m unittest test_config test_registry test_brain test_network test_runtime test_handsfree   # 100 tests, ~15 s (~40 s on Windows)
 python3 e2e_chrome.py   # real Chromium + extension + agent (needs: pip install playwright; python -m playwright install chromium)
 ```
 
@@ -264,6 +304,10 @@ Logs: `logs/ally.log` and `logs/supervisor.log`.
   in `[brain]` if you prefer.
 - Claude can only run registered tools. It can't type arbitrary shell commands; `shell` steps are fixed in your config.
 - The dashboard's mic button uses Chrome's speech recognition, which sends audio to Google.
+- Hands-free listening and eye tracking run on your computer: microphone audio and camera video are never
+  sent anywhere or saved. Only the text of a request addressed to Ally goes to Claude (as with typing).
+  The microphone and camera stay on while Ally runs; turn them off with `voice.always_listen = false` and
+  `gaze.enabled = false`, or say "Ally, turn off eye tracking".
 
 ## Hackathon notes
 

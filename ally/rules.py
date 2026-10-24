@@ -42,6 +42,29 @@ RULES = [
          full=r"(reset|reset (all|everything|it|this|the page|the screen)|undo( (all|everything|that|it))?|"
               r"back to normal|go back to normal|turn (it|everything) off|normal( view| size)?|panic)",
          loose=r"\b(reset|back to normal|undo (everything|all))\b"),
+    Rule("look_magnify", [("magnify_where_i_look", {})],
+         full=r"(?:i want |i'd like |let me see |show me )?(?:to )?(?:(?:magnify|enlarge|blow up|zoom(?: in)?(?: on)?|"
+              r"make bigger) )?(?:what |where |the (?:thing|part|spot|area|text|word|words) (?:that )?)"
+              r"(?:i'm|i am|im) (?:looking|staring|gazing)(?: at)?(?: magnified| bigger| larger| enlarged| zoomed(?: in)?)?|"
+              r"(?:magnify|enlarge|zoom(?: in)?(?: on)?) (?:here|right here|this spot|there|where i look)|"
+              r"make (?:what|where) (?:i'm|i am|im) looking at (?:bigger|larger)",
+         loose=r"\b(?:i'm|i am|im) (?:looking|staring|gazing)\b|\bwhere i look\b|\b(?:magnify|zoom(?: in)?) here\b"),
+    Rule("calibrate", [("calibrate_eye_tracker", {})],
+         full=r"(?:re)?calibrate(?: the| my)?(?: eyes?| eye ?track(?:er|ing)| gaze(?: tracking)?)?|"
+              r"(?:set up|setup)(?: the| my)? (?:eyes|eye ?track(?:er|ing)|gaze(?: tracking)?)|"
+              r"(?:eye ?track(?:er|ing)|gaze) (?:calibration|setup|set up)",
+         loose=r"\bcalibrat"),
+    Rule("follow_eyes", [("magnifier_follow", {"target": "eyes"})],
+         full=r"(?:follow|track) (?:my )?(?:eyes|gaze)|(?:magnifier|zoom) (?:should )?follows? (?:my )?(?:eyes|gaze)"),
+    Rule("follow_mouse", [("magnifier_follow", {"target": "mouse"})],
+         full=r"follow (?:my |the )?(?:mouse|pointer|cursor)|"
+              r"(?:magnifier|zoom) (?:should )?follows? (?:my |the )?(?:mouse|pointer|cursor)"),
+    Rule("eyes_off", [("eye_tracking", {"on": False})],
+         full=r"(?:turn off|stop|disable|pause) (?:the )?(?:eye ?track(?:er|ing)|camera|webcam|gaze(?: tracking)?)|"
+              r"(?:eye ?track(?:er|ing)|camera|webcam) off"),
+    Rule("eyes_on", [("eye_tracking", {"on": True})],
+         full=r"(?:turn on|start|enable|resume) (?:the )?(?:eye ?track(?:er|ing)|camera|webcam|gaze(?: tracking)?)|"
+              r"(?:eye ?track(?:er|ing)|camera|webcam) on"),
     Rule("zoom_in", [("zoom_in", {})],
          full=r"(zoom in|zoom|bigger|larger|enlarge|increase|make (it|this|that|the text|text|things|everything) "
               r"(bigger|larger)|bigger please|i can't (see|read)( (this|that|it))?|too small|it's too small)",
@@ -131,5 +154,5 @@ def match(text: str, strict: bool = True) -> Match | None:
 
 
 HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the selection, stop, high contrast, "
-             "dark mode, reader mode, more spacing, magnifier, invert colors, scroll down, go back, "
-             "or ask anything when you're online.")
+             "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, calibrate my eyes, "
+             "invert colors, scroll down, go back, or ask anything when you're online.")

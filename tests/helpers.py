@@ -18,6 +18,9 @@ if str(ROOT) not in sys.path:
 def temp_home(config: str = "") -> Path:
     home = Path(tempfile.mkdtemp(prefix="ally-test-"))
     base = '' if "[speech]" in config else '[speech]\nengine = "off"\n'
+    # Tests never open the real microphone or camera unless they ask for it.
+    base += '' if "[voice]" in config else '[voice]\nalways_listen = false\n'
+    base += '' if "[gaze]" in config else '[gaze]\nenabled = false\n'
     (home / "config.toml").write_text(base + config, encoding="utf-8")
     (home / "plugins").mkdir()
     return home

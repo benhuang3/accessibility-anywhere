@@ -10,11 +10,13 @@ import sys
 from . import __version__, autostart
 from .claude import Claude, ClaudeError
 from .config import ConfigManager
+from .gaze import has_gaze_packages
 from .paths import Paths, load_env_file
 from .platforms import get_platform
 from .registry import PluginLoader, Registry
 from .supervisor import health
 from .tools import BUILTIN_MODULES
+from .voice import has_whisper
 
 MARK = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL"}
 
@@ -108,6 +110,26 @@ def run_checks(home=None, online: bool = True) -> list[tuple[str, str, str]]:
     ok, why = importable("sounddevice")
     out.append(("ok" if ok and has("numpy") else "warn", "Microphone", "sounddevice " + why +
                 ("" if ok else " (pip install sounddevice numpy; Linux also needs libportaudio2)")))
+    v = cm.data["voice"]
+    if not v.get("always_listen") or v.get("engine") == "off":
+        out.append(("ok", "Always listening", "off (voice.always_listen = false)"))
+    elif has_whisper():
+        out.append(("ok", "Always listening", f"on: say \"{str((v.get('wake_words') or ['ally'])[0]).title()}, ...\" "
+                    f"(offline speech-to-text {v.get('whisper_model', 'base.en')}; the model downloads once)"))
+    else:
+        out.append(("warn", "Always listening", "needs offline speech-to-text: pip install faster-whisper"))
+    if not cm.data["gaze"].get("enabled"):
+        out.append(("ok", "Eye tracking", "off (gaze.enabled = false)"))
+    elif not has_gaze_packages():
+        out.append(("warn", "Eye tracking", "pip install mediapipe opencv-python"))
+    else:
+        from . import gaze_model
+
+        calibrated = gaze_model.load(paths.state_dir / "gaze_calibration.json") is not None
+        model = (paths.state_dir / "models" / "face_landmarker.task").exists()
+        out.append(("ok" if calibrated else "warn", "Eye tracking",
+                    ("calibrated" if calibrated else "not calibrated yet: say \"Ally, calibrate my eyes\"")
+                    + ("" if model else "; the face model (3.7 MB) downloads on first start")))
     out.append(("ok" if autostart.installed() else "warn", "Start at login",
                 "on" if autostart.installed() else "off: python run.py install"))
     try:

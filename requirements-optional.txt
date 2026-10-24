@@ -5,9 +5,15 @@
 pynput>=1.7.6      # global hotkeys (Mac: needs Accessibility + Input Monitoring permission; Linux: X11)
 mss>=9.0           # fast screenshots for "describe my screen"
 pillow>=10.0       # shrinks screenshots so Claude answers faster
-sounddevice>=0.4.6 # microphone for the voice hotkey
-numpy>=1.26        # used with sounddevice
+sounddevice>=0.4.6 # microphone for voice input and always-on listening
+numpy>=1.26        # used with sounddevice and the eye tracker
 certifi            # fixes HTTPS certificate errors on some Mac Python installs
 
-# Optional offline speech-to-text (big download, ~150 MB model on first use):
-# faster-whisper>=1.0
+# Hands-free voice ("Ally, ..."), transcribed on this computer. The speech model downloads on
+# first use (base.en ~145 MB; tiny.en ~75 MB).
+faster-whisper>=1.0
+
+# Webcam eye tracking ("Ally, magnify what I'm looking at"). The face model (3.7 MB) downloads
+# on first use. mediapipe brings its own OpenCV (opencv-contrib-python); if you already have
+# opencv-python, install mediapipe with --no-deps plus: absl-py flatbuffers protobuf matplotlib
+mediapipe>=0.10.20

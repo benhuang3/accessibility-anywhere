@@ -28,7 +28,7 @@ import time
 import wave
 
 from ..registry import ToolError
-from .base import NO_WINDOW, Platform, is_64bit_python, popen, run, which
+from .base import NO_WINDOW, Platform, edge_speed, is_64bit_python, popen, run, which
 
 log = logging.getLogger("ally.os.windows")
 
@@ -377,6 +377,9 @@ class _Sound:
 
 
 class _MagThread(threading.Thread):
+    """Owns the Magnification API. The view follows the mouse, stays put ("fixed"), or follows the
+    eyes ("eyes": looking near an edge pans that way; moving the mouse a lot hands control back to it)."""
+
     def __init__(self):
         super().__init__(name="magnifier", daemon=True)
         self.cmds: queue.Queue = queue.Queue()
@@ -384,6 +387,10 @@ class _MagThread(threading.Thread):
         self.ok = False
         self.error = ""
         self.level = 1.0
+        self.offset = (0, 0)  # top-left of the magnified view, in unmagnified screen pixels
+        self.follow = "mouse"
+        self.gaze = None  # callable -> (x, y) of the eyes on the screen, or None
+        self.pan_speed = 1.0
 
     def call(self, op: str, value, timeout: float = 3.0):
         done = threading.Event()
@@ -441,7 +448,19 @@ class _MagThread(threading.Thread):
             return bool(mag.MagSetFullscreenColorEffect(ctypes.byref(eff)))
 
         pt = wt.POINT()
-        last = (None, None)
+        pos = [0.0, 0.0]  # exact view offset while panning with the eyes (sub-pixel steps add up)
+        mouse_at = (0, 0)
+        tick = time.monotonic()
+        failed = ("Windows wouldn't change the magnification. If the Windows Magnifier app "
+                  "is open, close it (Win+Esc) and try again.")
+
+        def apply_view(lvl: float, x: int, y: int) -> bool:
+            if not set_transform(lvl, x, y):
+                return False
+            self.level, self.offset = lvl, (x, y)
+            pos[:] = [float(x), float(y)]
+            return True
+
         try:
             while True:
                 try:
@@ -451,29 +470,73 @@ class _MagThread(threading.Thread):
                 if op == "stop":
                     done.set()
                     break
-                if op == "level":
-                    w, h = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-                    user32.GetCursorPos(ctypes.byref(pt))
+                w, h = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+                user32.GetCursorPos(ctypes.byref(pt))
+                if op == "level":  # zoom; keep following what was followed, around the same spot
                     lvl = max(1.0, float(value))
-                    x, y = (follow_offset(pt.x, w, lvl), follow_offset(pt.y, h, lvl)) if lvl > 1.0 else (0, 0)
-                    if set_transform(lvl, x, y):
-                        self.level, last = lvl, (x, y)
+                    if lvl <= 1.0:
+                        x, y = 0, 0
+                        self.follow = "mouse"
+                    elif self.follow == "mouse" or self.level <= 1.0:
+                        x, y = follow_offset(pt.x, w, lvl), follow_offset(pt.y, h, lvl)
+                    else:
+                        cx = self.offset[0] + w / self.level / 2
+                        cy = self.offset[1] + h / self.level / 2
+                        x, y = follow_offset(int(cx), w, lvl), follow_offset(int(cy), h, lvl)
+                    if apply_view(lvl, x, y):
                         box["result"] = lvl
                     else:
-                        box["error"] = ("Windows wouldn't change the magnification. If the Windows Magnifier app "
-                                        "is open, close it (Win+Esc) and try again.")
+                        box["error"] = failed
+                    mouse_at = (pt.x, pt.y)
+                    done.set()
+                elif op == "view":  # zoom centered on a point, then follow "eyes", "mouse" or nothing
+                    lvl, cx, cy, follow = value
+                    lvl = max(1.0, float(lvl))
+                    x, y = follow_offset(int(cx), w, lvl), follow_offset(int(cy), h, lvl)
+                    if apply_view(lvl, x, y):
+                        self.follow = follow if lvl > 1.0 else "mouse"
+                        box["result"] = lvl
+                    else:
+                        box["error"] = failed
+                    mouse_at = (pt.x, pt.y)
+                    done.set()
+                elif op == "follow":
+                    self.follow = value
+                    mouse_at = (pt.x, pt.y)
+                    done.set()
+                elif op == "get":  # the real zoom, even when the Windows Magnifier app set it
+                    got, gx, gy = ctypes.c_float(), ctypes.c_int(), ctypes.c_int()
+                    if mag.MagGetFullscreenTransform(ctypes.byref(got), ctypes.byref(gx), ctypes.byref(gy)):
+                        box["result"] = (float(got.value), gx.value, gy.value)
+                    else:
+                        box["result"] = (self.level, *self.offset)
                     done.set()
                 elif op == "effect":
                     if not set_effect(value):
                         box["error"] = "Windows wouldn't apply the color filter."
                     done.set()
                 elif op is None and self.level > 1.0:
-                    if user32.GetCursorPos(ctypes.byref(pt)):
-                        w, h = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+                    now = time.monotonic()
+                    dt, tick = min(0.1, now - tick), now
+                    if self.follow != "mouse" and abs(pt.x - mouse_at[0]) + abs(pt.y - mouse_at[1]) > 80:
+                        self.follow = "mouse"  # the user reached for the mouse: let the view follow it again
+                        log.info("magnifier: mouse moved, following the mouse")
+                    if self.follow == "mouse":
                         xy = (follow_offset(pt.x, w, self.level), follow_offset(pt.y, h, self.level))
-                        if xy != last:
-                            mag.MagSetFullscreenTransform(ctypes.c_float(self.level), xy[0], xy[1])
-                            last = xy
+                        if xy != self.offset:
+                            apply_view(self.level, *xy)
+                    elif self.follow == "eyes" and self.gaze is not None:
+                        g = self.gaze()
+                        if g is not None:
+                            vw, vh = w / self.level, h / self.level
+                            vx, vy = edge_speed(g[0] / w), edge_speed(g[1] / h)
+                            pos[0] = min(max(pos[0] + vx * vw * self.pan_speed * dt, 0.0), w - vw)
+                            pos[1] = min(max(pos[1] + vy * vh * self.pan_speed * dt, 0.0), h - vh)
+                            xy = (int(pos[0]), int(pos[1]))
+                            if xy != self.offset and mag.MagSetFullscreenTransform(ctypes.c_float(self.level), *xy):
+                                self.offset = xy
+                else:
+                    tick = time.monotonic()
         finally:
             try:
                 mag.MagSetFullscreenTransform(ctypes.c_float(1.0), 0, 0)
@@ -491,6 +554,7 @@ class WindowsPlatform(Platform):
         super().__init__()
         self._mag: _MagThread | None = None
         self._speech: _SpeechWorker | None = None
+        self._gaze = None  # (latest gaze point callable, pan speed) from the eye tracker
         self._lock = threading.Lock()
 
     def _magnifier(self) -> _MagThread | None:
@@ -500,6 +564,8 @@ class WindowsPlatform(Platform):
                     log.warning("32-bit Python: the Magnification API needs 64-bit Python")
                     return None
                 t = _MagThread()
+                if self._gaze is not None:
+                    t.gaze, t.pan_speed = self._gaze
                 t.start()
                 t.ready.wait(5)
                 self._mag = t
@@ -507,27 +573,65 @@ class WindowsPlatform(Platform):
                     log.warning("Magnification API unavailable: %s", t.error)
             return self._mag if self._mag.ok else None
 
+    def _zoom(self, level: float, op: str, value) -> str | None:
+        """Run a zoom op on the API thread. Returns the message, or None if the API can't be used."""
+        m = self._magnifier()
+        if m is None:
+            return None
+        took_over = level > 1.0 and magnifier_app_open() and close_magnifier_app()
+        for attempt in range(6 if took_over else 1):  # Magnifier lets go of the API a moment after closing
+            try:
+                m.call(op, value)
+                break
+            except ToolError as e:
+                if attempt == (5 if took_over else 0):
+                    log.warning("Magnification API failed (%s); using Magnifier shortcuts", e)
+                    return None
+                time.sleep(0.25)
+        self.magnify_level = level
+        if level > 1.0:
+            self.last_magnify = level
+        follows = {"eyes": "follows your eyes; look near an edge to move", "mouse": "follows your mouse"}
+        msg = ("Screen magnifier off." if level <= 1.0 else
+               f"Screen magnified to {level:g}x" + (f" ({follows[m.follow]})." if m.follow in follows else "."))
+        return ("Closed the Windows Magnifier app so I could take over. " + msg) if took_over else msg
+
+    def magnify_at(self, level: float, x: float, y: float, follow: str = "eyes") -> str:
+        level = max(1.0, min(16.0, float(level)))
+        msg = self._zoom(level, "view", (level, x, y, follow))
+        return msg if msg is not None else super().magnify_at(level, x, y, follow)
+
+    def set_follow(self, mode: str) -> str:
+        m = self._magnifier()
+        if m is None:
+            raise ToolError("Following your eyes needs the Windows Magnification API (64-bit Python).")
+        m.call("follow", mode)
+        if self.magnify_level <= 1.0:
+            return f"The magnifier will follow your {mode} when it's on."
+        return f"The magnifier follows your {mode} now." + (" Look near an edge to move." if mode == "eyes" else "")
+
+    def view(self) -> tuple[float, int, int]:
+        m = self._magnifier()
+        if m is None:
+            return super().view()
+        try:
+            return m.call("get", None)
+        except ToolError:
+            return m.level, m.offset[0], m.offset[1]
+
+    def other_magnifier_open(self) -> bool:
+        return magnifier_app_open()
+
+    def set_gaze_source(self, latest, pan_speed: float = 1.0) -> None:
+        self._gaze = (latest, pan_speed)  # handed to the magnifier thread when it starts
+        if self._mag is not None:
+            self._mag.gaze, self._mag.pan_speed = latest, pan_speed
+
     def magnify(self, level: float) -> str:
         level = max(1.0, min(16.0, float(level)))
-        m = self._magnifier()
-        if m is not None:
-            took_over = level > 1.0 and magnifier_app_open() and close_magnifier_app()
-            for attempt in range(6 if took_over else 1):  # Magnifier lets go of the API a moment after closing
-                try:
-                    m.call("level", level)
-                    break
-                except ToolError as e:
-                    if attempt == (5 if took_over else 0):
-                        log.warning("Magnification API failed (%s); using Magnifier shortcuts", e)
-                        m = None
-                    else:
-                        time.sleep(0.25)
-            if m is not None:
-                self.magnify_level = level
-                if level > 1.0:
-                    self.last_magnify = level
-                msg = "Screen magnifier off." if level <= 1.0 else f"Screen magnified to {level:g}x (follows your mouse)."
-                return ("Closed the Windows Magnifier app so I could take over. " + msg) if took_over else msg
+        msg = self._zoom(level, "level", level)
+        if msg is not None:
+            return msg
         # Fallback: the Windows Magnifier app's shortcuts. Its zoom level can't be read here, so
         # start it (it opens at its last zoom) or move one step.
         if level <= 1.0:
