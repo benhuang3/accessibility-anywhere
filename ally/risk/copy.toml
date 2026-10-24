@@ -1,0 +1,76 @@
+# Warning wording for scam and risk protection, in one place. Edit freely, `python -m unittest test_risk_copy`
+# checks the rules below.
+#
+# Rules: say what we see, why it matters, offer one action. Hedge ("may", "looks like"). Never blame, no
+# capital-letter shouting, no exclamation marks, no phone numbers. The first action is the safe default.
+# Placeholders: {tool} {host} {usual_site}. Action ids are what the agent runs, and only after a yes:
+#   close_page  close this tab          close_tool  close the remote-control tool
+#   open_usual  open {usual_site}       go_back     go back to the previous page
+#   explain     explain, change nothing  stay        do nothing
+# Use {tool} / {host} / {usual_site} only where the matching field is always supplied (see copy.py).
+
+[scam_popup]
+title = "This message may not be real."
+body = "A page says your computer is infected and asks you to call a number. Real Windows warnings never ask you to call. Your computer may be fine."
+spoken = "Let's pause for a second. This page says your computer has a virus and asks you to call a number. Real Windows warnings never include a phone number, so it may be a trick. Shall I close it for you?"
+[[scam_popup.actions]]
+id = "close_page"
+label = "Close this page"
+[[scam_popup.actions]]
+id = "explain"
+label = "Tell me more"
+
+[remote_access]
+title = "Someone may be able to control this computer."
+body = "{tool} just opened. If you didn't start it, or someone on the phone asked you to, it's safest to close it."
+spoken = "{tool} just opened. It lets another person see and control this computer. Did you start it yourself? Say close it, and I'll shut it down."
+[[remote_access.actions]]
+id = "close_tool"
+label = "Close it"
+[[remote_access.actions]]
+id = "stay"
+label = "I know this person"
+
+[untrusted_site]
+title = "This address looks a little different."
+body = "You're on {host}. Your bank is usually {usual_site}."
+spoken = "This address looks slightly different from your bank's usual site. Would you like me to open the usual one?"
+[[untrusted_site.actions]]
+id = "open_usual"
+label = "Go to the usual site"
+[[untrusted_site.actions]]
+id = "stay"
+label = "Stay here"
+
+[untrusted_site_generic]
+title = "This address looks a little different."
+body = "You're on {host}. It looks a bit like a well-known website, but it isn't quite the same."
+spoken = "This address looks a bit like a well-known website, but it isn't quite the same. Would you like to go back?"
+[[untrusted_site_generic.actions]]
+id = "go_back"
+label = "Take me back"
+[[untrusted_site_generic.actions]]
+id = "stay"
+label = "Stay here"
+
+[payment_field]
+title = "Before you enter card details."
+body = "I don't recognise this website. New shops are fine, but a quick check first is wise."
+spoken = "You're about to type card details on a website I don't know. Want to take a quick look together first?"
+[[payment_field.actions]]
+id = "explain"
+label = "Check with me"
+[[payment_field.actions]]
+id = "stay"
+label = "Continue"
+
+[joined_remote_payment]
+title = "Let's pause."
+body = "Someone may be able to see this screen, and you've just opened your bank."
+spoken = "Someone may be able to see your screen right now, and you've just opened your bank. I'd feel better if we paused. Shall I close the remote tool?"
+[[joined_remote_payment.actions]]
+id = "close_tool"
+label = "Close the remote tool"
+[[joined_remote_payment.actions]]
+id = "stay"
+label = "It's okay"
