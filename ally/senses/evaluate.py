@@ -146,7 +146,7 @@ def expand_paths(paths: list[str | Path]) -> list[Path]:
     for raw in paths:
         path = Path(raw)
         if path.is_dir():
-            out.extend(sorted(p for p in path.glob("*.jsonl") if p.is_file()))
+            out.extend(sorted(p for p in path.rglob("*.jsonl") if p.is_file()))  # the recorder nests runs
         else:
             out.append(path)
     return out

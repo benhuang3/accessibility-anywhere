@@ -143,7 +143,9 @@ class RecordTests(unittest.TestCase):
             self.assertIn(expected, names)
         gaps = [p for p in parts if p["name"] == "gap"]
         self.assertTrue(gaps)
-        self.assertTrue(all(p["seconds"] == 3 and p["expect"] == "gap" for p in gaps))
+        self.assertTrue(all(p["expect"] == "gap" for p in gaps))
+        # 3 s rests, except before the struggle part, which outlasts rearm_seconds (20 s by default).
+        self.assertEqual(sorted({p["seconds"] for p in gaps}), [3, 22])
         by_name = {p["name"]: p for p in parts}
         self.assertEqual(by_name["read_normal"]["expect"], "none")
         self.assertEqual(by_name["read_tiny"]["expect"], "natural")
@@ -684,6 +686,22 @@ class CameraOffTests(unittest.TestCase):
         self.assertFalse(gaze.wanted())
         self.assertFalse(agent.senses.vision_wanted())
         self.assertTrue(any("Camera turned off" in event["text"] for event in agent.events.since(0)))
+
+
+class RecorderEvaluatorFitTests(unittest.TestCase):
+    def test_rest_before_the_struggle_part_outlasts_rearm(self):
+        # Otherwise the lean from "Lean in" is still waiting to re-arm and hides the struggle.
+        parts = matrix.protocol(0, rearm_seconds=20)
+        i = next(i for i, p in enumerate(parts) if p["expect"] == "struggle")
+        self.assertEqual(parts[i - 1]["expect"], "gap")
+        self.assertGreater(parts[i - 1]["seconds"], 20)
+
+    def test_report_finds_runs_in_their_subfolders(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "20261024T213222Z", "a-no-bright.jsonl")
+            p.parent.mkdir()
+            p.write_text("{}\n", encoding="utf-8")
+            self.assertEqual(evaluate.expand_paths([d]), [p])
 
 
 if __name__ == "__main__":

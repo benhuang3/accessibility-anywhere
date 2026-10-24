@@ -12,7 +12,7 @@ import numpy as np
 
 # Face Landmarker points at the widest part of the face (left and right cheek, by the ears).
 CHEEK_R, CHEEK_L = 234, 454
-FIELDS = ("squint_l", "squint_r", "smile", "blink", "yaw", "pitch", "width", "light")
+FIELDS = ("squint_l", "squint_r", "smile", "blink", "blink_l", "blink_r", "yaw", "pitch", "width", "light")
 
 
 def head_angles(matrix) -> tuple[float, float]:
@@ -48,6 +48,9 @@ def signals(landmarks, blendshapes: dict | None, matrix, width: int, height: int
         "squint_l": float(b.get("eyeSquintLeft", 0.0)), "squint_r": float(b.get("eyeSquintRight", 0.0)),
         "smile": (float(b.get("mouthSmileLeft", 0.0)) + float(b.get("mouthSmileRight", 0.0))) / 2,
         "blink": (float(b.get("eyeBlinkLeft", 0.0)) + float(b.get("eyeBlinkRight", 0.0))) / 2,
+        # Each eye on its own, recorded for tuning. On a real face these barely separate a wink from a
+        # squint (one-eye close: 0.29 vs 0.38), so no gate uses them yet.
+        "blink_l": float(b.get("eyeBlinkLeft", 0.0)), "blink_r": float(b.get("eyeBlinkRight", 0.0)),
         "yaw": float(yaw), "pitch": float(pitch), "width": face_w,
         "light": float(light) if light is not None else -1.0,
     }

@@ -26,7 +26,9 @@ class Tuning:
     squint_window: float = 3.0
     wink_max: float = 0.15          # |left - right| above this is a wink, not a squint
     smile_gate: float = 0.35        # mean mouthSmile above this: ignore squint (cheeks narrow the eyes)
-    blink_gate: float = 0.5         # mean eyeBlink above this: drop the frame
+    blink_gate: float = 0.5         # mean eyeBlink above this: drop the frame, if it's brief (a blink)...
+    blink_max: float = 0.4          # ...lasting under this many seconds; a held squint also scores high
+    blink_closed: float = 0.8       # mean eyeBlink above this: eyes shut, always dropped
     pose_gate: float = 20.0         # degrees of turn or nod beyond which face numbers aren't trusted
     light_floor: float = 40.0       # mean face brightness (0-255) below this: too dark to judge squint
     lean_ratio: float = 1.15        # face width / baseline width: about 13% closer to the screen
@@ -130,9 +132,13 @@ class Baseline:
         return b if 0 <= b.squint <= 0.6 and 0.05 <= b.width <= 0.95 else None
 
 
-def gate(sig: dict, tune: Tuning) -> str:
-    """Why this frame can't be trusted for squint ("" = it can)."""
-    if sig["blink"] >= tune.blink_gate:
+def gate(sig: dict, tune: Tuning, blink_held: float = 0.0) -> str:
+    """Why this frame can't be trusted for squint ("" = it can).
+
+    blink_held: seconds the blink score has stayed at or above blink_gate. A blink is over within
+    blink_max; a hard squint pushes the score that high too, but for as long as it's held.
+    """
+    if sig["blink"] >= tune.blink_closed or (sig["blink"] >= tune.blink_gate and blink_held < tune.blink_max):
         return "blink"
     if abs(sig["yaw"]) > tune.pose_gate or abs(sig["pitch"]) > tune.pose_gate:
         return "turned"
@@ -163,10 +169,21 @@ class SquintDetector:
         self.latched = False
         self.delta = 0.0
         self.gated = ""
+        self.blink_start: float | None = None  # start of the current run of high blink scores
+        self.blink_last = -1e9
+
+    def blink_held(self, sig: dict, t: float) -> float:
+        """Seconds the blink score has been high, allowing dips of up to 0.3 s (a held squint flickers)."""
+        if sig["blink"] < self.tune.blink_gate:
+            return 0.0 if t - self.blink_last > 0.3 else t - (self.blink_start or t)
+        if self.blink_start is None or t - self.blink_last > 0.3:
+            self.blink_start = t
+        self.blink_last = t
+        return t - self.blink_start
 
     def feed(self, sig: dict, t: float, base: Baseline) -> Signal | None:
         tune = self.tune
-        self.gated = gate(sig, tune)
+        self.gated = gate(sig, tune, self.blink_held(sig, t))
         if self.gated == "blink":
             return None  # a blink is a brief dropout, not a reason to reset
         while self.points and t - self.points[0][0] > tune.squint_window:
@@ -208,8 +225,8 @@ class LeanDetector:
 
     def feed(self, sig: dict, t: float, base: Baseline) -> Signal | None:
         tune = self.tune
-        if sig["blink"] >= tune.blink_gate:
-            return None
+        # No blink gate: face width comes from the cheeks, and squinting while leaning in (eyes partly
+        # closed) is the struggle that matters most.
         if abs(sig["yaw"]) > tune.pose_gate or abs(sig["pitch"]) > tune.pose_gate:
             self.since = None  # a turned face looks narrower: don't judge distance
             return None

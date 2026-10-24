@@ -77,8 +77,12 @@ def ally_is_running(paths: Paths | None = None) -> bool:
         return False
 
 
-def protocol(free_minutes: float = 0) -> list[dict]:
-    """The scripted parts, with a 3 s rest between them. Calibration is first and lasts 15 s."""
+def protocol(free_minutes: float = 0, rearm_seconds: float = Tuning.rearm_seconds) -> list[dict]:
+    """The scripted parts, with a 3 s rest between them. Calibration is first and lasts 15 s.
+
+    The rest before a struggle part outlasts rearm_seconds: a detector that just fired (the lean in
+    "Lean in") waits that long before it can fire again, which would hide the struggle.
+    """
     parts = [{
         "name": "calibration", "title": "Read normally",
         "text": "Read this sentence at a comfortable size. Keep a relaxed face and sit as you usually do.",
@@ -89,7 +93,10 @@ def protocol(free_minutes: float = 0) -> list[dict]:
         "seconds": GAP_SECONDS, "expect": "gap", "size": "normal",
     }
     for name, title, text, seconds, expect, size in _TASKS:
-        parts.append(dict(gap))
+        rest = dict(gap)
+        if expect == "struggle":
+            rest["seconds"] = max(GAP_SECONDS, float(rearm_seconds) + 2.0)
+        parts.append(rest)
         parts.append({"name": name, "title": title, "text": text, "seconds": float(seconds),
                       "expect": expect, "size": size})
     if free_minutes > 0:
@@ -431,7 +438,7 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
         log.open_with(meta)
         if code != 0:
             return code
-        parts = protocol(free_minutes)
+        parts = protocol(free_minutes, Tuning.from_config(senses_cfg).rearm_seconds)
         total = len(parts)
         for index, part in enumerate(parts, start=1):
             current = {"name": part["name"], "expect": part["expect"], "start": now(), "partial": False}

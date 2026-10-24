@@ -132,6 +132,17 @@ class SquintTests(unittest.TestCase):
         narrow = Baseline(squint=0.35, width=0.3)  # someone whose eyes always read narrow
         self.assertEqual(run(SquintDetector(self.tune), [(40, frame(0.40))], base=narrow), [])
 
+    def test_held_squint_counts_though_its_blink_score_is_high(self):
+        # A hard squint closes the eyes partway: a real recording read blink 0.57 for the whole squint.
+        sigs = run(SquintDetector(self.tune), [(20, frame()), (40, frame(0.36, blink=0.57))])
+        self.assertEqual([s.kind for s in sigs], ["squint"])
+
+    def test_brief_blinks_and_shut_eyes_are_still_dropped(self):
+        b = frame(0.36, blink=0.6)  # 0.3 s blinks between normal frames
+        self.assertEqual(run(SquintDetector(self.tune), [(3, b), (5, frame()), (3, b), (5, frame()), (3, b)]), [])
+        self.assertEqual(run(SquintDetector(self.tune), [(40, frame(0.5, blink=0.9))]), [])  # eyes shut
+
+
 
 class LeanTests(unittest.TestCase):
     def setUp(self):
@@ -141,6 +152,11 @@ class LeanTests(unittest.TestCase):
         sigs = run(LeanDetector(self.tune), [(10, frame()), (30, frame(width=0.36))])  # 1.2x wider
         self.assertEqual([(s.kind, s.tier) for s in sigs], [("lean", "strong")])
         self.assertEqual(sigs[0].detail["closer_pct"], 17)
+
+    def test_lean_counts_while_squinting(self):
+        # Leaning in and squinting at once keeps the blink score high; face width doesn't depend on it.
+        sigs = run(LeanDetector(self.tune), [(10, frame()), (30, frame(0.36, blink=0.6, width=0.36))])
+        self.assertEqual([(s.kind, s.tier) for s in sigs], [("lean", "strong")])
 
     def test_weak_then_strong(self):
         sigs = run(LeanDetector(self.tune), [(25, frame(width=0.335)), (25, frame(width=0.36))])
