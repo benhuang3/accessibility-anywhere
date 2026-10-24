@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json, math, time
+from collections import deque
 from pathlib import Path
 import numpy as np
 
@@ -106,13 +107,38 @@ def region(x,y,screen):
     return [["top left","top","top right"],["left","middle","right"],["bottom left","bottom","bottom right"]][row][col]
 
 def fixation(points,t0,t1,radius_px):
-    pts=sorted((float(t),float(x),float(y)) for t,x,y in points if t0<=t<=t1); best=None
-    for i in range(len(pts)):
-        for j in range(i,len(pts)):
-            a=np.array([[p[1],p[2]] for p in pts[i:j+1]]); spread=float(np.max(np.linalg.norm(a-a.mean(0),axis=1))) if len(a) else 0
-            if pts[j][0]-pts[i][0]>=.2 and spread<=radius_px and (best is None or pts[j][0]-pts[i][0]>best["end"]-best["start"]):
-                best={"x":float(np.median(a[:,0])),"y":float(np.median(a[:,1])),"start":pts[i][0],"end":pts[j][0],"samples":len(a),"spread_px":spread}
-    return best
+    """Return the longest dispersion-bounded fixation in the requested time range."""
+    pts=sorted((float(t),float(x),float(y)) for t,x,y in points if t0<=t<=t1)
+    best=None
+    start=0
+    min_x,min_y,max_x,max_y=deque(),deque(),deque(),deque()
+    for end, point in enumerate(pts):
+        for queue, value, sign, axis in ((min_x, point[1], 1, 1), (max_x, point[1], -1, 1),
+                                         (min_y, point[2], 1, 2), (max_y, point[2], -1, 2)):
+            while queue and sign * pts[queue[-1]][axis] >= sign * value:
+                queue.pop()
+            queue.append(end)
+        while start < end:
+            dx=pts[max_x[0]][1]-pts[min_x[0]][1]
+            dy=pts[max_y[0]][2]-pts[min_y[0]][2]
+            if dx + dy <= radius_px:
+                break
+            if min_x[0] == start: min_x.popleft()
+            if max_x[0] == start: max_x.popleft()
+            if min_y[0] == start: min_y.popleft()
+            if max_y[0] == start: max_y.popleft()
+            start += 1
+        duration=point[0]-pts[start][0]
+        if duration >= .2 and (best is None or duration > best["duration"]):
+            best={"start_index":start,"end_index":end,"duration":duration}
+    if best is None:
+        return None
+    window=np.asarray([(p[1],p[2]) for p in pts[best["start_index"]:best["end_index"]+1]])
+    center=window.mean(axis=0)
+    spread=float(np.max(np.linalg.norm(window-center,axis=1)))
+    return {"x":float(np.median(window[:,0])),"y":float(np.median(window[:,1])),
+            "start":pts[best["start_index"]][0],"end":pts[best["end_index"]][0],
+            "samples":len(window),"spread_px":spread}
 
 class Corrector:
     def __init__(self,model): self.base=model; self.model=model; self.samples=[]; self.affine=None

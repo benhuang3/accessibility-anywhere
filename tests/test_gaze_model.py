@@ -52,8 +52,18 @@ class GazeModelTests(unittest.TestCase):
         self.assertLessEqual(gm.radius_px(pose_model, turned), 3 * base_radius)
 
     def test_fixation(self):
-        pts=[(i*.05,100+(i%2),100) for i in range(8)]+[(.4,500,500)]+[(.45+i*.05,300,300) for i in range(8)]
-        f=gm.fixation(pts,0,1,5); self.assertIsNotNone(f); self.assertEqual(f['x'],100.5); self.assertGreaterEqual(f['samples'],5)
+        pts=[(i*.05,100+(i%2),100) for i in range(8)]+[(.4,500,500)]+[(.45+i*.05,300,300) for i in range(14)]
+        f=gm.fixation(pts,0,1.2,5); self.assertIsNotNone(f); self.assertGreaterEqual(f['samples'],5)
+        self.assertEqual(f["x"], 300)
+        self.assertGreater(f["end"] - f["start"], .2)
+
+    def test_fixation_900_points_is_fast(self):
+        import time
+        points = [(i / 20, 200 + (i % 3), 300) for i in range(900)]
+        started = time.perf_counter()
+        fixation = gm.fixation(points, 0, 45, 5)
+        self.assertIsNotNone(fixation)
+        self.assertLess(time.perf_counter() - started, .05)
 
     def test_corrector_filter(self):
         samples=[]
