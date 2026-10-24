@@ -19,6 +19,7 @@ import sys
 import threading
 import urllib.parse
 
+from .registry import ToolError
 from .websocket import WebSocket, accept_key
 
 log = logging.getLogger("ally.server")
@@ -135,6 +136,8 @@ def make_handler(agent):
                     return self._json(200, {"tools": agent.tools_info()})
                 if path == "/api/config":
                     return self._json(200, agent.config_info())
+                if path == "/api/voice":
+                    return self._json(200, agent.confirm.info())
                 if path == "/api/events":
                     try:
                         after = int(q.get("after", "0"))
@@ -169,6 +172,8 @@ def make_handler(agent):
             if path == "/api/stop":
                 agent.speaker.stop()
                 return self._json(200, {"ok": True})
+            if path.startswith("/api/voice/"):
+                return self._voice(path[len("/api/voice/"):], data)
             if path == "/api/shutdown":
                 self._json(200, {"ok": True})
                 agent.request_exit(0)
@@ -177,6 +182,33 @@ def make_handler(agent):
                 self._json(200, {"ok": True})
                 agent.request_exit(75)
                 return
+            return self._json(404, {"error": "not found"})
+
+        def _voice(self, action: str, data: dict):
+            """Spoken questions: say, ask (waits for the answer), answer (buttons), warn, cancel."""
+            vc = agent.confirm
+            try:
+                if action == "say":
+                    ok = vc.say(str(data.get("text", ""))[:4000], str(data.get("style", "calm")),
+                                wait=bool(data.get("wait", False)))
+                    return self._json(200, {"ok": ok, "engine": agent.speaker.last_engine})
+                if action == "ask":
+                    timeout = data.get("timeout")
+                    ans = vc.ask(str(data.get("prompt", ""))[:300], rephrased=data.get("rephrased") or None,
+                                 timeout=float(timeout) if isinstance(timeout, (int, float)) else None,
+                                 kind=str(data.get("kind", "offer"))[:20])
+                    return self._json(200, ans.to_dict())
+                if action == "answer":
+                    ok = vc.answer(str(data.get("answer", "")), by=str(data.get("by", "button"))[:20])
+                    return self._json(200, {"ok": ok, "answered": ok})
+                if action == "warn":
+                    ans = vc.warn({"kind": str(data.get("kind", "")), "severity": str(data.get("severity", "high"))},
+                                  ask=data.get("ask"))
+                    return self._json(200, ans.to_dict() if ans is not None else {"value": "said"})
+                if action == "cancel":
+                    return self._json(200, {"ok": vc.cancel()})
+            except ToolError as e:
+                return self._json(400, {"error": str(e)})
             return self._json(404, {"error": "not found"})
 
         def _dashboard(self):

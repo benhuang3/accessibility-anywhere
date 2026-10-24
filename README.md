@@ -67,6 +67,41 @@ While Ally is talking, say **"Ally, stop"**.
 - Settings under `[voice]`: `always_listen`, `wake_words`, `follow_up_seconds`, and `whisper_model`
   (`tiny.en` is faster, `small.en` more accurate).
 
+### Spoken offers and yes/no answers (Cartesia)
+
+Ally speaks first: "Want me to make this bigger?" Then it listens for the answer. The on-screen Yes / No
+buttons always work too, and the first answer wins. Code: `ally/voice_confirm.py`.
+
+```python
+from ally.voice_confirm import say, ask_yes_no
+say("Done. Say undo to put it back.")
+ask_yes_no("Want me to make this bigger?")   # -> "yes" | "no" | "timeout"
+agent.confirm.confirm_offer(offer)           # asks offer.prompt, calls offer.resolve(answer, by="voice")
+agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up may be a scam. Close it?"
+```
+
+- **Voice**: Cartesia Sonic (`sonic-3.6`, then `sonic-3`), calm emotion, a little slower for questions
+  and slower still for risk warnings, with a short pause before the question. Put `CARTESIA_API_KEY` in
+  `.env` and a voice in `config.toml` (`[speech] cartesia_voice_id = "Tessa"`; a name or an ID).
+  `python run.py voices` lists voices; `python run.py voice-test Tessa Leo Marian Dana --play` plays
+  Ally's prompts in each and prints time to audio and words per minute (aim for about 150-160).
+- **Fallbacks**: Cartesia model -> fallback model -> the computer's built-in voice. After a network
+  failure Ally uses the built-in voice for 30 s instead of waiting on every sentence. Ally's fixed
+  prompts are rendered with Cartesia at start and cached on disk, so they keep the Cartesia voice
+  offline. Answers are heard with Cartesia Ink, then offline Whisper; with neither, the buttons decide.
+- **Safety**: silence or an unclear answer ("yeah, no", "maybe", "that's fine") never counts as yes.
+  An unclear answer gets one re-ask in other words, then "You can tap Yes or No". "What?" and
+  "slower" replay the question more slowly (and "slower" is kept as a habit). Ally only listens after
+  it stops talking, so it never answers itself, and it borrows the always-on listener's microphone
+  rather than opening a second one.
+- **Speed**: a clear "yes"/"no" is accepted after a 0.45 s pause instead of the full one (a bare
+  "yeah" or "sure" still waits, since it may be "yeah... no"). Timings go to `logs/voice_latency.jsonl`
+  and `GET /api/voice`.
+- **Try it**: `python run.py say "Want me to make this bigger?"`, `python run.py ask "Want me to make
+  this bigger?"`, `python run.py answer yes`, `python run.py warn scam_popup`. They use the running
+  agent if there is one, otherwise they run on their own.
+- Settings under `[confirm]` (listen time, re-ask, speeds, eager answers) and `[speech]`.
+
 ### Eye tracking
 
 1. Say **"Ally, calibrate my eyes"**. Dots appear on the screen one at a time; look at each one until
@@ -263,7 +298,8 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 - Windows: `MagSetFullscreenTransform` (1.0-4096.0, offsets in unmagnified pixels) and
   `MagSetFullscreenColorEffect` (Microsoft's grayscale matrix). macOS: Apple's Zoom shortcuts
   (Option-Command-8 / = / -) and Control-Option-Command-8 for invert. GNOME: `org.gnome.desktop.a11y.*` keys.
-- Cartesia: `POST /tts/bytes` (model `sonic-3.6`) and `POST /stt` (model `ink-whisper`) with header `Cartesia-Version: 2026-08-14`.
+- Cartesia: `POST /tts/bytes` (model `sonic-3.6`, fallback `sonic-3`; `generation_config` speed 0.6-1.5, volume,
+  emotion), `GET /voices`, and `POST /stt` (model `ink-whisper`) with header `Cartesia-Version: 2026-08-14`.
 
 ---
 
@@ -271,8 +307,10 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 
 ```
 cd tests
-python3 -m unittest test_config test_registry test_brain test_network test_runtime test_handsfree   # 100 tests, ~15 s (~40 s on Windows)
+python3 -m unittest discover -p "test_*.py"   # 154 tests, ~35 s
 python3 e2e_chrome.py   # real Chromium + extension + agent (needs: pip install playwright; python -m playwright install chromium)
+python3 e2e_voice.py    # the real agent asks 21 spoken questions against a fake Cartesia, microphone and speakers (~4 min)
+python3 voice_phrases.py   # yes/no understanding on 184 labeled answers (accuracy, false-yes count)
 ```
 
 The unit tests use a fake Claude API, so they need no key. The end-to-end test uses port 8765, so stop
@@ -290,12 +328,18 @@ your own Ally first.
 | "offline mode" | Put `ANTHROPIC_API_KEY` in `.env`, check internet, then `python3 run.py doctor`. |
 | Mac: certificate errors | `pip install certifi`, or run "Install Certificates.command" in your Python folder. |
 | Port 8765 in use | Change `agent.port` in config.toml and in the extension popup (Settings). |
+| Ally uses the robot voice | `python3 run.py doctor` shows why (no key, no voice, or Cartesia unreachable). `GET /api/voice` shows `fallback_reason`. |
+| Spoken answers are ignored | `python3 run.py doctor` > "Spoken questions". Needs `sounddevice` and Cartesia or faster-whisper; the buttons always work. |
 | Can't change a page | Chrome blocks extensions on `chrome://` pages and the Web Store. Try a normal site. |
 
 Logs: `logs/ally.log` and `logs/supervisor.log`.
 
 ## Privacy and safety
 
+- Spoken yes/no answers: with Cartesia speech-to-text, only the few seconds after a question (the
+  answer window) are sent to Cartesia; nothing is stored. The latency log has timings, never what was
+  said. Offline Whisper keeps the answer on the computer. Text read aloud is sent to Cartesia to be
+  spoken but is never cached; only Ally's own fixed prompts are cached (in `cache/voice`).
 - The server listens on 127.0.0.1 only. The API needs a secret token, checks the Host header (blocks DNS
   rebinding) and the Origin; the WebSocket only accepts Chrome extensions (lock it to your extension ID
   with `security.allowed_extension_ids`).

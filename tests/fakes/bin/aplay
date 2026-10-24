@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""Fake WAV player: waits as long as the audio lasts and logs it."""
+import json, os, sys, time, wave
+path = sys.argv[-1]
+with wave.open(path, "rb") as w:
+    secs = w.getnframes() / float(w.getframerate())
+log = os.environ.get("FAKE_AUDIO_LOG")
+if log:
+    with open(log, "a") as f:
+        f.write(json.dumps({"t": time.time(), "what": "aplay", "seconds": round(secs, 3)}) + "\n")
+time.sleep(secs)

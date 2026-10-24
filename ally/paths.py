@@ -26,6 +26,10 @@ class Paths:
         return self.home / "logs"
 
     @property
+    def cache_dir(self) -> Path:
+        return self.home / "cache"
+
+    @property
     def env_file(self) -> Path:
         return self.home / ".env"
 
