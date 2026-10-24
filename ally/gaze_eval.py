@@ -1,0 +1,55 @@
+"""Offline evaluator for numeric eye tracker recordings (python -m ally.gaze_eval report PATHS)."""
+import argparse, csv, json
+from pathlib import Path
+import numpy as np
+from . import gaze_model as gm
+
+def evaluate(path):
+    rows=[json.loads(s) for s in Path(path).read_text(encoding="utf-8").splitlines() if s.strip()]
+    meta=next((r for r in rows if r.get("rec")=="meta"),{}); screen=tuple(meta.get("screen",(1920,1080)))
+    frames=[r for r in rows if r.get("rec")=="frame"]; targets=[r for r in rows if r.get("rec")=="target"]
+    results=[]
+    for fs in ("v1","v2"):
+        feats=[]
+        for fr in frames:
+            z=gm.features_for_model({"features":fs},fr["lm"],fr.get("bs"),fr.get("mat"),fr["w"],fr["h"])
+            if z: feats.append((fr["t"],z[0],z[1]))
+        def samples(phases):
+            out=[]
+            for target in targets:
+                if target.get("phase") not in phases: continue
+                for t,f,op in feats:
+                    if target["start"]<=t<=target["end"]: out.append((f,(target["x"],target["y"]),op))
+            cleaned=gm.clean_samples(out)
+            return [(f,t,op) for f,t in cleaned for op in [next((z for ff,tt,z in out if ff==f and tt==t),1.)]]
+        train=samples({"calibration"});
+        if len({t for _,t,_ in train})<6: continue
+        model=gm.fit([(f,t) for f,t,_ in train],screen,fs); corrector=gm.Corrector(model)
+        for click in sorted((r for r in rows if r.get("rec")=="click"),key=lambda c:c["t"]):
+            nearest=min(feats,key=lambda z:abs(z[0]-click["t"]),default=None)
+            if nearest and abs(nearest[0]-click["t"])<=.25: corrector.add(nearest[1],(click["x"],click["y"]),click["t"])
+        for phase in ("validation","drift"):
+            data=samples({phase}); plain=gm.validate(model,[(f,t) for f,t,_ in data]) if data else None
+            corrected=gm.validate(corrector.model,[(f,t) for f,t,_ in data]) if data else None
+            results.append({"file":str(path),"features":fs,"phase":phase,"error_px":plain["error_px"] if plain else None,"region_hits":plain["region_hits"] if plain else None,"region_total":plain["region_total"] if plain else None,"corrected_error_px":corrected["error_px"] if corrected else None,"corrected_region_hits":corrected["region_hits"] if corrected else None,"corrected_region_total":corrected["region_total"] if corrected else None})
+    return results
+
+def report(paths):
+    files=[]
+    for raw in paths:
+        p=Path(raw); files.extend(sorted(p.rglob("*.jsonl")) if p.is_dir() else [p])
+    rows=[r for p in files for r in evaluate(p)]
+    headers=["file","features","phase","error_px","region_hits","region_total","corrected_error_px","corrected_region_hits","corrected_region_total"]
+    print("| " + " | ".join(headers) + " |\n|"+"|".join(["---"]*len(headers))+"|")
+    for r in rows: print("| "+" | ".join(str(r.get(k,"")) for k in headers)+" |")
+    out=(files[0].parent/"gaze_eval.csv") if files else Path("gaze_eval.csv")
+    with out.open("w",newline="",encoding="utf-8") as f:
+        w=csv.DictWriter(f,fieldnames=headers); w.writeheader(); w.writerows(rows)
+    print(f"\nCSV: {out}")
+    for fs in ("v1","v2"):
+        sessions={r["file"] for r in rows if r["features"]==fs and r["phase"]=="validation" and r["error_px"] is not None and r["error_px"]<=150 and r["region_hits"]>=8}
+        print(f"{fs} meets the validation bar on {len(sessions)} session(s); recordings are required for a real accuracy conclusion.")
+
+def main():
+    ap=argparse.ArgumentParser(); sub=ap.add_subparsers(dest="cmd",required=True); rp=sub.add_parser("report"); rp.add_argument("paths",nargs="+"); a=ap.parse_args(); report(a.paths)
+if __name__=="__main__":main()
