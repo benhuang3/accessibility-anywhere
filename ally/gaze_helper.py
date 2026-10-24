@@ -3,7 +3,7 @@
     {"ready": true, "calibrated": false}         camera and face model work
     {"t": 1730000000.1, "x": 812, "y": 403}      where the user looks (screen pixels; when calibrated)
     {"t": ..., "face": true} / {"face": false}   face seen but not calibrated / no face (a few per second)
-    {"calibrated": true, "error_px": 140, "dots": 13}
+    {"calibrated": true, "error_px": 140, "dots": 13, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
                                            calibration done ({"calibrated": false, "why": "..."} if not)
     {"t": ..., "f": {"squint_l": 0.21, ...}}     face numbers for struggle sensing (with "signals": true)
     {"camera_off": true}                         the camera-on window was clicked; the camera then closes
@@ -314,6 +314,44 @@ def result_lines(grade: str, score: dict, cause: str) -> list[str]:
         return ["Okay for areas of the screen, not exact spots.",
                 f"{hits} of {total} areas right, about {err} pixels off."]
     return ["Poor.", cause]
+
+
+def validation_numbers(score: dict | None) -> dict:
+    """The three held-out numbers saved with the model and printed on the result line."""
+    score = score or {}
+    err = score.get("error_px")
+    try:
+        err_out = None if err is None else int(err)
+    except (TypeError, ValueError):
+        err_out = None
+    return {"error_px": err_out, "region_hits": int(score.get("region_hits") or 0),
+            "region_total": int(score.get("region_total") or 0)}
+
+
+def with_check(model: dict, score: dict | None, camera: int) -> dict:
+    """Copy of the fit, plus the held-out numbers and the camera it was made for."""
+    out = dict(model)
+    out["validation"] = validation_numbers(score)
+    out["camera"] = int(camera)
+    return out
+
+
+def kept_model(model: dict | None, camera: int) -> dict | None:
+    """None when this file was fit for a different camera. An older file with no camera still loads.
+
+    A different screen size is already dropped by gaze_model.load.
+    """
+    if not model:
+        return None
+    saved = model.get("camera")
+    if saved is None:
+        return model
+    try:
+        if int(saved) != int(camera):
+            return None
+    except (TypeError, ValueError):
+        return None
+    return model
 
 
 def _wrap_plain(text: str, limit: int = 42) -> list[str]:
@@ -1194,7 +1232,8 @@ def main(argv: list[str]) -> int:
         from ally.senses import face as face_signals
     size = screen_size()
     calib_path = Path(cfg.get("calibration", "gaze_calibration.json"))
-    model = gaze_model.load(calib_path, size)
+    camera = int(cfg.get("camera", 0))
+    model = kept_model(gaze_model.load(calib_path, size), camera)
     try:
         landmarker = vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(cfg["model"])), running_mode=vision.RunningMode.VIDEO,
@@ -1202,7 +1241,7 @@ def main(argv: list[str]) -> int:
     except Exception as e:
         emit({"error": f"couldn't load the face model: {e}"[:300]})
         return 3
-    cap = open_camera(int(cfg.get("camera", 0)))
+    cap = open_camera(camera)
     if cap is None:
         emit({"error": "can't open the camera. Check Settings > Privacy & security > Camera (let desktop apps "
                        "use it) and that no other app is using it."})
@@ -1334,10 +1373,12 @@ def main(argv: list[str]) -> int:
                 except Exception:
                     score = {"error_px": None, "region_hits": 0, "region_total": 0}
                 lines = result_lines(result_grade(score), score, likely_cause(calib.cause_stats()))
-                result = {"calibrated": True, "error_px": calib.model["error_px"], "dots": calib.model["dots"]}
+                checked = with_check(calib.model, score, camera)
+                result = {"calibrated": True, "error_px": checked["error_px"], "dots": checked["dots"],
+                          "validation": checked["validation"]}
                 try:
-                    gaze_model.save(calib.model, calib_path)
-                    model = calib.model
+                    gaze_model.save(checked, calib_path)
+                    model = checked
                 except OSError as e:
                     result = {"calibrated": False, "why": f"couldn't save the calibration ({e})"}
                     lines = ["Calibration didn't work.", result["why"]]
