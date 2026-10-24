@@ -491,6 +491,94 @@ class CardCommandTests(unittest.TestCase):
         self.assertLess(CARD_SCALES["normal"], CARD_SCALES["large"])
 
 
+class SelfCheckTests(unittest.TestCase):
+    def test_parts_last_about_a_minute(self):
+        parts = matrix.selfcheck_parts()
+        self.assertAlmostEqual(sum(p["seconds"] for p in parts), 60)
+        self.assertEqual([p["name"] for p in parts],
+                         ["settle", "left", "right", "smile", "blink", "turn", "lean"])
+
+    def test_score_passes_a_clear_run_and_fails_a_swap(self):
+        from ally.senses.detectors import Tuning
+        tune = Tuning.from_config({})
+        good = {
+            "settle": [_face(width=0.30, light=120)],
+            "left": [_face(squint_l=0.60, squint_r=0.10)],
+            "right": [_face(squint_l=0.10, squint_r=0.60)],
+            "smile": [_face(smile=0.50)],
+            "blink": [_face(blink=0.80)],
+            "turn": [_face(yaw=30)],
+            "lean": [_face(width=0.40)],
+        }
+        rows = matrix.score_selfcheck(good, tune)
+        self.assertTrue(all(row["ok"] for row in rows), rows)
+        swapped = dict(good)
+        swapped["left"] = [_face(squint_l=0.10, squint_r=0.60)]
+        bad = {row["name"]: row for row in matrix.score_selfcheck(swapped, tune)}
+        self.assertFalse(bad["left"]["ok"])
+        self.assertIn("squint_l 0.10", bad["left"]["measured"])
+        self.assertIn("swapped", bad["left"]["hint"])
+        equal_turn = dict(good)
+        equal_turn["turn"] = [_face(yaw=tune.pose_gate)]
+        turn = {row["name"]: row for row in matrix.score_selfcheck(equal_turn, tune)}
+        self.assertFalse(turn["turn"]["ok"])
+        dark = dict(good)
+        dark["settle"] = [_face(width=0.30, light=10)]
+        light = {row["name"]: row for row in matrix.score_selfcheck(dark, tune)}
+        self.assertFalse(light["light"]["ok"])
+        self.assertIn("more light", light["light"]["hint"])
+
+    def test_selfcheck_sends_cards_and_prints_pass(self):
+        tmp = Path(tempfile.mkdtemp(prefix="ally-selfcheck-"))
+        model = tmp / "face_landmarker.task"
+        model.write_bytes(b"not a model")
+        clock = _Clock()
+        base = clock.t
+        spans = [("settle", 6, _face(width=0.30, light=120)),
+                 ("left", 16, _face(squint_l=0.60, squint_r=0.10)),
+                 ("right", 24, _face(squint_l=0.10, squint_r=0.60)),
+                 ("smile", 32, _face(smile=0.50)),
+                 ("blink", 40, _face(blink=0.80)),
+                 ("turn", 48, _face(yaw=30)),
+                 ("lean", 56, _face(width=0.40))]
+        lines = [json.dumps({"ready": True, "calibrated": False, "screen": [1920, 1080]})]
+        lines += [json.dumps({"t": base + offset, "f": sig}) for _name, offset, sig in spans]
+        calls = []
+        procs = []
+
+        def spawn(kind, command):
+            calls.append((kind, command))
+            proc = _Proc(lines)
+            procs.append(proc)
+            return proc
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = matrix.selfcheck(camera=0, model=model, spawn=spawn, sleep=clock.sleep,
+                                    ally_running=lambda: False, now=clock.now, senses={"fps": 10})
+        text = buf.getvalue()
+        self.assertEqual(code, 0, text)
+        self.assertIn("All checks passed.", text)
+        self.assertIn("PASS  left eye", text)
+        self.assertIn("LEFT", text)
+        self.assertIn("RIGHT", text)
+        self.assertEqual(len(calls), 1)
+        payload = json.loads(calls[0][1][3])
+        self.assertFalse(payload["gaze"])
+        self.assertTrue(payload["signals"])
+        sent = procs[0].stdin.getvalue()
+        self.assertIn("card ", sent)
+        self.assertIn("LEFT", sent)
+        self.assertIn("card off", sent)
+
+    def test_selfcheck_refuses_while_ally_is_running(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = matrix.selfcheck(camera=0, ally_running=lambda: True, senses={})
+        self.assertEqual(code, 2)
+        self.assertIn("python run.py stop", buf.getvalue())
+
+
 class CameraOffTests(unittest.TestCase):
     def test_indicator_style_skips_focus_and_the_taskbar(self):
         self.assertIn("Camera on", INDICATOR_TEXT)

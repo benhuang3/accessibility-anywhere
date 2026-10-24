@@ -1,6 +1,7 @@
-"""Record a scripted senses session, and (later) run the live self-check.
+"""Record a scripted senses session, or run the live face self-check.
 
     python -m ally.senses.matrix record --person ALIAS --glasses yes|no --light bright|dim [--free MINUTES]
+    python -m ally.senses.matrix selfcheck
 
 The camera helper and the mouse/keyboard helper run as child processes. This writes numbers only
 (face scores, clicks, labels, the settings in effect) to state/senses_runs/<run>/<alias>-<glasses>-<light>.jsonl.
@@ -16,6 +17,7 @@ import json
 import math
 import queue
 import re
+import statistics
 import subprocess
 import sys
 import threading
@@ -27,6 +29,7 @@ from ..hotkeys import python_for_children
 from ..paths import CODE_ROOT, Paths
 from ..platforms.base import NO_WINDOW
 from ..supervisor import current_port, listening
+from .detectors import Tuning
 
 CALIBRATION_SECONDS = 15.0
 GAP_SECONDS = 3.0
@@ -466,6 +469,216 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
     return code
 
 
+# About 60 seconds: 12 s to see the resting face and the light, then six 8 s actions.
+_SELF = (
+    ("settle", 12.0, "Look at the screen",
+     "Sit as you usually sit and look at the screen. This checks the light."),
+    ("left", 8.0, "Left eye", "Close only your LEFT eye and hold it."),
+    ("right", 8.0, "Right eye", "Close only your RIGHT eye and hold it."),
+    ("smile", 8.0, "Smile", "Smile, with the corners of your mouth up."),
+    ("blink", 8.0, "Blink", "Blink slowly, a few times."),
+    ("turn", 8.0, "Turn your head", "Turn your head left, then right."),
+    ("lean", 8.0, "Lean in", "Lean in close to the screen."),
+)
+
+
+def selfcheck_parts() -> list[dict]:
+    return [{"name": name, "seconds": seconds, "title": title, "text": text, "size": "normal",
+             "expect": "check"} for name, seconds, title, text in _SELF]
+
+
+def score_selfcheck(collected: dict[str, list[dict]], tune: Tuning) -> list[dict]:
+    """PASS/FAIL for one self-check, using the real [senses] thresholds. Numbers only."""
+    settle = collected.get("settle") or []
+    widths = [float(s["width"]) for s in settle if float(s.get("width") or 0) > 0]
+    lights = [float(s["light"]) for s in settle if float(s.get("light") or -1) >= 0]
+    rest = statistics.median(widths) if widths else 0.0
+    light = statistics.median(lights) if lights else -1.0
+    rows = [_light_row(light, tune),
+            _eye_row("left", "left eye", collected.get("left") or [], "squint_l", "squint_r",
+                     "Close only your left eye, on your left, and hold it. If you did and these numbers "
+                     "are backwards, left and right are swapped."),
+            _eye_row("right", "right eye", collected.get("right") or [], "squint_r", "squint_l",
+                     "Close only your right eye, on your right, and hold it. If you did and these numbers "
+                     "are backwards, left and right are swapped."),
+            _max_row("smile", "smile", collected.get("smile") or [], "smile", tune.smile_gate, True,
+                     "Smile more clearly, with the corners of your mouth up."),
+            _max_row("blink", "blink", collected.get("blink") or [], "blink", tune.blink_gate, True,
+                     "Close both eyes for a moment during the check."),
+            _yaw_row(collected.get("turn") or [], tune),
+            _lean_row(collected.get("lean") or [], rest, tune)]
+    return rows
+
+
+def _light_row(light: float, tune: Tuning) -> dict:
+    if light < 0:
+        return {"name": "light", "label": "light", "ok": False, "measured": "no face",
+                "hint": "Face the camera, with light on your face, then try again."}
+    ok = light >= tune.light_floor
+    measured = f"{light:.0f} (need at least {tune.light_floor:.0f})"
+    hint = f"Put more light on your face. Brightness was {light:.0f}; it needs to be at least {tune.light_floor:.0f}."
+    return {"name": "light", "label": "light", "ok": ok, "measured": measured, "hint": hint}
+
+
+def _eye_row(name: str, label: str, samples: list[dict], primary: str, other: str, hint: str) -> dict:
+    if not samples:
+        return {"name": name, "label": label, "ok": False, "measured": "no face",
+                "hint": "Face the camera and try that eye again. " + hint}
+    frame = max(samples, key=lambda s: float(s.get(primary) or 0))
+    a, b = float(frame.get(primary) or 0), float(frame.get(other) or 0)
+    return {"name": name, "label": label, "ok": a > b,
+            "measured": f"{primary} {a:.2f}, {other} {b:.2f}", "hint": hint}
+
+
+def _max_row(name, label, samples, field, gate, at_least, hint) -> dict:
+    if not samples:
+        return {"name": name, "label": label, "ok": False, "measured": "no face",
+                "hint": "Face the camera and try again. " + hint}
+    value = max(float(s.get(field) or 0) for s in samples)
+    ok = value >= gate if at_least else value > gate
+    return {"name": name, "label": label, "ok": ok,
+            "measured": f"{value:.2f} (need at least {gate:.2f})", "hint": hint + f" It reached {value:.2f}; it needs {gate:.2f}."}
+
+
+def _yaw_row(samples: list[dict], tune: Tuning) -> dict:
+    if not samples:
+        return {"name": "turn", "label": "head turn", "ok": False, "measured": "no face",
+                "hint": "Face the camera, then turn your head left and right."}
+    yaw = max(abs(float(s.get("yaw") or 0)) for s in samples)
+    ok = yaw > tune.pose_gate
+    return {"name": "turn", "label": "head turn", "ok": ok,
+            "measured": f"yaw {yaw:.0f} (need above {tune.pose_gate:.0f})",
+            "hint": f"Turn your head farther, past {tune.pose_gate:.0f} degrees. The largest turn was {yaw:.0f}."}
+
+
+def _lean_row(samples: list[dict], rest: float, tune: Tuning) -> dict:
+    if rest <= 0 or not samples:
+        return {"name": "lean", "label": "lean", "ok": False, "measured": "no resting face",
+                "hint": "I couldn't see your face at the start. Sit facing the camera and try again."}
+    width = max(float(s.get("width") or 0) for s in samples)
+    ratio = width / rest
+    ok = ratio >= tune.lean_ratio
+    return {"name": "lean", "label": "lean", "ok": ok,
+            "measured": f"width x{ratio:.2f} (need at least {tune.lean_ratio:.2f})",
+            "hint": f"Lean closer to the screen. Your face got {ratio:.2f} times wider; it needs {tune.lean_ratio:.2f}."}
+
+
+def format_results(rows: list[dict]) -> str:
+    lines = []
+    for row in rows:
+        status = "PASS" if row["ok"] else "FAIL"
+        lines.append(f"{status}  {row['label']}: {row['measured']}")
+        if not row["ok"]:
+            lines.append(f"      {row['hint']}")
+    failed = sum(1 for row in rows if not row["ok"])
+    if failed == 0:
+        lines.append("All checks passed.")
+    elif failed == 1:
+        lines.append("1 check failed.")
+    else:
+        lines.append(f"{failed} checks failed.")
+    return "\n".join(lines) + "\n"
+
+
+def _during(faces: list[tuple[float, dict]], start: float, end: float) -> list[dict]:
+    return [sig for t, sig in faces if start <= t < end]
+
+
+def _read_faces(proc, faces: list, found: queue.Queue, watching: threading.Event) -> None:
+    try:
+        stream = proc.stdout
+        if stream is None:
+            return
+        for line in stream:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            clean = sanitize(obj)
+            if not clean:
+                continue
+            if "f" in clean and "t" in clean:
+                try:
+                    faces.append((float(clean["t"]), clean["f"]))
+                except (TypeError, ValueError):
+                    pass
+            if watching.is_set():
+                found.put({"rec": "helper", **clean})
+    except Exception:
+        pass
+
+
+def selfcheck(camera: int | None = None, *, model: Path | None = None, spawn=None, sleep=None,
+              ally_running=None, now=None, senses: dict | None = None, paths: Paths | None = None) -> int:
+    """About 60 seconds of guided checks. Prints PASS or FAIL for each one."""
+    paths = paths or Paths()
+    running = ally_is_running(paths) if ally_running is None else ally_running()
+    if running:
+        print("Ally is using the camera. Run python run.py stop first, then try again.")
+        return 2
+    model_path = model or (paths.state_dir / "models" / "face_landmarker.task")
+    if not Path(model_path).exists():
+        print("The face model isn't here yet (state/models/face_landmarker.task).")
+        print("Start Ally once so it can download, run python run.py stop, then try again.")
+        return 2
+    senses_cfg = dict(senses) if senses is not None else load_senses(paths)
+    if camera is None:
+        camera = load_camera_index(paths)
+    tune = Tuning.from_config(senses_cfg)
+    spawn = spawn or _default_spawn
+    sleep = sleep or time.sleep
+    now = now or time.time
+    try:
+        signals_fps = int(senses_cfg.get("fps", 10))
+    except (TypeError, ValueError):
+        signals_fps = 10
+    calib_path = paths.state_dir / "selfcheck_calibration.json"
+    faces: list[tuple[float, dict]] = []
+    found: queue.Queue = queue.Queue()
+    watching = threading.Event()
+    watching.set()
+    try:
+        proc = spawn("camera", camera_command(Path(model_path), calib_path, int(camera), 20, signals_fps))
+    except OSError as e:
+        print(f"Couldn't start the camera helper: {e}")
+        return 2
+    threading.Thread(target=_drain_stderr, args=(proc,), daemon=True).start()
+    threading.Thread(target=_read_faces, args=(proc, faces, found, watching), daemon=True).start()
+    collected: dict[str, list[dict]] = {}
+    try:
+        ready = _wait_ready(found, 25)
+        watching.clear()
+        if not ready or not ready.get("ready"):
+            print((ready or {}).get("error") or "The camera helper didn't start.")
+            return 4
+        # The reader thread may still be taking lines that arrived with the ready message.
+        time.sleep(0.05)
+        parts = selfcheck_parts()
+        total = len(parts)
+        for index, part in enumerate(parts, start=1):
+            print(f"\n[{index}/{total}] {part['title']} ({part['seconds']:.0f} s)")
+            print(part["text"])
+            _send(proc, card_line(part))
+            start = now()
+            sleep(part["seconds"])
+            collected[part["name"]] = _during(list(faces), start, now())
+        _send(proc, "card off")
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        return 1
+    finally:
+        _stop(proc)
+    rows = score_selfcheck(collected, tune)
+    print()
+    print(format_results(rows), end="")
+    return 0 if all(row["ok"] for row in rows) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m ally.senses.matrix")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -477,9 +690,13 @@ def main(argv: list[str] | None = None) -> int:
                      help="extra minutes of normal computer use, labeled as no struggle")
     rec.add_argument("--camera", type=int, default=None)
     rec.add_argument("--run", default="", help="folder name under state/senses_runs (default: a timestamp)")
+    chk = sub.add_parser("selfcheck", help="about 60 seconds of guided face checks")
+    chk.add_argument("--camera", type=int, default=None)
     args = parser.parse_args(argv)
     if args.cmd == "record":
         return record(args.person, args.glasses, args.light, args.free, args.camera, args.run)
+    if args.cmd == "selfcheck":
+        return selfcheck(camera=args.camera)
     return 2
 
 
