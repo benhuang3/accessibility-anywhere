@@ -1,0 +1,271 @@
+# Ally: an always-on, OS-level accessibility agent
+
+Ally runs in the background on your computer. You talk to it, type to it, or press a hotkey, and it
+changes the screen and the web for you: bigger text, high contrast, reader view, read aloud, screen
+magnifier, color filters, and anything else you teach it.
+
+- **Works everywhere**: global hotkeys and screen tools work in every app; a Chrome extension handles web pages.
+- **Easy to change**: settings, commands, hotkeys and page styles live in one file (`config.toml`) that
+  reloads the moment you save. New tools are one Python function in the `plugins/` folder.
+- **Always on**: auto-restart on crash or freeze, start at login, offline mode when there's no internet,
+  the extension reconnects by itself, and a panic button undoes everything.
+- **No required packages**: the core is pure Python 3.11+. Optional packages add hotkeys, voice and screenshots.
+
+---
+
+## Quick start (about 5 minutes)
+
+1. **Python 3.11 or newer.** Check with `python3 --version`. **Windows:** type `python` wherever this
+   README says `python3` (the python.org installer adds `python`; `python3` and `py` often don't exist).
+2. **Get the code** and open a terminal in this folder.
+3. **Add your API key**: copy `.env.example` to `.env` and paste your Anthropic key after `ANTHROPIC_API_KEY=`.
+   (No key? Ally still runs in offline mode with simple commands.)
+4. **Install the optional extras** (recommended):
+   ```
+   python3 -m pip install -r requirements-optional.txt
+   ```
+5. **Start Ally**:
+   ```
+   python3 run.py
+   ```
+   It says "Ally is ready". The dashboard is at http://127.0.0.1:8765.
+6. **Add the Chrome extension**: open `chrome://extensions`, turn on **Developer mode**, click
+   **Load unpacked**, and pick the `extension` folder. The Ally icon shows no badge when it's connected
+   and "off" when the agent isn't running.
+7. **Check everything**: `python3 run.py doctor` lists what works and how to fix what doesn't.
+8. **Start at login** (optional): `python3 run.py install` (undo with `python3 run.py uninstall`).
+
+### Per-system notes
+
+| System | What to do |
+|---|---|
+| **macOS** | Give the app that runs Ally (Terminal, iTerm or Python) **Accessibility** and **Input Monitoring** permission in System Settings > Privacy & Security (needed for hotkeys and key presses), plus **Screen Recording** for "describe my screen". For the screen magnifier, turn on "Use keyboard shortcuts to zoom" in System Settings > Accessibility > Zoom. |
+| **Windows** | Use 64-bit Python and run commands with `python`, e.g. `python run.py doctor`. The screen magnifier and color filters use the Windows Magnification API directly; if the Windows Magnifier app is open, Ally closes it and takes over. Speech uses the built-in Windows voices ("Microsoft David Desktop", "Microsoft Zira Desktop"; set `speech.voice`) and stays loaded, so only the first sentence after start waits a few seconds. Hotkeys ignore key presses sent by other programs, so test them by pressing them yourself. "Read the selection" (Ctrl+Alt+R) copies once you let go of Ctrl+Alt and then puts your clipboard text back. |
+| **Linux** | Screen magnifier, color filters and text size need GNOME. Install `espeak-ng` or `speech-dispatcher` for speech and `xclip` (X11) or `wl-clipboard` (Wayland) for reading selected text. On Wayland, Ally's own hotkey listener only sees X11 apps, so run `python3 run.py gnome-shortcuts` (turns your `[hotkeys]` into GNOME shortcuts) and set `hotkeys_enabled = false` under `[agent]`. |
+
+---
+
+## Using Ally
+
+**Say or type** (dashboard box, extension popup, voice hotkey, or `python3 run.py send "..."`):
+"this page is hard to read", "make it bigger", "read this to me", "high contrast", "reader mode",
+"summarize this page", "what's on my screen?", "invert colors", "reset".
+
+**Default hotkeys** (`<mod>` = Ctrl+Alt on Windows/Linux, Ctrl+Cmd on Mac):
+
+| Keys | Action |
+|---|---|
+| `<mod>+V` | Talk to Ally (press again to stop listening) |
+| `<mod>+R` | Read the selected text aloud (any app) |
+| `<mod>+S` | Stop talking |
+| `<mod>+=` / `<mod>+-` | Bigger / smaller (the web page if Chrome is in front, else the whole screen) |
+| `<mod>+0` | **Panic button**: undo every visual change |
+| `<mod>+M` | Screen magnifier on/off |
+| `<mod>+E` | Describe what's on the screen |
+| `<mod>+1` | Reading mode (an example command) |
+| `<mod>+A` | Open the dashboard |
+
+The Chrome extension also has its own shortcuts that work even when the agent is off:
+Alt+Shift+Period (bigger), Alt+Shift+Comma (smaller), Alt+Shift+0 (reset), Alt+Shift+R (read page).
+
+**Command line**
+
+```
+python3 run.py              start (with auto-restart)      python3 run.py status     what Ally is doing
+python3 run.py doctor       check setup                    python3 run.py stop       stop Ally
+python3 run.py send "..."   send a request                 python3 run.py restart    restart Ally
+python3 run.py tool NAME '{"arg": 1}'   run one tool       python3 run.py check      validate config.toml
+python3 run.py agent        run without auto-restart (development)
+python3 run.py gnome-shortcuts          Linux/GNOME: hotkeys as GNOME shortcuts (gnome-shortcuts-remove undoes it)
+```
+
+---
+
+## Make it do anything
+
+### 1. Change settings: `config.toml`
+
+Created on first start, fully commented. Edit it in any editor or in the dashboard's Settings box.
+Changes apply within a second. If you make a mistake, Ally keeps the last good settings and shows the
+exact problem (line, key, and what it expected). Highlights:
+
+- `[brain]` `model`, `effort`, and `system_prompt` (how Ally behaves).
+- `[hotkeys]` any key combo to any tool, command, or sentence.
+- `[profile]` defaults applied at start and on every page (zoom, minimum text size, styles, magnifier).
+- `[page_styles]` CSS you can apply to any page. Each name becomes an option of `restyle_page`.
+- `[tools] disabled` turns tools off.
+
+### 2. Add a command (no code)
+
+```toml
+[commands.morning_news]
+description = "Open the news in large, high-contrast text and read the top story."
+phrases = ["morning news", "read me the news"]
+hotkey = "<mod>+n"
+steps = [
+  { open = "https://text.npr.org" },
+  { wait = 2 },
+  { tool = "set_page_zoom", args = { zoom = 1.5 } },
+  { tool = "restyle_page", args = { style = "high_contrast" } },
+  { ask = "Read the first headline and its summary aloud." },
+]
+```
+
+Step types: `tool` (+ `args`), `say`, `ask` (a request for Claude, which can use tools), `open` (URL or
+file), `keys` (e.g. `"<ctrl>+c"`), `wait` (seconds), `notify`, and `shell`. `shell`, `open` and `keys`
+can be different per system: `{ mac = "...", windows = "...", linux = "..." }`.
+Each command is also a tool Claude can choose by itself (set `allow_ai = false` to prevent that).
+
+### 3. Add a tool (Python)
+
+Drop a file in `plugins/`. It loads instantly and reloads when you save. A broken file never stops Ally.
+
+```python
+from typing import Annotated
+from ally import tool, ToolError
+
+@tool
+def bigger_cursor(ctx, size: Annotated[int, "1 = normal, up to 4"] = 2):
+    """Make the mouse pointer bigger on web pages. Use when the user can't find the pointer."""
+    if not 1 <= size <= 4:
+        raise ToolError("Size must be 1 to 4.")
+    ctx.run("restyle_page", style="big_cursor", on=size > 1)
+    return f"Pointer size {size}."
+```
+
+- The **docstring** is what Claude reads to decide when to use the tool. Say what it does and when.
+- **Type hints** become the input schema (`str`, `int`, `float`, `bool`, `list[str]`, `Literal[...]`,
+  `Annotated[type, "description"]`). Parameters with defaults are optional.
+- **`ctx`** gives you everything: `ctx.browser.call("getText")`, `ctx.os.magnify(2)`, `ctx.say("hi")`,
+  `ctx.ask("question", image=png_bytes)`, `ctx.run("other_tool", ...)`, `ctx.state`, `ctx.config`.
+- `@tool(ai=False)` hides a tool from Claude (hotkeys, commands and the dashboard can still use it).
+
+See `plugins/example_tools.py` and `plugins/plain_language.py` (rewrites any page in plain words).
+
+### 4. Add a browser action
+
+Page actions live in `extension/background.js` in the `ACTIONS` object. Add a function there, reload the
+extension at `chrome://extensions`, then call it from a tool with `ctx.browser.call("yourAction", x=1)`.
+
+---
+
+## Built-in tools
+
+| Web pages (Chrome) | Whole screen / system | Other |
+|---|---|---|
+| `set_page_zoom`, `set_min_font_size`, `restyle_page`, `reader_view`, `read_page`, `get_page_text`, `scroll_page`, `browser_navigate`, `open_website`, `remember_site_style` | `magnify_screen`, `color_filter`, `set_text_size`, `describe_screen`, `read_selection` | `reset_all`, `remember_preference`, `forget_preferences`, `apply_profile`, `set_speech_rate`, plus hotkey-only: `zoom_in`, `zoom_out`, `zoom_to`, `toggle_magnifier`, `listen`, `stop_speaking`, `open_dashboard`, `show_help` |
+
+---
+
+## How it stays on
+
+| Problem | What Ally does |
+|---|---|
+| Agent crashes | The supervisor (`run.py start`) restarts it: 1 s, 2 s, 4 s ... up to 30 s apart |
+| Agent freezes | `/health` checked every 5 s; 3 misses in a row and it's restarted |
+| Computer restarts | `run.py install` starts Ally at login (launchd on Mac, Run key on Windows, autostart on Linux) |
+| No internet / no key / API down | Offline rules handle common requests; commands and hotkeys keep working |
+| Chrome closed or agent restarted | The extension reconnects by itself (backoff, plus a 30 s alarm that wakes it) |
+| Bad config edit | Last good settings stay active; the error is shown |
+| Broken plug-in | That file is skipped (old version kept); everything else runs |
+| Hotkey hook crashes | It runs in its own process and is restarted; it can't take Ally down |
+| A tool hangs | Every tool has a timeout (15 s default) |
+| Something looks wrong on screen | `<mod>+0` or "reset" undoes every visual change |
+
+---
+
+## How it works
+
+```
+ you: voice / hotkey / typing
+            |
+   +--------v---------------------------- Ally agent (Python, run.py) -----------------------+
+   |  hotkey helper (own process) ---> brain: 1) fast path: commands + simple rules          |
+   |  dashboard + JSON API  -------->         2) Claude tool use (tools = registry)          |
+   |  CLI (run.py send)     -------->         3) offline rules if Claude is unreachable      |
+   |                                     |                                                   |
+   |                        tool registry: built-in tools + plugins/*.py + [commands]        |
+   |                          |                         |                       |            |
+   |                  OS adapter (Mac/Win/Linux)   speech (OS voice /     Chrome bridge       |
+   |                  magnifier, colors, keys,     Cartesia)              (WebSocket)         |
+   |                  selection, screenshots                                   |             |
+   +---------------------------------------------------------------------------|-------------+
+          supervisor (restarts it)                                             |
+                                                         Chrome extension: zoom, CSS styles,
+                                                         reader view, page text, read aloud
+```
+
+| File | What it does |
+|---|---|
+| `run.py`, `ally/cli.py` | Commands |
+| `ally/agent.py` | Wires everything together |
+| `ally/brain.py`, `ally/claude.py`, `ally/rules.py` | Decides what to do (Claude + offline rules) |
+| `ally/registry.py` | `@tool` decorator, schemas, plug-in loading, safe calls with timeouts |
+| `ally/config.py`, `ally/default_config.toml` | Settings, validation, hot reload |
+| `ally/macros.py` | `[commands]` from the config |
+| `ally/tools/` | Built-in tools |
+| `ally/platforms/` | macOS, Windows and Linux adapters |
+| `ally/server.py`, `ally/websocket.py`, `ally/bridge.py` | Dashboard, API, extension link |
+| `ally/hotkeys.py`, `ally/hotkey_helper.py` | Global hotkeys in a separate process |
+| `ally/speech.py`, `ally/voice.py` | Talking and listening |
+| `ally/supervisor.py`, `ally/autostart.py`, `ally/doctor.py` | Always-on pieces |
+| `extension/` | Chrome extension (Manifest V3) |
+| `dashboard/` | Control panel web page |
+
+### API details used (checked October 2026)
+
+- Claude Messages API with tool use. Default model `claude-haiku-5-5` with `output_config.effort = "low"`
+  and thinking off for speed. Forced tool choice isn't used because Sonnet 5.5 and Opus 5.5 reject it.
+  If a model rejects a speed setting, Ally retries without it and remembers.
+- Screenshots go to Claude inside a `tool_result` (images are allowed there), shrunk to 1568 px when Pillow is installed.
+- Chrome: `tabs.setZoom`, `fontSettings.setMinimumFontSize`, `scripting.insertCSS/removeCSS/executeScript`,
+  `tts`, `alarms` (30 s minimum), and a WebSocket that keeps the service worker alive (Chrome 116+).
+- Windows: `MagSetFullscreenTransform` (1.0-4096.0, offsets in unmagnified pixels) and
+  `MagSetFullscreenColorEffect` (Microsoft's grayscale matrix). macOS: Apple's Zoom shortcuts
+  (Option-Command-8 / = / -) and Control-Option-Command-8 for invert. GNOME: `org.gnome.desktop.a11y.*` keys.
+- Cartesia: `POST /tts/bytes` (model `sonic-3.6`) and `POST /stt` (model `ink-whisper`) with header `Cartesia-Version: 2026-08-14`.
+
+---
+
+## Testing
+
+```
+cd tests
+python3 -m unittest test_config test_registry test_brain test_network test_runtime   # 75 tests, ~15 s (~40 s on Windows)
+python3 e2e_chrome.py   # real Chromium + extension + agent (needs: pip install playwright; python -m playwright install chromium)
+```
+
+The unit tests use a fake Claude API, so they need no key. The end-to-end test uses port 8765, so stop
+your own Ally first.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| "Chrome isn't connected" | Load the extension (step 6). Check the extension's port in its popup matches `agent.port`. |
+| Hotkeys do nothing | `python3 run.py doctor`. Mac: permissions above. Linux Wayland: `python3 run.py gnome-shortcuts`. |
+| Ctrl+Alt hotkeys type symbols | On some European keyboards Ctrl+Alt = AltGr. Pick other keys in `[hotkeys]`. |
+| "offline mode" | Put `ANTHROPIC_API_KEY` in `.env`, check internet, then `python3 run.py doctor`. |
+| Mac: certificate errors | `pip install certifi`, or run "Install Certificates.command" in your Python folder. |
+| Port 8765 in use | Change `agent.port` in config.toml and in the extension popup (Settings). |
+| Can't change a page | Chrome blocks extensions on `chrome://` pages and the Web Store. Try a normal site. |
+
+Logs: `logs/ally.log` and `logs/supervisor.log`.
+
+## Privacy and safety
+
+- The server listens on 127.0.0.1 only. The API needs a secret token, checks the Host header (blocks DNS
+  rebinding) and the Origin; the WebSocket only accepts Chrome extensions (lock it to your extension ID
+  with `security.allowed_extension_ids`).
+- Claude only gets: your request, a short context (tab title and site, the app in front, current zoom),
+  page text or a screenshot only when a tool asks for it. Turn off `share_tab_info` / `include_active_app`
+  in `[brain]` if you prefer.
+- Claude can only run registered tools. It can't type arbitrary shell commands; `shell` steps are fixed in your config.
+- The dashboard's mic button uses Chrome's speech recognition, which sends audio to Google.
+
+## Hackathon notes
+
+Check the CalHacks rules on when code may be written and how to credit AI tools, and say in your
+submission which parts you built on this.

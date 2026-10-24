@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="ally-token" content="__ALLY_TOKEN__">
+  <title>__ALLY_NAME__ dashboard</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="skip" href="#ask-input">Skip to the command box</a>
+  <header class="top">
+    <h1>__ALLY_NAME__</h1>
+    <ul class="chips" id="chips" aria-label="Status"></ul>
+  </header>
+
+  <main>
+    <section aria-labelledby="ask-title" class="card">
+      <h2 id="ask-title">Ask __ALLY_NAME__</h2>
+      <form id="ask" autocomplete="off">
+        <label for="ask-input" class="sr-only">What do you need?</label>
+        <div class="ask-row">
+          <input id="ask-input" name="text" placeholder="Try: this page is hard to read" aria-describedby="ask-hint">
+          <button type="submit" class="primary">Go</button>
+          <button type="button" id="mic" aria-pressed="false" hidden>Speak</button>
+          <button type="button" id="stop">Stop talking</button>
+        </div>
+        <p id="ask-hint" class="hint">Type or speak a request. Replies are read aloud.</p>
+      </form>
+      <div id="reply" class="reply" aria-live="polite"></div>
+    </section>
+
+    <section aria-labelledby="quick-title" class="card">
+      <h2 id="quick-title">Quick actions</h2>
+      <div class="quick">
+        <button data-tool="zoom_in">Bigger</button>
+        <button data-tool="zoom_out">Smaller</button>
+        <button data-tool="reset_all" class="danger">Reset everything</button>
+        <button data-tool="read_page">Read page</button>
+        <button data-tool="read_selection">Read selection</button>
+        <button data-tool="restyle_page" data-args='{"style":"high_contrast"}'>High contrast</button>
+        <button data-tool="reader_view" data-args='{"on":true}'>Reader view</button>
+        <button data-tool="toggle_magnifier">Magnifier on/off</button>
+        <button data-command="Describe what is on my screen in two short sentences.">Describe screen</button>
+      </div>
+    </section>
+
+    <section aria-labelledby="log-title" class="card">
+      <h2 id="log-title">Activity</h2>
+      <ol id="log" class="log" aria-live="off"></ol>
+    </section>
+
+    <details class="card" id="tools-card">
+      <summary><h2>Tools <span id="tool-count" class="count"></span></h2></summary>
+      <p class="hint">Claude can use every tool marked AI. Add tools by dropping a .py file in the plugins folder, or a [commands] entry in config.toml.</p>
+      <ul id="tools" class="tools"></ul>
+    </details>
+
+    <details class="card">
+      <summary><h2>Keyboard shortcuts</h2></summary>
+      <ul id="hotkeys" class="hotkeys"></ul>
+      <p id="hotkey-error" class="error" hidden></p>
+    </details>
+
+    <details class="card" id="settings">
+      <summary><h2>Settings (config.toml)</h2></summary>
+      <p class="hint">Changes apply as soon as you save. If something is wrong, the old settings stay on.</p>
+      <label for="config" class="sr-only">config.toml</label>
+      <textarea id="config" spellcheck="false" rows="24"></textarea>
+      <div class="row">
+        <button id="save" class="primary">Save settings</button>
+        <button id="revert">Undo my edits</button>
+      </div>
+      <div id="config-msg" aria-live="polite"></div>
+    </details>
+  </main>
+
+  <footer>
+    <span id="version"></span>
+    <button id="restart">Restart agent</button>
+    <button id="shutdown" class="danger">Stop agent</button>
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>

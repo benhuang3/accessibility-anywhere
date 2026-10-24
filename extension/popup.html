@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ally</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>Ally</h1>
+    <p id="status" role="status">Checking…</p>
+  </header>
+
+  <form id="ask">
+    <label for="text">Ask Ally</label>
+    <div class="row">
+      <input id="text" autocomplete="off" placeholder="e.g. make this easier to read">
+      <button type="submit">Go</button>
+    </div>
+  </form>
+  <p id="reply" aria-live="polite"></p>
+
+  <div class="grid" role="group" aria-label="Quick actions">
+    <button data-action="zoomStep" data-args='{"direction":"in"}'>Bigger</button>
+    <button data-action="zoomStep" data-args='{"direction":"out"}'>Smaller</button>
+    <button data-command="read this page" data-fallback="readLocal">Read page</button>
+    <button data-command="high contrast">Contrast</button>
+    <button data-action="reader" data-args='{"on":true}'>Reader</button>
+    <button data-action="resetPage">Reset</button>
+  </div>
+
+  <details>
+    <summary>Settings</summary>
+    <label for="port">Agent port</label>
+    <div class="row">
+      <input id="port" type="number" min="1024" max="65535">
+      <button id="save" type="button">Save</button>
+    </div>
+    <p><a id="dashboard" href="#">Open the Ally dashboard</a></p>
+    <p class="hint">Shortcuts: Alt+Shift+Period (bigger), Alt+Shift+Comma (smaller), Alt+Shift+0 (reset), Alt+Shift+R (read). Change them at chrome://extensions/shortcuts.</p>
+  </details>
+  <script src="popup.js"></script>
+</body>
+</html>

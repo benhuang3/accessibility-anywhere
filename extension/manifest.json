@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Ally Accessibility Bridge",
+  "version": "1.0.0",
+  "description": "Connects Chrome to the Ally accessibility agent: zoom, readable styles, reader view and read-aloud for any page.",
+  "minimum_chrome_version": "116",
+  "background": { "service_worker": "background.js" },
+  "permissions": ["scripting", "fontSettings", "storage", "alarms", "tts"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_title": "Ally",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png" }
+  },
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "commands": {
+    "zoom-in": { "suggested_key": { "default": "Alt+Shift+Period" }, "description": "Zoom the page in" },
+    "zoom-out": { "suggested_key": { "default": "Alt+Shift+Comma" }, "description": "Zoom the page out" },
+    "reset-page": { "suggested_key": { "default": "Alt+Shift+0" }, "description": "Reset zoom and styles on this page" },
+    "read-page": { "suggested_key": { "default": "Alt+Shift+R" }, "description": "Read this page aloud" }
+  }
+}
