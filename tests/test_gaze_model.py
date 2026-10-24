@@ -60,6 +60,10 @@ class GazeModelTests(unittest.TestCase):
         self.assertGreater(gm.radius_px(pose_model, turned), base_radius)
         self.assertGreater(gm.radius_px(pose_model, closer), base_radius)
         self.assertLessEqual(gm.radius_px(pose_model, turned), 3 * base_radius)
+        # A 1 cm sideways shift at 50 cm is small: tx is a position, not an angle (v1 has no roll).
+        shifted = baseline.copy()
+        shifted[6] = 1.0
+        self.assertLess(gm.radius_px(pose_model, shifted), 1.2 * base_radius)
 
     def test_fixation(self):
         pts = [(i * 0.05, 100 + i % 2, 100) for i in range(8)] + [(0.4, 500, 500)] + [(0.45 + i * 0.05, 300, 300) for i in range(14)]

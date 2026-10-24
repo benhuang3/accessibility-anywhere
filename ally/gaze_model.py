@@ -274,10 +274,12 @@ def radius_px(model, features=None):
     pose_size = 6 if model.get('features') == 'v2' else 5
     if len(f) < ix + pose_size or calibration.shape != (pose_size,):
         return base
-    rotation_delta = float(np.linalg.norm(f[ix:ix + 3] - calibration[:3]))
+    # v1's pose is yaw, pitch, tx, ty, tz (no roll); v2's is yaw, pitch, roll, tx, ty, tz.
+    angles = 3 if model.get('features') == 'v2' else 2
+    rotation_delta = float(np.linalg.norm(f[ix:ix + angles] - calibration[:angles]))
     rotation_delta = math.degrees(rotation_delta)
     distance = max(abs(float(calibration[-1])), 1e-06)
-    translation_delta = float(np.linalg.norm(f[ix + 3:ix + pose_size] - calibration[3:])) / distance
+    translation_delta = float(np.linalg.norm(f[ix + angles:ix + pose_size] - calibration[angles:])) / distance
     movement = max(rotation_delta / 10.0, translation_delta / 0.15)
     return base * (1 + min(2.0, movement))
 
