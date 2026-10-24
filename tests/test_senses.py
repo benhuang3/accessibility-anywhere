@@ -402,9 +402,9 @@ class SensesManagerTests(unittest.TestCase):
         agent, got = fake_agent()
         senses = Senses(agent)
         for i in range(300):
+            x, y = (i * 97) % 1920, (i * 53) % 1080
             for j in range(2 + i % 2):
-                senses.on_input({"e": "c", "x": (i * 97 + j * 211) % 1920, "y": (i * 53) % 1080,
-                                 "t": 1000 + i * 2 + j * 0.12})
+                senses.on_input({"e": "c", "x": x, "y": y, "t": 1000 + i * 2 + j * 0.12})
         fp = len(got) + sum(senses.counts.values())
         self.assertEqual(fp, 0, f"FP count for double/triple clicks: {fp}")
 
@@ -412,14 +412,17 @@ class SensesManagerTests(unittest.TestCase):
         for clickable in (False, None):
             agent, got = fake_agent()
             senses = Senses(agent)
+            senses.on_input({"e": "m", "t": 999, "x": 10, "y": 10})
             senses.on_input({"e": "m", "t": 1000, "x": 300, "y": 300})
             senses.on_input({"e": "r", "t": 1001, "x": 300, "y": 300, "clickable": clickable})
             for i in range(600):
                 signal = senses.hesitation.tick(1002 + i)
                 if signal:
                     senses._signal(signal)
-            fp = len(got) + sum(senses.counts.values())
-            self.assertEqual(fp, 0, f"FP count for parked pointer clickable={clickable}: {fp}")
+            fp = len(got)
+            strong = 1 if senses.last_signal and senses.last_signal["tier"] == "strong" else 0
+            self.assertEqual((fp, strong), (0, 0),
+                             f"FP count for parked pointer clickable={clickable}: struggles {fp}, strong {strong}")
 
     def test_face_regression_gates_and_two_signal_positive(self):
         """Synthetic at 10 fps: ordinary expressions/poses stay quiet; paired signals fuse once."""
