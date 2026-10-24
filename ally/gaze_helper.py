@@ -32,7 +32,11 @@ from pathlib import Path
 
 WINDOW = "Ally eye tracker setup"
 HUD = "Ally senses (only on this screen; nothing is saved)"
-HUD_COLORS = {"ok": (225, 225, 225), "warn": (0, 200, 255), "hot": (80, 80, 255)}
+HUD_COLORS = {"ok": (255, 255, 255), "warn": (0, 215, 255), "hot": (40, 40, 255)}  # BGR: white, yellow, red
+HUD_SCALE = 0.9
+HUD_THICK = 2
+HUD_STEP = 36
+HUD_FOOTER = "Nothing is saved."
 DOTS = [(0.5, 0.5), (0.08, 0.1), (0.5, 0.1), (0.92, 0.1), (0.92, 0.5), (0.92, 0.9), (0.5, 0.9),
         (0.08, 0.9), (0.08, 0.5)]
 INTRO, SETTLE, COLLECT, RESULT = 3.0, 0.9, 1.2, 2.0  # seconds
@@ -185,14 +189,26 @@ class Calibration:
 
 
 def draw_hud(cv2, frame, rows: list) -> None:
-    """The camera picture (mirrored, like a mirror) with each signal's numbers on top."""
+    """The camera picture (mirrored, like a mirror) with large, high-contrast signal rows.
+
+    `rows` is still [[text, level], ...] from the `hud` command. Level picks the color.
+    """
     img = cv2.flip(frame, 1)
-    band = 14 + 20 * len(rows)
-    img[:band] = (img[:band] * 0.35).astype(img.dtype)
-    for i, row in enumerate(rows):
-        text, level = (row + ["ok"])[:2] if isinstance(row, list) else (str(row), "ok")
-        cv2.putText(img, str(text)[:90], (8, 22 + 20 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                    HUD_COLORS.get(level, HUD_COLORS["ok"]), 1, cv2.LINE_AA)
+    rows = list(rows or [])
+    band = min(int(img.shape[0]), 12 + HUD_STEP * (len(rows) + 1))
+    img[:band] = 0
+    y = HUD_STEP
+    for row in rows:
+        if y > band - 4:
+            break
+        text, level = (list(row) + ["ok"])[:2] if isinstance(row, (list, tuple)) else (str(row), "ok")
+        color = HUD_COLORS.get(str(level), HUD_COLORS["ok"])
+        cv2.putText(img, str(text)[:80], (12, y), cv2.FONT_HERSHEY_SIMPLEX, HUD_SCALE,
+                    color, HUD_THICK, cv2.LINE_AA)
+        y += HUD_STEP
+    if y <= band - 4:
+        cv2.putText(img, HUD_FOOTER, (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    HUD_COLORS["ok"], HUD_THICK, cv2.LINE_AA)
     cv2.imshow(HUD, img)
     cv2.waitKey(1)
 

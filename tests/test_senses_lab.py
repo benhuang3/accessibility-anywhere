@@ -591,6 +591,48 @@ def _landmarks(span: float, x0: float = 0.2):
     return pts
 
 
+class HudTests(unittest.TestCase):
+    def test_rows_are_large_colored_and_say_nothing_is_saved(self):
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy is not installed")
+        from ally.gaze_helper import HUD, HUD_COLORS, HUD_FOOTER, HUD_SCALE, draw_hud
+        frame = np.full((240, 400, 3), 80, dtype=np.uint8)
+        calls = []
+
+        class Fake:
+            FONT_HERSHEY_SIMPLEX = 0
+            LINE_AA = 16
+
+            def flip(self, img, code):
+                return img
+
+            def putText(self, img, text, org, font, scale, color, thick, line):
+                calls.append({"text": text, "scale": scale, "color": color, "thick": thick})
+
+            def imshow(self, name, img):
+                self.name = name
+
+            def waitKey(self, n):
+                return -1
+
+        fake = Fake()
+        draw_hud(fake, frame, [["squint 0.4", "hot"], ["lean", "warn"], ["smile", "ok"]])
+        self.assertEqual(fake.name, HUD)
+        self.assertEqual(int(frame[:8].max()), 0)
+        self.assertGreater(int(frame[220:].max()), 0)
+        self.assertGreaterEqual(HUD_SCALE, 0.8)
+        self.assertGreaterEqual(calls[0]["scale"], 0.8)
+        self.assertGreaterEqual(calls[0]["thick"], 2)
+        by_text = {c["text"]: c for c in calls}
+        self.assertEqual(by_text["squint 0.4"]["color"], HUD_COLORS["hot"])
+        self.assertEqual(by_text["lean"]["color"], HUD_COLORS["warn"])
+        self.assertEqual(by_text["smile"]["color"], HUD_COLORS["ok"])
+        self.assertEqual(len({HUD_COLORS["ok"], HUD_COLORS["warn"], HUD_COLORS["hot"]}), 3)
+        self.assertEqual(by_text[HUD_FOOTER]["text"], "Nothing is saved.")
+
+
 class FaceGuardTests(unittest.TestCase):
     def test_largest_face_is_used_until_a_second_face_is_close(self):
         self.assertEqual(NUM_FACES, 2)
