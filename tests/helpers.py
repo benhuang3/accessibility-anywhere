@@ -21,6 +21,7 @@ def temp_home(config: str = "") -> Path:
     # Tests never open the real microphone or camera unless they ask for it.
     base += '' if "[voice]" in config else '[voice]\nalways_listen = false\n'
     base += '' if "[gaze]" in config else '[gaze]\nenabled = false\n'
+    base += '' if "[senses]" in config else '[senses]\nvision = false\ninput = false\n'
     (home / "config.toml").write_text(base + config, encoding="utf-8")
     (home / "plugins").mkdir()
     return home

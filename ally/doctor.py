@@ -130,6 +130,21 @@ def run_checks(home=None, online: bool = True) -> list[tuple[str, str, str]]:
         out.append(("ok" if calibrated else "warn", "Eye tracking",
                     ("calibrated" if calibrated else "not calibrated yet: say \"Ally, calibrate my eyes\"")
                     + ("" if model else "; the face model (3.7 MB) downloads on first start")))
+    s = cm.data["senses"]
+    if not s.get("vision"):
+        out.append(("ok", "Face sensing", "off (senses.vision = false)"))
+    elif not has_gaze_packages():
+        out.append(("warn", "Face sensing", "pip install mediapipe opencv-python"))
+    else:
+        has_base = (paths.state_dir / "senses_baseline.json").exists()
+        out.append(("ok", "Face sensing", "on, baseline saved" if has_base else
+                    "on; learns your resting face in the first 20 s (or say \"Ally, set up face sensing\")"))
+    if s.get("input"):
+        ok, why = importable("pynput")
+        out.append(("ok" if ok else "warn", "Mouse and keyboard sensing",
+                    "on (counts clicks and backspaces, never which keys)" if ok else "pip install pynput"))
+    else:
+        out.append(("ok", "Mouse and keyboard sensing", "off (senses.input = false)"))
     out.append(("ok" if autostart.installed() else "warn", "Start at login",
                 "on" if autostart.installed() else "off: python run.py install"))
     try:

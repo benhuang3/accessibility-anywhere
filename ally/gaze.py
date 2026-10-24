@@ -2,6 +2,9 @@
 dies, and keeps the last ~45 s of gaze points so a tool can ask where the user was looking while
 they spoke ("Ally, magnify what I'm looking at").
 
+The same helper also feeds face numbers to struggle sensing (ally.senses) when [senses] vision is on,
+so the camera runs when either feature wants it and is only ever opened by that one process.
+
 The face model (MediaPipe Face Landmarker, ~3.7 MB) downloads once into state/models/.
 The calibration is saved in state/gaze_calibration.json.
 """
@@ -65,6 +68,7 @@ class GazeManager:
         self._calib_done = threading.Event()
         self._calib_result: dict | None = None
         self._lock = threading.Lock()
+        self._send_lock = threading.Lock()
         self._crashes: list[float] = []
         self._signature = None
         self._gave_up = False
@@ -82,7 +86,15 @@ class GazeManager:
         return self.agent.paths.state_dir / "gaze_calibration.json"
 
     def wanted(self) -> bool:
+        """Eye tracking itself (gaze points) is wanted."""
         return self.override if self.override is not None else bool(self.cfg.get("enabled"))
+
+    def senses_wanted(self) -> bool:
+        senses = getattr(self.agent, "senses", None)
+        return bool(senses is not None and senses.vision_wanted())
+
+    def camera_wanted(self) -> bool:
+        return self.wanted() or self.senses_wanted()
 
     @property
     def running(self) -> bool:
@@ -91,14 +103,15 @@ class GazeManager:
     # ---------------------------------------------------------------- process
     def apply(self) -> None:
         """Start or stop the camera helper to match config (or the voice on/off switch)."""
-        if not self.wanted() or not has_gaze_packages():
+        if not self.camera_wanted() or not has_gaze_packages():
             with self._lock:
                 self._kill()
             self._signature = None
-            if self.wanted():
-                self.error = "eye tracking needs: pip install mediapipe opencv-python"
+            if self.camera_wanted():
+                self.error = "eye tracking and face sensing need: pip install mediapipe opencv-python"
             return
-        signature = (int(self.cfg.get("camera", 0)), int(self.cfg.get("fps", 20)))
+        signature = (int(self.cfg.get("camera", 0)), int(self.cfg.get("fps", 20)), self.wanted(),
+                     self.senses_wanted(), self._senses_fps())
         if signature == self._signature and (self.running or self._gave_up):
             return
         self._signature, self._gave_up, self._crashes = signature, False, []
@@ -117,7 +130,8 @@ class GazeManager:
                     log.warning("gaze: %s", self.error)
                     return
             args = {"model": str(self.model_path), "calibration": str(self.calibration_path),
-                    "camera": int(self.cfg.get("camera", 0)), "fps": int(self.cfg.get("fps", 20))}
+                    "camera": int(self.cfg.get("camera", 0)), "fps": int(self.cfg.get("fps", 20)),
+                    "gaze": self.wanted(), "signals": self.senses_wanted(), "signals_fps": self._senses_fps()}
             try:
                 self.proc = subprocess.Popen(
                     [python_for_children(), "-m", "ally.gaze_helper", json.dumps(args)], cwd=str(CODE_ROOT),
@@ -139,6 +153,14 @@ class GazeManager:
             if "x" in msg:
                 self.points.append((float(msg["t"]), int(msg["x"]), int(msg["y"])))
                 self.face_at = time.time()
+            elif "f" in msg:
+                self.face_at = time.time()
+                senses = getattr(self.agent, "senses", None)
+                if senses is not None:
+                    try:
+                        senses.on_face(float(msg["t"]), msg["f"])
+                    except Exception:
+                        log.exception("face signal failed")
             elif "face" in msg:
                 if msg["face"]:
                     self.face_at = time.time()
@@ -173,7 +195,7 @@ class GazeManager:
 
     def ensure_running(self) -> None:
         """Called every few seconds: restart a crashed helper (with limits)."""
-        if not self.wanted() or self._signature is None or self._gave_up:
+        if not self.camera_wanted() or self._signature is None or self._gave_up:
             return
         proc = self.proc
         if proc is None or proc.poll() is None:
@@ -205,6 +227,23 @@ class GazeManager:
         with self._lock:
             self._kill()
         self._signature = None
+
+    def _senses_fps(self) -> int:
+        senses = getattr(self.agent, "senses", None)
+        return int(senses.cfg.get("fps", 10)) if senses is not None else 10
+
+    def send(self, line: str) -> bool:
+        """One command line to the camera helper ("calibrate", "hud on", "hud [...]", "hud off")."""
+        proc = self.proc
+        if proc is None or proc.poll() is not None:
+            return False
+        try:
+            with self._send_lock:  # the HUD and calibration write from different threads
+                proc.stdin.write(line.replace("\n", " ") + "\n")
+                proc.stdin.flush()
+            return True
+        except (OSError, ValueError, AttributeError):
+            return False
 
     def set_enabled(self, on: bool) -> None:
         self.override = on
@@ -283,10 +322,7 @@ class GazeManager:
             time.sleep(0.2)
         self._calib_done.clear()
         self._calib_result = None
-        try:
-            self.proc.stdin.write("calibrate\n")
-            self.proc.stdin.flush()
-        except (OSError, ValueError, AttributeError):
+        if not self.send("calibrate"):
             raise ToolError("The eye tracker stopped. Try again in a few seconds.")
         if not self._calib_done.wait(timeout):
             raise ToolError("Calibration took too long.")

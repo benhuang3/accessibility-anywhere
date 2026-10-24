@@ -4,9 +4,14 @@
     {"t": 1730000000.1, "x": 812, "y": 403}      where the user looks (screen pixels; when calibrated)
     {"t": ..., "face": true} / {"face": false}   face seen but not calibrated / no face (a few per second)
     {"calibrated": true, "error_px": 140}        calibration done ({"calibrated": false, "why": "..."} if not)
+    {"t": ..., "f": {"squint_l": 0.21, ...}}     face numbers for struggle sensing (with "signals": true)
     {"error": "..."}                             a problem; the process then exits
 
-Commands on stdin: "calibrate". It exits when the agent closes its stdin (like the hotkey helper),
+Settings "gaze" (default true) turns gaze points on; "signals" sends face numbers (ally.senses.face) at
+"signals_fps". Frames never leave this process and are never written to disk.
+
+Commands on stdin: "calibrate"; "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]"
+sets its rows. It exits when the agent closes its stdin (like the hotkey helper),
 so a camera or MediaPipe crash can never take Ally down. The camera is only ever used here.
 Usage: python -m ally.gaze_helper '{"model": "...", "calibration": "...", "camera": 0, "fps": 20}'
 """
@@ -22,6 +27,8 @@ import time
 from pathlib import Path
 
 WINDOW = "Ally eye tracker setup"
+HUD = "Ally senses (only on this screen; nothing is saved)"
+HUD_COLORS = {"ok": (225, 225, 225), "warn": (0, 200, 255), "hot": (80, 80, 255)}
 DOTS = [(0.5, 0.5), (0.08, 0.1), (0.5, 0.1), (0.92, 0.1), (0.92, 0.5), (0.92, 0.9), (0.5, 0.9),
         (0.08, 0.9), (0.08, 0.5)]
 INTRO, SETTLE, COLLECT, RESULT = 3.0, 0.9, 1.2, 2.0  # seconds
@@ -170,6 +177,19 @@ class Calibration:
             pass
 
 
+def draw_hud(cv2, frame, rows: list) -> None:
+    """The camera picture (mirrored, like a mirror) with each signal's numbers on top."""
+    img = cv2.flip(frame, 1)
+    band = 14 + 20 * len(rows)
+    img[:band] = (img[:band] * 0.35).astype(img.dtype)
+    for i, row in enumerate(rows):
+        text, level = (row + ["ok"])[:2] if isinstance(row, list) else (str(row), "ok")
+        cv2.putText(img, str(text)[:90], (8, 22 + 20 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    HUD_COLORS.get(level, HUD_COLORS["ok"]), 1, cv2.LINE_AA)
+    cv2.imshow(HUD, img)
+    cv2.waitKey(1)
+
+
 def main(argv: list[str]) -> int:
     try:
         cfg = json.loads(argv[1]) if len(argv) > 1 else {}
@@ -187,6 +207,9 @@ def main(argv: list[str]) -> int:
         emit({"error": f"eye tracking needs mediapipe and opencv-python ({type(e).__name__}: {e})"[:300]})
         return 3
 
+    gaze_on, signals_on = bool(cfg.get("gaze", True)), bool(cfg.get("signals", False))
+    if signals_on:
+        from ally.senses import face as face_signals
     size = screen_size()
     calib_path = Path(cfg.get("calibration", "gaze_calibration.json"))
     model = gaze_model.load(calib_path, size)
@@ -217,7 +240,9 @@ def main(argv: list[str]) -> int:
     emit({"ready": True, "calibrated": model is not None, "screen": list(size),
           "error_px": (model or {}).get("error_px")})
 
-    period = 1.0 / max(5, min(30, int(cfg.get("fps", 20))))
+    sig_period = 1.0 / max(2, min(30, int(cfg.get("signals_fps", 10))))
+    period = 1.0 / max(5, min(30, int(cfg.get("fps", 20)))) if gaze_on else sig_period
+    last_sig, hud, hud_rows = 0.0, False, []
     smooth = gaze_model.OneEuro()
     calib: Calibration | None = None
     t_start = time.monotonic()
@@ -231,6 +256,20 @@ def main(argv: list[str]) -> int:
             break
         if cmd == "calibrate" and calib is None:
             calib = Calibration(size)
+        elif cmd and cmd.startswith("hud"):
+            arg = cmd[3:].strip()
+            if arg == "off" and hud:
+                try:
+                    cv2.destroyWindow(HUD)
+                    cv2.waitKey(1)
+                except Exception:
+                    pass
+            hud = arg != "off"
+            if arg.startswith("["):
+                try:
+                    hud_rows = json.loads(arg)
+                except ValueError:
+                    pass
         tick = time.monotonic()
         ok, frame = cap.read()
         if not ok:
@@ -251,6 +290,15 @@ def main(argv: list[str]) -> int:
             mat = res.facial_transformation_matrixes[0] if res.facial_transformation_matrixes else None
             feat = gaze_model.features(lms, bs, mat, w, h)
         now = time.time()
+        if signals_on and res.face_landmarks and now - last_sig >= sig_period:
+            last_sig = now
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            light = face_signals.brightness(gray, face_signals.face_box(np.asarray(lms), w, h))
+            sig = face_signals.signals(lms, bs, mat, w, h, light)
+            if sig is not None:
+                emit({"t": round(now, 3), "f": sig})
+        if hud:
+            draw_hud(cv2, frame, hud_rows)
 
         if calib is not None:
             state = calib.step(feat, time.monotonic())
@@ -275,7 +323,7 @@ def main(argv: list[str]) -> int:
             if now - last_face_msg > 1.0 and feat is None:
                 emit({"t": now, "face": False})
                 last_face_msg = now
-        elif model is None:
+        elif model is None or not gaze_on:
             if now - last_face_msg > 0.5:
                 emit({"t": now, "face": True})
                 last_face_msg = now

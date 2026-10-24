@@ -4,6 +4,7 @@ BUILTIN_MODULES = [
     "ally.tools.browser_tools",
     "ally.tools.gaze_tools",
     "ally.tools.screen_tools",
+    "ally.tools.senses_tools",
     "ally.tools.speech_tools",
     "ally.tools.system_tools",
 ]

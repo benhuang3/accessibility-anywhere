@@ -58,7 +58,11 @@ def calibrate_eye_tracker(ctx):
 def eye_tracking(ctx, on: bool):
     """Turn the webcam eye tracker on or off (off = the camera is not used). Lasts until Ally restarts."""
     ctx.agent.gaze.set_enabled(bool(on))
-    return "Eye tracking is on." if on else "Eye tracking is off. The camera isn't being used."
+    if on:
+        return "Eye tracking is on."
+    if ctx.agent.gaze.camera_wanted():
+        return "Eye tracking is off. The camera is still used for face sensing; say: turn off the camera."
+    return "Eye tracking is off. The camera isn't being used."
 
 
 @tool

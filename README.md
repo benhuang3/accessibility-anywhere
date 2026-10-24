@@ -86,6 +86,32 @@ While Ally is talking, say **"Ally, stop"**.
 - Exact centering and following the eyes are Windows features. On macOS and Linux, Ally moves the
   pointer to where you look and zooms there, since those magnifiers follow the pointer.
 
+### Noticing struggle (senses)
+
+Ally watches for signs that you're having a hard time, so it can offer help before you ask:
+
+- **Face** (webcam): squinting and leaning toward the screen, each measured against *your* resting face.
+  Frames where you blink, smile or laugh, wink, turn away, or sit in the dark are ignored.
+- **Mouse and keyboard**: clicking the same spot again and again, deleting and retyping, and the pointer
+  resting a long time without a click. Only *that* a key was pressed is counted, never which key.
+
+One signal alone doesn't count. Two different signals within a few seconds (for example a squint
+plus leaning in) become one **struggle** event, `{kind, confidence, target {app, site, window, x, y,
+box}, source, detail, ts}`, that goes to the event log, to `agent.on_struggle(dict)` and to
+`agent.senses.subscribe(callback)`. Code is in `ally/senses/`.
+
+- Say **"Ally, set up face sensing"** once: 15 seconds of reading normally. Without it, Ally learns
+  your resting face from the first 20 seconds it sees you.
+- "Ally, stop watching me" or "turn off the camera" switches sensing off until Ally restarts. Or set
+  `senses.vision` / `senses.input` to false.
+- Live tuning: `python run.py tool senses_hud` opens a window with the camera picture, every signal,
+  its baseline and the gates; the thresholds live in `[senses]` in `config.toml` and apply on save.
+- No webcam? `python run.py tool simulate_struggle '{"kind": "demo"}'` fakes a weak squint plus a
+  lean (or use `squint`, `lean`, `rage_click`, `hesitation`, `retype`).
+- The camera is opened only by the eye tracker's helper process, which sends the agent a few
+  numbers per frame (like a squint score). Frames stay in memory there and are thrown away;
+  `tests/test_senses.py` fails if camera code imports networking or writes images or video.
+
 **Default hotkeys** (`<mod>` = Ctrl+Alt on Windows/Linux, Ctrl+Cmd on Mac):
 
 | Keys | Action |
