@@ -314,6 +314,39 @@ def wait_for(cond, timeout=2.0):
 
 
 class SensesManagerTests(unittest.TestCase):
+    def test_face_regression_gates_and_two_signal_positive(self):
+        """Synthetic at 10 fps: ordinary expressions/poses stay quiet; paired signals fuse once."""
+        negatives = [
+            (frame(0.4, smile=0.7), "smile"),
+            (frame(l=0.6, r=0.2), "wink"),
+            (frame(0.4, yaw=30), "yaw"),
+            (frame(0.4, pitch=30), "pitch"),
+            (frame(0.4, light=10), "dark"),
+        ]
+        false_positives = 0
+        for face_sig, label in negatives:
+            agent, got = fake_agent()
+            senses = Senses(agent)
+            senses.baseline = Baseline(0.1, 0.3)
+            for i in range(6000):
+                senses.on_face(1000 + i / 10, face_sig)
+            false_positives += len(got) + sum(senses.counts.values())
+            self.assertEqual(senses.counts, {}, f"FP count for {label}: {sum(senses.counts.values())}")
+        self.assertEqual(false_positives, 0, f"total FP count: {false_positives}")
+
+        agent, got = fake_agent()
+        senses = Senses(agent)
+        senses.baseline = Baseline(0.1, 0.3)
+        t = 1000.0
+        # Weak squint held, then a sustained weak lean: two agreeing signals.
+        for i in range(40):
+            t += 0.1
+            senses.on_face(t, frame(0.35 if i >= 2 else 0.1,
+                                    width=0.336 if i >= 15 else 0.3))
+        self.assertTrue(wait_for(lambda: got), "FN count: expected one fused struggle, got 0")
+        self.assertEqual(len(got), 1, f"FP count: expected 1 event, got {len(got)}")
+        self.assertEqual(got[0]["kind"], "fused")
+
     def test_simulated_demo_reaches_the_brain(self):
         agent, got = fake_agent()
         s = Senses(agent)
