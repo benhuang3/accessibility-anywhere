@@ -9,7 +9,7 @@ import threading
 import time
 import unittest
 
-from helpers import EnvPatch, temp_home
+from helpers import EnvPatch, fake_screen, temp_home
 
 from ally.agent import Agent
 from ally.websocket import OP_BIN, OP_CLOSE, OP_CONT, OP_PING, OP_PONG, OP_TEXT, WebSocket, accept_key, encode_frame
@@ -94,6 +94,7 @@ class ServerTests(unittest.TestCase):
         cls.env = EnvPatch(ANTHROPIC_API_KEY=None)
         cls.env.__enter__()
         cls.agent = Agent(temp_home(f"[agent]\nport = {cls.port}\nannounce_start = false\n"), start_hotkeys=False)
+        fake_screen(cls.agent.platform)
         cls.agent.start()
 
     @classmethod
