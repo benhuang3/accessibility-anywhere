@@ -20,6 +20,7 @@ from ally.senses.detectors import (Baseline, HesitationDetector, LeanDetector, R
                                    Signal, SquintDetector, Tuning, gate)
 from ally.senses.fusion import KINDS, Fuser
 from ally.senses.contract import to_event, validate_struggle
+from ally.senses import clickable
 from ally.senses.manager import Senses
 
 try:
@@ -334,6 +335,80 @@ def wait_for(cond, timeout=2.0):
 
 
 class SensesManagerTests(unittest.TestCase):
+    def test_clickable_msaa_role_mapping(self):
+        for role in clickable.CLICKABLE_ROLES:
+            self.assertIs(clickable._role_result(role), True, f"clickable role {role:#x}")
+        for role in clickable.NONCLICKABLE_ROLES:
+            self.assertIs(clickable._role_result(role), False, f"nonclickable role {role:#x}")
+        self.assertIsNone(clickable._role_result(0xFFFF))
+
+    def _quiet_face(self, label, make_frame):
+        agent, got = fake_agent()
+        senses = Senses(agent)
+        senses.baseline = Baseline(0.1, 0.3)
+        for i in range(6000):
+            senses.on_face(1000 + i / 10, make_frame(i))
+        fp = len(got) + sum(senses.counts.values())
+        self.assertEqual(fp, 0, f"FP count for {label}: {fp}")
+
+    def test_ten_minute_reading_with_blinks(self):
+        self._quiet_face("reading/blinks", lambda i: frame(blink=0.9 if i % 37 == 0 else 0))
+
+    def test_ten_minute_smiling_bouts(self):
+        self._quiet_face("smiling", lambda i: frame(0.4 if i % 600 < 250 else 0.1,
+                                                       smile=0.7 if i % 600 < 250 else 0))
+
+    def test_ten_minute_laughing_bouts(self):
+        self._quiet_face("laughing", lambda i: frame(0.4 if i % 500 < 180 else 0.1,
+                                                       smile=0.8 if i % 500 < 180 else 0,
+                                                       blink=0.9 if i % 43 == 0 else 0))
+
+    def test_ten_minute_winks(self):
+        self._quiet_face("winks", lambda i: frame(l=0.6 if i % 400 < 100 else 0.1))
+
+    def test_ten_minute_head_turns(self):
+        self._quiet_face("30 degree yaw", lambda i: frame(0.1, yaw=30 if i % 500 < 250 else 0))
+
+    def test_ten_minute_phone_looking(self):
+        self._quiet_face("30 degree pitch", lambda i: frame(0.1, pitch=30 if i % 450 < 160 else 0))
+
+    def test_ten_minute_dim_light(self):
+        self._quiet_face("dim light/high squint", lambda i: frame(0.7, light=20))
+
+    def test_ten_minute_small_posture_shifts(self):
+        self._quiet_face("posture shifts", lambda i: frame(width=0.3 * (1.07 if i % 300 < 100 else 1)))
+
+    def test_ten_minute_normal_typing(self):
+        agent, got = fake_agent()
+        senses = Senses(agent)
+        for i in range(2400):
+            senses.on_input({"e": "b" if i % 8 == 0 else "k", "t": 1000 + i * 0.5})
+        fp = len(got) + sum(senses.counts.values())
+        self.assertEqual(fp, 0, f"FP count for normal typing: {fp}")
+
+    def test_ten_minute_double_and_triple_clicks(self):
+        agent, got = fake_agent()
+        senses = Senses(agent)
+        for i in range(300):
+            for j in range(2 + i % 2):
+                senses.on_input({"e": "c", "x": (i * 97 + j * 211) % 1920, "y": (i * 53) % 1080,
+                                 "t": 1000 + i * 2 + j * 0.12})
+        fp = len(got) + sum(senses.counts.values())
+        self.assertEqual(fp, 0, f"FP count for double/triple clicks: {fp}")
+
+    def test_ten_minute_parked_pointer_reading(self):
+        for clickable in (False, None):
+            agent, got = fake_agent()
+            senses = Senses(agent)
+            senses.on_input({"e": "m", "t": 1000, "x": 300, "y": 300})
+            senses.on_input({"e": "r", "t": 1001, "x": 300, "y": 300, "clickable": clickable})
+            for i in range(600):
+                signal = senses.hesitation.tick(1002 + i)
+                if signal:
+                    senses._signal(signal)
+            fp = len(got) + sum(senses.counts.values())
+            self.assertEqual(fp, 0, f"FP count for parked pointer clickable={clickable}: {fp}")
+
     def test_face_regression_gates_and_two_signal_positive(self):
         """Synthetic at 10 fps: ordinary expressions/poses stay quiet; paired signals fuse once."""
         negatives = [
