@@ -5,6 +5,7 @@
     {"t": ..., "face": true} / {"face": false}   face seen but not calibrated / no face (a few per second)
     {"calibrated": true, "error_px": 140}        calibration done ({"calibrated": false, "why": "..."} if not)
     {"t": ..., "f": {"squint_l": 0.21, ...}}     face numbers for struggle sensing (with "signals": true)
+    {"camera_off": true}                         the camera-on window was clicked; the camera then closes
     {"error": "..."}                             a problem; the process then exits
 
 Settings "gaze" (default true) turns gaze points on; "signals" sends face numbers (ally.senses.face) at
@@ -190,6 +191,209 @@ def draw_hud(cv2, frame, rows: list) -> None:
     cv2.waitKey(1)
 
 
+# Always-on-top, not in the taskbar, and a click does not focus it (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW).
+INDICATOR_TEXT = "Camera on - click to turn off"
+_EX_NOACTIVATE = 0x08000000
+_EX_TOOLWINDOW = 0x00000080
+_EX_TOPMOST = 0x00000008
+INDICATOR_EX_STYLE = _EX_NOACTIVATE | _EX_TOOLWINDOW | _EX_TOPMOST
+_noted = False
+
+
+def note_once(msg: str) -> None:
+    """One line on stderr. Used when the camera-on window cannot be shown."""
+    global _noted
+    if _noted:
+        return
+    _noted = True
+    try:
+        sys.stderr.write(msg + "\n")
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
+
+
+class CameraIndicator:
+    """Small corner window while the camera is open. Clicking it asks the helper to turn the camera off."""
+
+    def __init__(self):
+        self.clicked = False
+        self._hwnd = None
+        self._proc = None
+        self._cv2 = None
+        self._name = INDICATOR_TEXT
+
+    def open(self, cv2, screen: tuple[int, int]) -> bool:
+        if sys.platform == "win32":
+            try:
+                if self._open_win32(screen):
+                    return True
+            except Exception:
+                self._hwnd = None
+        try:
+            if cv2 is not None and self._open_highgui(cv2, screen):
+                return True
+        except Exception:
+            self._cv2 = None
+        note_once("Camera-on indicator skipped: no Win32 window and no HighGUI. The camera is still on.")
+        return False
+
+    def pump(self) -> bool:
+        if self.clicked:
+            return True
+        if self._hwnd:
+            try:
+                self._pump_win32()
+            except Exception:
+                pass
+        elif self._cv2 is not None:
+            try:
+                self._cv2.waitKey(1)
+            except Exception:
+                pass
+        return self.clicked
+
+    def close(self) -> None:
+        hwnd, self._hwnd = self._hwnd, None
+        if hwnd:
+            try:
+                import ctypes
+                ctypes.windll.user32.DestroyWindow(hwnd)
+            except Exception:
+                pass
+        cv2, self._cv2 = self._cv2, None
+        if cv2 is not None:
+            try:
+                cv2.destroyWindow(self._name)
+                cv2.waitKey(1)
+            except Exception:
+                pass
+
+    def _open_win32(self, screen: tuple[int, int]) -> bool:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        LRESULT = ctypes.c_ssize_t
+        WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+        user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        user32.DefWindowProcW.restype = LRESULT
+
+        clicked = self
+
+        def proc(hwnd, msg, wparam, lparam):
+            if msg in (0x0202, 0x0010):  # WM_LBUTTONUP, WM_CLOSE
+                clicked.clicked = True
+                return 0
+            if msg == 0x000F:  # WM_PAINT
+                ps = _PAINT(user32, wintypes)
+                hdc = user32.BeginPaint(hwnd, ctypes.byref(ps))
+                rect = wintypes.RECT(4, 4, 276, 32)
+                user32.DrawTextW(hdc, INDICATOR_TEXT, -1, ctypes.byref(rect), 0x0020 | 0x0004)  # single line, vcenter
+                user32.EndPaint(hwnd, ctypes.byref(ps))
+                return 0
+            return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+        cb = WNDPROC(proc)
+        self._proc = cb  # the callback must stay alive for as long as the window exists
+
+        class WNDCLASSW(ctypes.Structure):
+            _fields_ = [("style", wintypes.UINT), ("lpfnWndProc", WNDPROC), ("cbClsExtra", ctypes.c_int),
+                        ("cbWndExtra", ctypes.c_int), ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON),
+                        ("hCursor", wintypes.HANDLE), ("hbrBackground", wintypes.HBRUSH),
+                        ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR)]
+
+        hinst = kernel32.GetModuleHandleW(None)
+        wc = WNDCLASSW()
+        wc.lpfnWndProc = cb
+        wc.hInstance = hinst
+        wc.hbrBackground = gdi32.GetStockObject(0)  # WHITE_BRUSH
+        wc.lpszClassName = "AllyCameraOn"
+        user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+        user32.RegisterClassW.restype = wintypes.ATOM
+        atom = user32.RegisterClassW(ctypes.byref(wc))
+        if not atom and ctypes.get_last_error() not in (0, 1410):  # 1410: class already registered
+            return False
+        width, height = 280, 36
+        x = max(0, int(screen[0]) - width - 16)
+        y = 16
+        user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+                                           ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                           wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
+        user32.CreateWindowExW.restype = wintypes.HWND
+        hwnd = user32.CreateWindowExW(INDICATOR_EX_STYLE, "AllyCameraOn", INDICATOR_TEXT,
+                                      0x80000000 | 0x10000000, x, y, width, height, None, None, hinst, None)
+        if not hwnd:
+            return False
+        user32.ShowWindow(hwnd, 5)  # SW_SHOWNA: show without taking focus
+        user32.SetWindowPos.argtypes = [wintypes.HWND, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+                                        ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        user32.SetWindowPos(hwnd, ctypes.c_void_p(-1), x, y, width, height, 0x0010 | 0x0040)  # NOACTIVATE, SHOWWINDOW
+        user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT,
+                                        wintypes.UINT]
+        user32.PeekMessageW.restype = wintypes.BOOL
+        user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+        user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+        user32.DispatchMessageW.restype = LRESULT
+        self._hwnd = hwnd
+        self._user32 = user32
+        return True
+
+    def _pump_win32(self) -> None:
+        import ctypes
+        user32 = self._user32
+        msg = ctypes.wintypes.MSG()
+        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+
+    def _open_highgui(self, cv2, screen: tuple[int, int]) -> bool:
+        import numpy as np
+
+        cv2.namedWindow(self._name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(self._name, 320, 48)
+        try:
+            cv2.setWindowProperty(self._name, cv2.WND_PROP_TOPMOST, 1)
+        except Exception:
+            pass
+        try:
+            cv2.moveWindow(self._name, max(0, int(screen[0]) - 340), 16)
+        except Exception:
+            pass
+        img = np.full((48, 320, 3), 32, dtype=np.uint8)
+        cv2.putText(img, INDICATOR_TEXT, (8, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (240, 240, 240), 1, cv2.LINE_AA)
+        cv2.imshow(self._name, img)
+
+        def on_mouse(event, _x, _y, _flags, _param):
+            if event == cv2.EVENT_LBUTTONUP:
+                self.clicked = True
+
+        cv2.setMouseCallback(self._name, on_mouse)
+        cv2.waitKey(1)
+        self._cv2 = cv2
+        return True
+
+
+def _PAINT(user32, wintypes):
+    """A PAINTSTRUCT, with BeginPaint/EndPaint/DrawText signatures set once."""
+    import ctypes
+
+    class PAINTSTRUCT(ctypes.Structure):
+        _fields_ = [("hdc", wintypes.HDC), ("fErase", wintypes.BOOL), ("rcPaint", wintypes.RECT),
+                    ("fRestore", wintypes.BOOL), ("fIncUpdate", wintypes.BOOL), ("rgbReserved", wintypes.BYTE * 32)]
+
+    user32.BeginPaint.argtypes = [wintypes.HWND, ctypes.POINTER(PAINTSTRUCT)]
+    user32.BeginPaint.restype = wintypes.HDC
+    user32.EndPaint.argtypes = [wintypes.HWND, ctypes.POINTER(PAINTSTRUCT)]
+    user32.EndPaint.restype = wintypes.BOOL
+    user32.DrawTextW.argtypes = [wintypes.HDC, wintypes.LPCWSTR, ctypes.c_int, ctypes.POINTER(wintypes.RECT),
+                                 wintypes.UINT]
+    user32.DrawTextW.restype = ctypes.c_int
+    return PAINTSTRUCT()
+
+
 def main(argv: list[str]) -> int:
     try:
         cfg = json.loads(argv[1]) if len(argv) > 1 else {}
@@ -226,6 +430,8 @@ def main(argv: list[str]) -> int:
                        "use it) and that no other app is using it."})
         return 4
 
+    indicator = CameraIndicator()
+    indicator.open(cv2, size)  # up before the first frame, so it is visible within a second of the camera opening
     cmds: queue.Queue = queue.Queue()
 
     def read_stdin() -> None:
@@ -270,12 +476,21 @@ def main(argv: list[str]) -> int:
                     hud_rows = json.loads(arg)
                 except ValueError:
                     pass
+        if indicator.pump():
+            emit({"camera_off": True})
+            break
         tick = time.monotonic()
         ok, frame = cap.read()
         if not ok:
             misses += 1
             if misses > 100:
                 emit({"error": "the camera stopped sending pictures"})
+                indicator.close()
+                cap.release()
+                try:
+                    cv2.destroyAllWindows()
+                except Exception:
+                    pass
                 return 1
             time.sleep(0.05)
             continue
@@ -336,7 +551,12 @@ def main(argv: list[str]) -> int:
         spare = period - (time.monotonic() - tick)
         if spare > 0:
             time.sleep(spare)
+    indicator.close()
     cap.release()
+    try:
+        cv2.destroyAllWindows()
+    except Exception:
+        pass
     return 0
 
 

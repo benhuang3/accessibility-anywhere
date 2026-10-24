@@ -5,15 +5,33 @@ These tests never open a camera. Helper processes are fakes.
 
 from __future__ import annotations
 
+import contextlib
+import importlib.util
 import io
 import json
+import subprocess
+import sys
 import tempfile
+import threading
+import types
 import unittest
 from pathlib import Path
 
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
+from ally.gaze_helper import INDICATOR_EX_STYLE, INDICATOR_TEXT, note_once
 from ally.senses import evaluate, matrix
+
+
+def _privacy():
+    path = ROOT / "scripts" / "privacy_check.py"
+    spec = importlib.util.spec_from_file_location("privacy_check", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+privacy = _privacy()
 
 
 def _face(**over):
@@ -346,6 +364,131 @@ class EvaluateTests(unittest.TestCase):
         self.assertIn("Held-out struggle false positives: 0", text)
         self.assertIn("Held-out false negatives: 0", text)
         self.assertIn("Margin to the nearest false positive", text)
+
+
+_HOLD = """
+import socket, subprocess, sys, time
+mode = sys.argv[1]
+kind = sys.argv[2] if len(sys.argv) > 2 else ""
+if mode == "listen":
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(1)
+    print("up", flush=True)
+    time.sleep(30)
+elif mode == "quiet":
+    print("up", flush=True)
+    time.sleep(30)
+else:
+    child = subprocess.Popen([sys.executable, __file__, kind], stdout=subprocess.PIPE, text=True)
+    child.stdout.readline()
+    print("up", flush=True)
+    child.wait()
+"""
+
+
+class PrivacyCheckTests(unittest.TestCase):
+    def test_netstat_lines_match_the_pid(self):
+        text = (
+            "  TCP    127.0.0.1:5555         0.0.0.0:0              LISTENING       42\n"
+            "  UDP    0.0.0.0:5353           *:*                                    42\n"
+            "  TCP    10.0.0.2:5555          1.2.3.4:443            ESTABLISHED     99\n"
+        )
+        own = privacy.parse_netstat(text, {42})
+        self.assertEqual(len(own), 2)
+        self.assertEqual(privacy.parse_netstat(text, {7}), [])
+
+    def test_new_image_file_is_reported(self):
+        shot = Path("shot.png")
+        self.assertEqual(privacy.new_media(set(), {shot}), [shot])
+        self.assertEqual(privacy.new_media({shot}, {shot}), [])
+
+    def test_report_includes_the_manual_steps(self):
+        text = privacy.format_report(True, 60, 60, [], [4])
+        self.assertIn("PASS", text)
+        self.assertIn("Wi-Fi", text)
+        self.assertIn("Resource Monitor", text)
+        failed = privacy.format_report(False, 1, 1, ["network endpoint pid 4"], [4])
+        self.assertIn("FAIL", failed)
+
+    def test_socket_child_is_flagged_and_a_quiet_child_passes(self):
+        folder = Path(tempfile.mkdtemp(prefix="ally-privacy-"))
+        script = folder / "hold.py"
+        script.write_text(_HOLD, encoding="utf-8")
+        loud = subprocess.Popen([sys.executable, str(script), "spawn", "listen"], stdout=subprocess.PIPE, text=True)
+        quiet = subprocess.Popen([sys.executable, str(script), "spawn", "quiet"], stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(_read_line(loud), "up")
+            self.assertEqual(_read_line(quiet), "up")
+            loud_hits = privacy.network_hits([loud.pid])
+            quiet_hits = privacy.network_hits([quiet.pid])
+            self.assertIsNotNone(loud_hits)
+            self.assertTrue(loud_hits, loud_hits)
+            self.assertIsNotNone(quiet_hits)
+            self.assertEqual(quiet_hits, [], quiet_hits)
+        finally:
+            for proc in (loud, quiet):
+                privacy.kill_tree(proc.pid)
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=3)
+                except Exception:
+                    pass
+                try:
+                    proc.stdout.close()
+                except Exception:
+                    pass
+
+
+def _read_line(proc, timeout: float = 10) -> str:
+    box: list[str] = []
+
+    def read():
+        box.append(proc.stdout.readline())
+
+    thread = threading.Thread(target=read, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        privacy.kill_tree(proc.pid)
+        raise AssertionError("process did not start")
+    return (box[0] if box else "").strip()
+
+
+class CameraOffTests(unittest.TestCase):
+    def test_indicator_style_skips_focus_and_the_taskbar(self):
+        self.assertIn("Camera on", INDICATOR_TEXT)
+        self.assertIn("click to turn off", INDICATOR_TEXT)
+        self.assertTrue(INDICATOR_EX_STYLE & 0x08000000)  # WS_EX_NOACTIVATE
+        self.assertTrue(INDICATOR_EX_STYLE & 0x00000080)  # WS_EX_TOOLWINDOW
+        self.assertTrue(INDICATOR_EX_STYLE & 0x00000008)  # WS_EX_TOPMOST
+
+    def test_skip_message_is_logged_once(self):
+        import ally.gaze_helper as helper
+        helper._noted = False
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            note_once("Camera-on indicator skipped.")
+            note_once("Camera-on indicator skipped.")
+        self.assertEqual(err.getvalue().count("Camera-on indicator skipped."), 1)
+
+    def test_click_turns_off_eye_tracking_and_face_sensing(self):
+        from ally.gaze import GazeManager
+        from ally.senses.manager import Senses
+        from test_senses import fake_agent, wait_for
+
+        agent, _got = fake_agent()
+        agent.senses = Senses(agent)
+        gaze = GazeManager(agent)
+        gaze.override = True
+        gaze._read_stdout(types.SimpleNamespace(stdout=io.StringIO('{"camera_off": true}\n')))
+        self.assertTrue(wait_for(lambda: any(event["kind"] == "gaze" for event in agent.events.since(0))))
+        self.assertFalse(gaze.wanted())
+        self.assertFalse(agent.senses.vision_wanted())
+        self.assertTrue(any("Camera turned off" in event["text"] for event in agent.events.since(0)))
 
 
 if __name__ == "__main__":
