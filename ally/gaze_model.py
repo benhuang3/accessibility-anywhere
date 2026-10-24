@@ -72,7 +72,7 @@ def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET):
             es.append(float(np.hypot(*(pred-y[te][0]))))
         return float(np.median(es))
     lam,e=min(((l,err(l)) for l in (.1,1.,10.,100.)),key=lambda z:z[1]); coef=_ridge(x,y,lam)
-    return {"version":MODEL_VERSION,"features":feature_set,"screen":list(screen),"mean":mean.tolist(),"std":std.tolist(),"coef":coef.tolist(),"lambda":lam,"error_px":round(e),"dots":len(targets),"created":time.time()}
+    return {"version":MODEL_VERSION,"features":feature_set,"screen":list(screen),"mean":mean.tolist(),"std":std.tolist(),"coef":coef.tolist(),"lambda":lam,"error_px":round(e),"dots":len(targets),"training_samples":[[list(f),list(t)] for f,t in samples],"created":time.time()}
 
 def predict(model,f):
     raw=expand(f,model.get("features","v1")); x=np.column_stack([np.ones(len(raw)),(raw-np.array(model["mean"]))/np.array(model["std"])])
@@ -117,7 +117,9 @@ class Corrector:
         if np.hypot(pred[0]-target[0],pred[1]-target[1])>300: return False
         self.samples.append((features,tuple(target),float(t))); self.samples=self.samples[-50:]
         if len(self.samples)>=8:
-            try: self.model=fit([(f,p) for f,p,_ in self.samples],self.base["screen"],self.base.get("features","v1"))
+            try:
+                combined=[(f,tuple(p)) for f,p in self.base.get("training_samples",[])]+[(f,p) for f,p,_ in self.samples]
+                self.model=fit(combined,self.base["screen"],self.base.get("features","v1"))
             except ValueError: pass
         return True
     def predict(self,features):
