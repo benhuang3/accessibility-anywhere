@@ -206,24 +206,57 @@ class Corrector:
     def add(self, features, target, t):
         """Accept an on-target click and return whether it was stored."""
         pred = self.predict(features)
-        if np.hypot(pred[0] - target[0], pred[1] - target[1]) > 300:
+        if np.hypot(pred[0] - target[0], pred[1] - target[1]) >= 300:
             return False
         self.samples.append((features, tuple(target), float(t)))
         self.samples = self.samples[-50:]
         if len(self.samples) >= 8:
-            try:
-                combined = [(f, tuple(p)) for f, p in self.base.get('training_samples', [])] + [(f, p) for f, p, _ in self.samples]
-                self.model = fit(combined, self.base['screen'], self.base.get('features', 'v1'))
-            except ValueError:
-                pass
+            self._refine()
         return True
+
+    def _refine(self):
+        """Fit refit and affine candidates on early clicks; select by later clicks."""
+        split = max(6, int(len(self.samples) * 0.8))
+        training = self.samples[:split]
+        held_out = self.samples[split:]
+        if len(held_out) < 2:
+            return
+        base_predictions = np.asarray([predict(self.base, f) for f, _, _ in held_out])
+        held_targets = np.asarray([target for _, target, _ in held_out])
+        best_error = float(np.median(np.linalg.norm(base_predictions - held_targets, axis=1)))
+        best_model = self.base
+        best_affine = None
+        calibration = [(f, tuple(point)) for f, point in self.base.get('training_samples', [])]
+        combined = calibration + [(f, target) for f, target, _ in training]
+        try:
+            candidate = fit(combined, self.base['screen'], self.base.get('features', 'v1'))
+            predictions = np.asarray([predict(candidate, f) for f, _, _ in held_out])
+            error = float(np.median(np.linalg.norm(predictions - held_targets, axis=1)))
+            if error < best_error:
+                best_error, best_model = error, candidate
+        except (ValueError, np.linalg.LinAlgError):
+            pass
+        train_predictions = np.asarray([predict(self.base, f) for f, _, _ in training])
+        train_targets = np.asarray([target for _, target, _ in training])
+        design = np.column_stack([train_predictions, np.ones(len(train_predictions))])
+        residual = train_targets - train_predictions
+        penalty = np.diag([1.0, 1.0, 0.01])
+        correction = np.linalg.solve(design.T @ design + penalty, design.T @ residual)
+        affine = np.vstack([np.eye(2) + correction[:2], correction[2]])
+        affine_predictions = np.column_stack([base_predictions, np.ones(len(base_predictions))]) @ affine
+        affine_error = float(np.median(np.linalg.norm(affine_predictions - held_targets, axis=1)))
+        if affine_error < best_error:
+            best_model, best_affine = self.base, affine
+        self.model = best_model
+        self.affine = best_affine
 
     def predict(self, features):
         """Return the current corrected screen prediction."""
-        p = np.array(predict(self.model, features))
         if self.affine is not None:
             raw = np.array(predict(self.base, features))
             p = np.r_[raw, 1.0] @ self.affine
+        else:
+            p = np.array(predict(self.model, features))
         return tuple(map(float, p))
 
     def info(self):

@@ -89,6 +89,38 @@ class GazeModelTests(unittest.TestCase):
             c.add(samples[i][0], samples[i][1], i + 1)
         self.assertEqual(c.info()['samples_used'], 9)
 
+    def test_corrector_refines_shifted_model_and_preserves_good_model(self):
+        targets = [(100, 100), (960, 100), (1820, 100), (100, 540), (960, 540),
+                   (1820, 540), (100, 980), (960, 980), (1820, 980)]
+        samples = [([x / 1920, y / 1080, 0, 0, 0, 0, 0, 0, 1], (x, y))
+                   for x, y in targets]
+        model = gm.fit(samples, (1920, 1080))
+        shifted = dict(model)
+        shifted['coef'] = [row[:] for row in model['coef']]
+        shifted['coef'][0][0] += 150
+        shifted['coef'][0][1] += 150
+        corrector = gm.Corrector(shifted)
+        before = np.mean([np.linalg.norm(np.asarray(gm.predict(shifted, f)) - target)
+                          for f, target in samples])
+        for index in range(10):
+            features, target = samples[index % len(samples)]
+            self.assertTrue(corrector.add(features, target, index))
+        after = np.mean([np.linalg.norm(np.asarray(corrector.predict(f)) - target)
+                         for f, target in samples])
+        self.assertGreater(before - after, 100)
+        prediction = corrector.predict(samples[0][0])
+        self.assertFalse(corrector.add(samples[0][0], (prediction[0] + 300, prediction[1]), 11))
+
+        good_corrector = gm.Corrector(model)
+        good_before = np.mean([np.linalg.norm(np.asarray(gm.predict(model, f)) - target)
+                               for f, target in samples])
+        for index in range(10):
+            features, target = samples[index % len(samples)]
+            self.assertTrue(good_corrector.add(features, target, index))
+        good_after = np.mean([np.linalg.norm(np.asarray(good_corrector.predict(f)) - target)
+                              for f, target in samples])
+        self.assertLessEqual(good_after, good_before)
+
     def test_evaluator_tiny_recording(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / 'tiny.jsonl'
