@@ -8,7 +8,7 @@ import time
 import unittest
 from pathlib import Path
 
-from helpers import EnvPatch, temp_home
+from helpers import EnvPatch, fake_screen, temp_home
 
 from ally import autostart, speech, voice
 from ally.macros import pick_os
@@ -281,6 +281,7 @@ class HotkeyProcessTests(unittest.TestCase):
         self.env = EnvPatch(**env)
         self.env.__enter__()
         a = Agent(temp_home(cfg), start_hotkeys=True)
+        fake_screen(a.platform)
         hits = []
 
         def fake_zoom(zoom: float):
