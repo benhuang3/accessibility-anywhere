@@ -19,8 +19,8 @@ from pathlib import Path
 
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
-from ally.gaze_helper import (CARD_SCALES, INDICATOR_EX_STYLE, INDICATOR_TEXT, classify_command, note_once,
-                              parse_card)
+from ally.gaze_helper import (CARD_SCALES, INDICATOR_EX_STYLE, INDICATOR_TEXT, NUM_FACES, SECOND_FACE,
+                              choose_face, classify_command, face_width, note_once, parse_card)
 from ally.senses import evaluate, matrix
 
 
@@ -577,6 +577,38 @@ class SelfCheckTests(unittest.TestCase):
             code = matrix.selfcheck(camera=0, ally_running=lambda: True, senses={})
         self.assertEqual(code, 2)
         self.assertIn("python run.py stop", buf.getvalue())
+
+
+class _Pt:
+    def __init__(self, x, y, z=0.0):
+        self.x, self.y, self.z = x, y, z
+
+
+def _landmarks(span: float, x0: float = 0.2):
+    pts = [_Pt(0.0, 0.0) for _ in range(478)]
+    pts[234] = _Pt(x0, 0.5)
+    pts[454] = _Pt(x0 + span, 0.5)
+    return pts
+
+
+class FaceGuardTests(unittest.TestCase):
+    def test_largest_face_is_used_until_a_second_face_is_close(self):
+        self.assertEqual(NUM_FACES, 2)
+        self.assertEqual(SECOND_FACE, 0.70)
+        wide, narrow = _landmarks(0.40), _landmarks(0.20)
+        widths = [face_width(narrow), face_width(wide)]
+        self.assertAlmostEqual(widths[1], 0.40)
+        self.assertEqual(choose_face(widths), 1)
+        self.assertEqual(choose_face([0.40]), 0)
+        self.assertIsNone(choose_face([]))
+        # 0.28 / 0.40 = 0.70 exactly: two people, so no face numbers.
+        self.assertIsNone(choose_face([0.40, 0.28]))
+        self.assertEqual(choose_face([0.40, 0.27]), 0)
+        self.assertEqual(face_width([_Pt(0, 0)]), 0.0)
+        pts = [(0.0, 0.0) for _ in range(478)]
+        pts[234] = (0.1, 0.5)
+        pts[454] = (0.4, 0.5)
+        self.assertAlmostEqual(face_width(pts), 0.3)
 
 
 class CameraOffTests(unittest.TestCase):

@@ -22,6 +22,7 @@ Usage: python -m ally.gaze_helper '{"model": "...", "calibration": "...", "camer
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import sys
@@ -36,6 +37,9 @@ DOTS = [(0.5, 0.5), (0.08, 0.1), (0.5, 0.1), (0.92, 0.1), (0.92, 0.5), (0.92, 0.
         (0.08, 0.9), (0.08, 0.5)]
 INTRO, SETTLE, COLLECT, RESULT = 3.0, 0.9, 1.2, 2.0  # seconds
 MIN_OPEN = 0.12  # eye openness below this is a blink: skip the frame
+NUM_FACES = 2
+SECOND_FACE = 0.70  # a second face this wide, compared with the largest, means two people
+CHEEK_R, CHEEK_L = 234, 454  # same cheek points ally.senses.face uses for width
 
 
 def _out():
@@ -545,6 +549,37 @@ def _wrap(cv2, text: str, scale: float, thick: int, width: int) -> list[str]:
     return lines
 
 
+def _xy(point) -> tuple[float, float]:
+    if hasattr(point, "x"):
+        return float(point.x), float(point.y)
+    return float(point[0]), float(point[1])
+
+
+def face_width(landmarks) -> float:
+    """Cheek-to-cheek span. Larger means a closer or bigger face."""
+    try:
+        rx, ry = _xy(landmarks[CHEEK_R])
+        lx, ly = _xy(landmarks[CHEEK_L])
+    except (IndexError, TypeError, ValueError):
+        return 0.0
+    return math.hypot(lx - rx, ly - ry)
+
+
+def choose_face(widths: list[float], second: float = SECOND_FACE) -> int | None:
+    """Index of the largest face. None when another face is at least `second` as wide.
+
+    Two people in frame must not be mixed into one set of face numbers, so the frame is
+    treated like no face at all.
+    """
+    if not widths:
+        return None
+    order = sorted(range(len(widths)), key=lambda i: widths[i], reverse=True)
+    best = order[0]
+    if len(order) > 1 and widths[best] > 0 and widths[order[1]] >= second * widths[best]:
+        return None
+    return best
+
+
 def main(argv: list[str]) -> int:
     try:
         cfg = json.loads(argv[1]) if len(argv) > 1 else {}
@@ -571,7 +606,7 @@ def main(argv: list[str]) -> int:
     try:
         landmarker = vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(cfg["model"])), running_mode=vision.RunningMode.VIDEO,
-            num_faces=1, output_face_blendshapes=True, output_facial_transformation_matrixes=True))
+            num_faces=NUM_FACES, output_face_blendshapes=True, output_facial_transformation_matrixes=True))
     except Exception as e:
         emit({"error": f"couldn't load the face model: {e}"[:300]})
         return 3
@@ -668,13 +703,17 @@ def main(argv: list[str]) -> int:
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         res = landmarker.detect_for_video(image, int((tick - t_start) * 1000))
         feat = None
-        if res.face_landmarks:
-            lms = [(p.x, p.y, p.z) for p in res.face_landmarks[0]]
-            bs = {c.category_name: c.score for c in res.face_blendshapes[0]} if res.face_blendshapes else None
-            mat = res.facial_transformation_matrixes[0] if res.facial_transformation_matrixes else None
+        lms = bs = mat = None
+        chosen = choose_face([face_width(face) for face in res.face_landmarks]) if res.face_landmarks else None
+        if chosen is not None:
+            lms = [(p.x, p.y, getattr(p, "z", 0.0)) for p in res.face_landmarks[chosen]]
+            if res.face_blendshapes and chosen < len(res.face_blendshapes):
+                bs = {c.category_name: c.score for c in res.face_blendshapes[chosen]}
+            if res.facial_transformation_matrixes and chosen < len(res.facial_transformation_matrixes):
+                mat = res.facial_transformation_matrixes[chosen]
             feat = gaze_model.features(lms, bs, mat, w, h)
         now = time.time()
-        if signals_on and res.face_landmarks and now - last_sig >= sig_period:
+        if signals_on and chosen is not None and lms is not None and now - last_sig >= sig_period:
             last_sig = now
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             light = face_signals.brightness(gray, face_signals.face_box(np.asarray(lms), w, h))
