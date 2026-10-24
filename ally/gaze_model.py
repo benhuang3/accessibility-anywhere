@@ -72,7 +72,11 @@ def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET):
             es.append(float(np.hypot(*(pred-y[te][0]))))
         return float(np.median(es))
     lam,e=min(((l,err(l)) for l in (.1,1.,10.,100.)),key=lambda z:z[1]); coef=_ridge(x,y,lam)
-    return {"version":MODEL_VERSION,"features":feature_set,"screen":list(screen),"mean":mean.tolist(),"std":std.tolist(),"coef":coef.tolist(),"lambda":lam,"error_px":round(e),"dots":len(targets),"training_samples":[[list(f),list(t)] for f,t in samples],"created":time.time()}
+    pose_start = 10 if feature_set == "v2" else 4
+    pose_size = 6 if feature_set == "v2" else 5
+    poses = np.asarray([f[pose_start:pose_start + pose_size] for f, _ in samples], dtype=float)
+    calibration_pose = np.median(poses, axis=0).tolist()
+    return {"version":MODEL_VERSION,"features":feature_set,"screen":list(screen),"mean":mean.tolist(),"std":std.tolist(),"coef":coef.tolist(),"lambda":lam,"error_px":round(e),"dots":len(targets),"training_samples":[[list(f),list(t)] for f,t in samples],"calibration_pose":calibration_pose,"created":time.time()}
 
 def predict(model,f):
     raw=expand(f,model.get("features","v1")); x=np.column_stack([np.ones(len(raw)),(raw-np.array(model["mean"]))/np.array(model["std"])])
@@ -132,9 +136,18 @@ class Corrector:
 def radius_px(model,features=None):
     base=float(model.get("error_px") or 200)
     if features is None:return base
-    f=np.asarray(features,float); ix=10 if model.get("features")=="v2" else 4
-    pose=np.linalg.norm(f[ix:ix+3]) if len(f)>=ix+3 else 0
-    return base*(1+min(2.,float(pose)*2))
+    f=np.asarray(features,float)
+    ix=10 if model.get("features")=="v2" else 4
+    calibration=np.asarray(model.get("calibration_pose", []),dtype=float)
+    pose_size=6 if model.get("features")=="v2" else 5
+    if len(f)<ix+pose_size or calibration.shape!=(pose_size,):
+        return base
+    rotation_delta=float(np.linalg.norm(f[ix:ix+3]-calibration[:3]))
+    rotation_delta=math.degrees(rotation_delta)
+    distance=max(abs(float(calibration[-1])),1e-6)
+    translation_delta=float(np.linalg.norm(f[ix+3:ix+pose_size]-calibration[3:]))/distance
+    movement=max(rotation_delta/10.0,translation_delta/0.15)
+    return base*(1+min(2.,movement))
 
 def save(model,path):
     path=Path(path); path.parent.mkdir(parents=True,exist_ok=True); tmp=path.with_suffix(".tmp"); tmp.write_text(json.dumps(model),encoding="utf-8"); tmp.replace(path)

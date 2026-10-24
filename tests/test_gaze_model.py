@@ -36,7 +36,20 @@ class GazeModelTests(unittest.TestCase):
             f=[x/1920,y/1080,0,0,0,0,0,0,1]; samples.append((f,(x,y)))
         m=gm.fit(samples,(1920,1080)); self.assertLess(gm.validate(m,samples)['error_px'],40)
         self.assertEqual(gm.region(10,10,(1920,1080)),"top left"); self.assertEqual(gm.region(960,540,(1920,1080)),"middle")
-        self.assertGreater(gm.radius_px(m,[0,0,0,0,1,1,0,0,0]),gm.radius_px(m,[0]*9))
+        baseline = [0, 0, 0, 0, .5, .5, 0, 0, -50]
+        realistic = [(baseline[:4] + [x / 1920, y / 1080] + baseline[6:], (x, y))
+                     for x, y in [(100,100),(960,100),(1820,100),(100,540),(960,540),
+                                  (1820,540),(100,980),(960,980),(1820,980)]]
+        pose_model = gm.fit(realistic, (1920, 1080))
+        base_radius = gm.radius_px(pose_model, baseline)
+        turned = baseline.copy()
+        turned[4] = np.deg2rad(10)
+        closer = baseline.copy()
+        closer[8] = -42.5
+        self.assertEqual(gm.radius_px(pose_model, baseline), base_radius)
+        self.assertGreater(gm.radius_px(pose_model, turned), base_radius)
+        self.assertGreater(gm.radius_px(pose_model, closer), base_radius)
+        self.assertLessEqual(gm.radius_px(pose_model, turned), 3 * base_radius)
 
     def test_fixation(self):
         pts=[(i*.05,100+(i%2),100) for i in range(8)]+[(.4,500,500)]+[(.45+i*.05,300,300) for i in range(8)]
