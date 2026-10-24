@@ -9,6 +9,7 @@ import threading
 import time
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from helpers import ROOT, temp_home
@@ -57,6 +58,13 @@ class BaselineTests(unittest.TestCase):
         self.assertAlmostEqual(b.squint, 0.1)
         self.assertAlmostEqual(b.width, 0.3)
         self.assertEqual(b.samples, 40)
+
+    def test_calibration_marks_unsteady_squint_unreliable(self):
+        samples = [frame(0.1 if i % 2 else 0.35) for i in range(40)]
+        b = Baseline.from_samples(samples, 1.0)
+        self.assertFalse(b.squint_reliable)
+        self.assertTrue(b.squint_why)
+        self.assertFalse(Baseline.from_dict(b.to_dict()).squint_reliable)
 
     def test_rejects_bad_setups(self):
         with self.assertRaisesRegex(ValueError, "only 5 frames"):
@@ -336,6 +344,10 @@ def wait_for(cond, timeout=2.0):
 
 class SensesManagerTests(unittest.TestCase):
     def test_clickable_msaa_role_mapping(self):
+        self.assertEqual(clickable._role_result(0x0C), True)  # menu item
+        self.assertEqual(clickable._role_result(0x39), True)  # button menu
+        self.assertEqual(clickable._role_result(0x38), True)  # button drop-down
+        self.assertIsNone(clickable._role_result(0x0B))  # menu popup is not itself a control
         for role in clickable.CLICKABLE_ROLES:
             self.assertIs(clickable._role_result(role), True, f"clickable role {role:#x}")
         for role in clickable.NONCLICKABLE_ROLES:
@@ -382,7 +394,7 @@ class SensesManagerTests(unittest.TestCase):
         agent, got = fake_agent()
         senses = Senses(agent)
         for i in range(2400):
-            senses.on_input({"e": "b" if i % 8 == 0 else "k", "t": 1000 + i * 0.5})
+            senses.on_input({"e": "b" if i % 25 < 3 else "k", "t": 1000 + i * 0.5})
         fp = len(got) + sum(senses.counts.values())
         self.assertEqual(fp, 0, f"FP count for normal typing: {fp}")
 
@@ -442,10 +454,42 @@ class SensesManagerTests(unittest.TestCase):
         self.assertEqual(len(got), 1, f"FP count: expected 1 event, got {len(got)}")
         self.assertEqual(got[0]["kind"], "fused")
 
+    def test_tiny_text_squint_plus_weak_lean_fuses_once_within_three_seconds(self):
+        agent, got = fake_agent()
+        senses = Senses(agent)
+        senses.baseline = Baseline(0.1, 0.3)
+        onset = 2000.0
+        for i in range(30):
+            t = onset + i / 10
+            senses.on_face(t, frame(0.35 if i >= 1 else 0.1,
+                                   width=0.336 if i >= 1 else 0.3))
+        self.assertTrue(wait_for(lambda: got), "FN count for tiny text: expected one fused event, got 0")
+        self.assertEqual(len(got), 1, f"FP count for tiny text: expected 1 event, got {len(got)}")
+        self.assertEqual(got[0]["kind"], "fused")
+        self.assertLessEqual(got[0]["ts"] - onset, 3.0, "FN count for tiny text after 3 seconds: 1")
+
+    def test_rage_clicks_plus_squint_fuses_once_within_three_seconds(self):
+        agent, got = fake_agent()
+        senses = Senses(agent)
+        senses.baseline = Baseline(0.1, 0.3)
+        onset = 3000.0
+        for i in range(20):
+            senses.on_face(onset + i / 10, frame(0.4 if i >= 1 else 0.1))
+        for i in range(4):
+            senses.on_input({"e": "c", "t": onset + 1 + i * 0.3, "x": 400, "y": 300})
+        self.assertTrue(wait_for(lambda: got), "FN count for rage clicks plus squint: expected one, got 0")
+        self.assertEqual(len(got), 1, f"FP count for rage clicks plus squint: expected 1, got {len(got)}")
+        self.assertEqual(got[0]["kind"], "fused")
+        self.assertLessEqual(got[0]["ts"] - onset, 3.0,
+                             "FN count for rage clicks plus squint after 3 seconds: 1")
+
     def test_simulated_demo_reaches_the_brain(self):
         agent, got = fake_agent()
         s = Senses(agent)
-        d = s.simulate("demo")
+        self.assertIsNone(s.simulate("demo"))
+        self.assertTrue(s.info()["simulated"])
+        s.tick(time.time() + 1.5)
+        d = s.last_struggle
         self.assertEqual(d["kind"], "fused")
         self.assertEqual(set(d), {"kind", "confidence", "target", "source", "detail", "ts"})
         self.assertEqual(set(d["target"]), {"app", "site", "window", "x", "y", "box"})
@@ -461,6 +505,39 @@ class SensesManagerTests(unittest.TestCase):
         self.assertIn("struggle", kinds)
         with self.assertRaises(Exception):
             s.simulate("sneeze")
+
+    def test_replay_tick_uses_supplied_timestamp(self):
+        agent, _ = fake_agent()
+        s = Senses(agent)
+        s.input.proc = types.SimpleNamespace(poll=lambda: None)
+        s.hesitation.move(10.0, 10, 10)
+        s.hesitation.move(11.0, 300, 200)
+        s.tick(16.1)
+        self.assertEqual(s.last_signal["kind"], "hesitation")
+        self.assertAlmostEqual(s.last_signal["ts"], 16.1)
+
+    def test_struggle_sink_posts_contract_event_on_worker(self):
+        from ally.struggle_sink import StruggleSink
+        agent, _ = fake_agent()
+        token_file = agent.paths.state_dir / "token"
+        token_file.write_text("secret-token", encoding="utf-8")
+        agent.paths.token_file = token_file
+        sink = StruggleSink(agent, "http://localhost/api/event")
+        seen = threading.Event()
+        def urlopen(req, timeout):
+            self.assertEqual(timeout, 2)
+            self.assertEqual(req.get_header("X-ally-token"), "secret-token")
+            self.assertEqual(__import__("json").loads(req.data)["type"], "struggle")
+            seen.set()
+            response = mock.MagicMock()
+            response.read.return_value = b""
+            return response
+        with mock.patch("ally.struggle_sink.urllib.request.urlopen", side_effect=urlopen):
+            event = {"kind": "fused", "confidence": 0.8,
+                     "target": {"app": None, "site": None, "window": None, "x": None, "y": None, "box": None},
+                     "source": "senses", "detail": {}, "ts": 1.0}
+            sink(event)
+            self.assertTrue(seen.wait(2))
 
     def test_declined_struggle_snoozes_its_signal_kinds(self):
         agent, _ = fake_agent(decline_seconds=90)
@@ -479,6 +556,7 @@ class SensesManagerTests(unittest.TestCase):
         s.subscribe(seen.append)
         with self.assertLogs("ally.senses", "ERROR"):
             s.simulate("demo")
+            s.tick(time.time() + 1.5)
             self.assertTrue(wait_for(lambda: seen))
             time.sleep(0.1)  # let the failing handler's thread log
 

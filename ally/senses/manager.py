@@ -54,6 +54,9 @@ class Senses:
         self._calib_until = 0.0
         self._calib_done = threading.Event()
         self._calib_result: dict | None = None
+        self._last_struggle_t = -1e9
+        self._demo_due: float | None = None
+        self._simulated_until = 0.0
         self.pointer: tuple[int, int] | None = None
         self.counts: collections.Counter = collections.Counter()
         self.last_signal: dict | None = None
@@ -63,6 +66,9 @@ class Senses:
         self.hud = False
         self._hud_at = 0.0
         self.input = InputWatcher(self)
+        if self.cfg.get("post_url"):
+            from ..struggle_sink import StruggleSink
+            self.subscribe(StruggleSink(self.agent, self.cfg["post_url"]))
 
     # ---------------------------------------------------------------- settings
     @property
@@ -162,11 +168,18 @@ class Senses:
         with self.lock:
             self._calib_done.clear()
             self._calib_result = None
-            self._calib, self._calib_until = [], time.time() + seconds
-        if not self._calib_done.wait(seconds + 10):
-            with self.lock:
-                self._calib = None
-            raise ToolError("I lost sight of your face during the setup. Try again facing the screen.")
+            self._calib, self._calib_until = [], self._face_t + seconds
+        gaze = getattr(self.agent, "gaze", None)
+        if gaze is not None:
+            gaze.send('card ' + json.dumps({"title": "Face setup", "text": "Read this paragraph normally. Keep your usual posture and relaxed face while you read. This helps Ally learn how your eyes and face look when reading comfortably.", "size": "normal", "seconds": seconds}))
+        try:
+            if not self._calib_done.wait(seconds + 10):
+                with self.lock:
+                    self._calib = None
+                raise ToolError("I lost sight of your face during the setup. Try again facing the screen.")
+        finally:
+            if gaze is not None:
+                gaze.send("card off")
         return self._calib_result or {"ok": False, "why": "the camera stopped"}
 
     def _finish_calibration(self, t: float) -> None:
@@ -219,10 +232,18 @@ class Senses:
                     except ValueError:
                         del self._auto[: len(self._auto) // 2]  # keep trying with fresher frames
             else:
-                for s in (self.squint.feed(sig, t, self.baseline), self.lean.feed(sig, t, self.baseline)):
+                squint_signal = self.squint.feed(sig, t, self.baseline) if self.baseline.squint_reliable else None
+                for s in (squint_signal, self.lean.feed(sig, t, self.baseline)):
                     if s is not None:
                         fired.append(s)
-                if not fired and not gate(sig, self.tune) and not self.squint.latched and not self.lean.fired:
+                squint_near = (sig["squint_l"] + sig["squint_r"]) / 2 - self.baseline.squint >= self.tune.squint_weak
+                lean_near = sig["width"] / self.baseline.width >= self.tune.lean_weak
+                cooldown = t < self.fuser.last_emit + self.fuser.cooldown
+                snoozed = any(until > t for until in self.snoozed_until.values())
+                recent_struggle = t - self._last_struggle_t < self.fuser.window
+                if (not fired and not squint_near and not lean_near and not cooldown and not snoozed
+                        and not recent_struggle and not gate(sig, self.tune)
+                        and not self.squint.latched and not self.lean.fired):
                     self.baseline.drift(sig, dt)
             hud = self.hud and time.time() - self._hud_at > 0.2
             if hud:
@@ -253,10 +274,19 @@ class Senses:
         if sig is not None:
             self._signal(sig)
 
-    def tick(self) -> None:
+    def tick(self, t: float | None = None) -> None:
         """Called about once a second (hesitation needs a clock, not just events)."""
+        replay = t is not None
+        t = time.time() if t is None else float(t)
         with self.lock:
-            sig = self.hesitation.tick(time.time()) if self.input.running else None
+            sig = self.hesitation.tick(t) if self.input.running or replay else None
+            demo_due = self._demo_due
+            if demo_due is not None and t >= demo_due:
+                self._demo_due = None
+            else:
+                demo_due = None
+        if demo_due is not None:
+            self._signal(Signal("lean", 0.4, demo_due, "weak", "simulate", detail={"simulated": True}))
         if sig is not None:
             self._signal(sig)
 
@@ -267,8 +297,10 @@ class Senses:
         with self.lock:
             self.fuser.last_emit = -1e9  # a simulation never waits for the cooldown
         if kind == "demo":
+            self._demo_due = now + 1.5
+            self._simulated_until = now + 3.0
             self._signal(Signal("squint", 0.4, now, "weak", "simulate", detail={"simulated": True}))
-            return self._signal(Signal("lean", 0.4, now, "weak", "simulate", detail={"simulated": True}))
+            return None
         if kind not in SIMULATED:
             raise ToolError(f"Unknown signal {kind!r}. Use one of: demo, {', '.join(sorted(SIMULATED))}.")
         conf = confidence if confidence is not None else (0.7 if tier == "strong" else 0.4)
@@ -318,6 +350,7 @@ class Senses:
             return None
         with self.lock:
             self.last_struggle = d
+            self._last_struggle_t = struggle.ts
         log.info("%s", struggle.describe())
         self.agent.events.add("struggle", struggle.describe(), struggle=d)
         handlers = list(self.subscribers)
@@ -348,6 +381,8 @@ class Senses:
             return "calibrating"
         if self.baseline is None:
             return "learning your face"
+        if not self.baseline.squint_reliable:
+            return "watching (squint off: " + self.baseline.squint_why + ")"
         return "watching"
 
     def info(self) -> dict:
@@ -361,6 +396,7 @@ class Senses:
                 "hesitation_threshold": round(self.hesitation.threshold(), 1),
                 "signals": dict(self.counts), "last_signal": self.last_signal, "last_struggle": self.last_struggle,
                 "snoozed_until": dict(self.snoozed_until),
+                "simulated": self._simulated_until > time.time(),
             }
         gaze = getattr(self.agent, "gaze", None)
         if out["vision"] == "error" and gaze is not None:
@@ -372,6 +408,10 @@ class Senses:
         i = self.info()
         f, b, tune = i["face"] or {}, i["baseline"] or {}, self.tune
         rows = [[f"vision: {i['vision']}   input: {i['input']}", "ok"]]
+        if i.get("simulated"):
+            rows.append(["SIMULATED struggle demo", "warn"])
+        if b and not b.get("squint_reliable", True):
+            rows.append(["squint off: " + b.get("squint_why", "unreliable calibration"), "warn"])
         active_snoozes = [f"{k} {max(0, v - time.time()):.0f}s" for k, v in i.get("snoozed_until", {}).items()
                           if v > time.time()]
         if active_snoozes:

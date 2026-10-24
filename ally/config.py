@@ -51,7 +51,7 @@ SPEC = {
                "smile_gate": NUM, "blink_gate": NUM, "pose_gate": NUM, "light_floor": NUM, "lean_ratio": NUM,
                "lean_weak": NUM, "lean_release": NUM, "lean_hold": NUM, "rage_clicks": int, "rage_seconds": NUM,
                "rage_px": NUM, "retype_backspaces": int, "retype_seconds": NUM, "hesitation_seconds": NUM,
-               "rearm_seconds": NUM},
+               "rearm_seconds": NUM, "post_url": str},
     "profile": {"page_zoom": NUM, "min_font_px": int, "page_styles": list, "screen_magnify": NUM,
                 "color_filter": ("none", "invert", "grayscale", "high_contrast")},
     "tools": {"disabled": list, "timeout_seconds": NUM},

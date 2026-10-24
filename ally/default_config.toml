@@ -88,6 +88,7 @@ solo = []                  # signals that count on their own when strong, e.g. [
 window_seconds = 4         # signals this close together are combined
 cooldown_seconds = 30      # quiet time after reporting a struggle
 decline_seconds = 90       # quiet time for declined signal kinds
+post_url = ""              # optional struggle event endpoint; empty disables posting
 min_confidence = 0.5
 # Starting thresholds (unverified on real faces; tune them live with: python run.py tool senses_hud)
 squint_delta = 0.20        # squint score above your baseline for a strong squint...
@@ -118,6 +119,7 @@ rearm_seconds = 20         # a signal waits this long before firing again
 [hotkeys]
 "<mod>+v" = "listen"               # talk to Ally (press again to stop early)
 "<mod>+r" = "read_selection"       # read the selected text, in any app
+"<mod>+c" = "calibrate_face_sensing" # recalibrate face sensing
 "<mod>+s" = "stop_speaking"
 "<mod>+=" = "zoom_in"              # page if Chrome is in front, else whole screen
 "<mod>+-" = "zoom_out"

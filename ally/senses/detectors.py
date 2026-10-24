@@ -75,6 +75,8 @@ class Baseline:
     samples: int = 0
     source: str = "calibrated"  # calibrated | auto
     created: float = 0.0
+    squint_reliable: bool = True
+    squint_why: str = ""
 
     MIN_SAMPLES = 30
 
@@ -95,7 +97,13 @@ class Baseline:
         if smile > 0.5:
             raise ValueError("you were smiling a lot; keep a neutral face for the setup")
         light = statistics.median(s.get("light", -1.0) for s in good)
-        return cls(round(squint, 4), round(width, 4), round(smile, 4), round(light, 1), len(good), source, t)
+        scores = [(s["squint_l"] + s["squint_r"]) / 2 for s in good]
+        mad = statistics.median(abs(v - squint) for v in scores)
+        asymmetry = statistics.median(abs(s["squint_l"] - s["squint_r"]) for s in good)
+        reliable = mad <= 0.06 and asymmetry <= 0.10 and light >= 40
+        why = "" if reliable else "squint readings were unsteady, uneven, or too dim; squint sensing is off"
+        return cls(round(squint, 4), round(width, 4), round(smile, 4), round(light, 1), len(good), source, t,
+                   reliable, why)
 
     def drift(self, sig: dict, dt: float, tau: float = 300.0) -> None:
         """Follow slow posture and light changes (minutes), never a squint or lean in progress."""
@@ -108,13 +116,15 @@ class Baseline:
 
     def to_dict(self) -> dict:
         return {"squint": self.squint, "width": self.width, "smile": self.smile, "light": self.light,
-                "samples": self.samples, "source": self.source, "created": self.created}
+                "samples": self.samples, "source": self.source, "created": self.created,
+                "squint_reliable": self.squint_reliable, "squint_why": self.squint_why}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Baseline | None":
         try:
             b = cls(float(d["squint"]), float(d["width"]), float(d.get("smile", 0)), float(d.get("light", -1)),
-                    int(d.get("samples", 0)), str(d.get("source", "calibrated")), float(d.get("created", 0)))
+                    int(d.get("samples", 0)), str(d.get("source", "calibrated")), float(d.get("created", 0)),
+                    bool(d.get("squint_reliable", True)), str(d.get("squint_why", "")))
         except (KeyError, TypeError, ValueError):
             return None
         return b if 0 <= b.squint <= 0.6 and 0.05 <= b.width <= 0.95 else None

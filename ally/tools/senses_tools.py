@@ -51,7 +51,7 @@ def simulate_struggle(ctx, kind: Annotated[str, "demo (a weak squint plus a weak
                                                 "rage_click, hesitation or retype"] = "demo",
                       tier: Literal["strong", "weak"] = "strong"):
     """Pretend a struggle signal fired (no webcam needed). Two signals within a few seconds fuse into a
-    struggle; "demo" sends both at once."""
+    struggle; "demo" sends a weak squint followed by a weak lean 1.5 seconds later."""
     d = ctx.agent.senses.simulate(kind.strip().lower(), tier=tier)
     if d is None:
         return f"Simulated a {tier} {kind} signal (it needs a second signal to count as a struggle)."
