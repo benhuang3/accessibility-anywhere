@@ -77,6 +77,15 @@ class GazeModelTests(unittest.TestCase):
         self.assertIsNotNone(fixation)
         self.assertLess(time.perf_counter() - started, 0.05)
 
+    def test_clean_samples_keeps_openness_and_click_frame_is_preceding(self):
+        features = [0.1, 0.2, 0, 0]
+        retained = gm.clean_samples([(features, (10, 20), 0.7)], preserve_openness=True)
+        self.assertEqual(retained, [(features, (10, 20), 0.7)])
+        frames = [(9.7, [1]), (9.85, [2]), (9.9, [3]), (10.0, [4]), (10.2, [5])]
+        selected = gaze_eval._frame_before_click(frames, 10.0)
+        self.assertEqual(selected, frames[2])
+        self.assertIsNone(gaze_eval._frame_before_click([(10.01, [6])], 10.0))
+
     def test_corrector_filter(self):
         samples = []
         for i, (x, y) in enumerate([(100, 100), (960, 100), (1820, 100), (100, 540), (960, 540), (1820, 540), (100, 980), (960, 980), (1820, 980)]):

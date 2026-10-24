@@ -6,6 +6,15 @@ from pathlib import Path
 import numpy as np
 from . import gaze_model as gm
 
+def _frame_before_click(feats, click_time):
+    """Return the closest feature frame at or before 100 ms before a click."""
+    cutoff = click_time - 0.1
+    candidates = [frame for frame in feats if frame[0] <= cutoff]
+    if not candidates:
+        return None
+    frame = max(candidates, key=lambda item: item[0])
+    return frame if cutoff - frame[0] <= 0.25 else None
+
 def evaluate(path):
     """Evaluate v1 and v2 models on the held-out phases in one JSONL recording."""
     rows = [json.loads(s) for s in Path(path).read_text(encoding='utf-8').splitlines() if s.strip()]
@@ -30,16 +39,15 @@ def evaluate(path):
                 for t, f, op in feats:
                     if target['start'] <= t <= target['end']:
                         out.append((f, (target['x'], target['y']), op))
-            cleaned = gm.clean_samples(out)
-            return [(f, t, op) for f, t in cleaned for op in [next((z for ff, tt, z in out if ff == f and tt == t), 1.0)]]
+            return gm.clean_samples(out, preserve_openness=True)
         train = samples({'calibration'})
         if len({t for _, t, _ in train}) < 6:
             continue
         model = gm.fit([(f, t) for f, t, _ in train], screen, fs)
         corrector = gm.Corrector(model)
         for click in sorted((r for r in rows if r.get('rec') == 'click'), key=lambda c: c['t']):
-            nearest = min(feats, key=lambda z: abs(z[0] - click['t']), default=None)
-            if nearest and abs(nearest[0] - click['t']) <= 0.25:
+            nearest = _frame_before_click(feats, click['t'])
+            if nearest:
                 corrector.add(nearest[1], (click['x'], click['y']), click['t'])
         for phase in ('validation', 'drift'):
             data = samples({phase})

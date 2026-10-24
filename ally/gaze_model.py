@@ -121,8 +121,8 @@ def predict(model: dict, f) -> tuple[float, float]:
     p = (x @ np.array(model['coef']))[0]
     return (float(p[0]), float(p[1]))
 
-def clean_samples(samples, min_openness=0.12, jump_threshold=0.08):
-    """Drop blinks and fast gaze jumps from (features,target[,openness]) calibration samples."""
+def clean_samples(samples, min_openness=0.12, jump_threshold=0.08, preserve_openness=False):
+    """Drop blinks and fast gaze jumps; optionally retain openness in returned triples."""
     out = []
     prev = None
     for item in samples:
@@ -131,7 +131,7 @@ def clean_samples(samples, min_openness=0.12, jump_threshold=0.08):
         a = np.asarray(f, float)
         jump = prev is not None and np.linalg.norm(a[:2] - prev[:2]) > jump_threshold
         if op >= min_openness and (not jump):
-            out.append((f, t))
+            out.append((f, t, op) if preserve_openness and len(item) > 2 else (f, t))
         prev = a
     return out
 
