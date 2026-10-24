@@ -144,8 +144,9 @@ class RecordTests(unittest.TestCase):
         gaps = [p for p in parts if p["name"] == "gap"]
         self.assertTrue(gaps)
         self.assertTrue(all(p["expect"] == "gap" for p in gaps))
-        # 3 s rests, except before the struggle part, which outlasts rearm_seconds (20 s by default).
-        self.assertEqual(sorted({p["seconds"] for p in gaps}), [3, 22])
+        # 3 s rests, except before the struggle part, which outlasts rearm_seconds (20 s) and
+        # cooldown_seconds (30 s by default).
+        self.assertEqual(sorted({p["seconds"] for p in gaps}), [3, 32])
         by_name = {p["name"]: p for p in parts}
         self.assertEqual(by_name["read_normal"]["expect"], "none")
         self.assertEqual(by_name["read_tiny"]["expect"], "natural")
@@ -689,12 +690,23 @@ class CameraOffTests(unittest.TestCase):
 
 
 class RecorderEvaluatorFitTests(unittest.TestCase):
-    def test_rest_before_the_struggle_part_outlasts_rearm(self):
-        # Otherwise the lean from "Lean in" is still waiting to re-arm and hides the struggle.
-        parts = matrix.protocol(0, rearm_seconds=20)
-        i = next(i for i, p in enumerate(parts) if p["expect"] == "struggle")
-        self.assertEqual(parts[i - 1]["expect"], "gap")
-        self.assertGreater(parts[i - 1]["seconds"], 20)
+    def test_rest_before_the_struggle_part_outlasts_rearm_and_cooldown(self):
+        # Otherwise the lean from "Lean in" is still waiting to re-arm, or an earlier offer's
+        # cooldown is still running, and either hides the struggle.
+        for rearm, cooldown in ((20, 30), (40, 10)):
+            parts = matrix.protocol(0, rearm_seconds=rearm, cooldown_seconds=cooldown)
+            i = next(i for i, p in enumerate(parts) if p["expect"] == "struggle")
+            self.assertEqual(parts[i - 1]["expect"], "gap")
+            self.assertGreater(parts[i - 1]["seconds"], max(rearm, cooldown))
+
+    def test_an_offer_during_a_one_signal_part_is_false(self):
+        label = {"name": "lean", "expect": "lean", "start": 0.0, "end": 8.0}
+        lean = {"kind": "lean", "tier": "strong", "ts": 4.0}
+        fused = {"kind": "fused", "ts": 4.5, "detail": {"signals": [{"kind": "lean"}, {"kind": "squint"}]}}
+        row = evaluate._score_label(label, [lean], [fused], "test")
+        self.assertEqual((row["struggle_fp"], row["struggle_fn"]), (1, 0))
+        solo = dict(fused, kind="lean")  # a kind allowed to fire alone ([senses] solo) is fine
+        self.assertEqual(evaluate._score_label(label, [lean], [solo], "test")["struggle_fp"], 0)
 
     def test_report_finds_runs_in_their_subfolders(self):
         with tempfile.TemporaryDirectory() as d:

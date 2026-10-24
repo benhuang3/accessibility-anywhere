@@ -218,7 +218,10 @@ class SquintDetector:
             elif t - self.fired_at < tune.rearm_seconds:
                 return None
         strong = held(self.points, tune.squint_delta) >= tune.squint_hold
-        weak = held(self.points, tune.squint_weak) >= tune.squint_hold
+        # Leaning in close raises the squint score by itself (+0.16 on one real face at 1.7x width,
+        # without squinting), so while leaning only a strong squint counts.
+        leaning = sig["width"] / base.width >= tune.lean_weak
+        weak = not leaning and held(self.points, tune.squint_weak) >= tune.squint_hold
         if not (strong or weak):
             return None
         recent = [v for _t, v in self.points]

@@ -170,6 +170,14 @@ class LeanTests(unittest.TestCase):
         self.assertEqual([(s.kind, s.tier) for s in sigs], [("lean", "strong")])
         self.assertEqual(sigs[0].detail["closer_pct"], 17)
 
+    def test_leaning_alone_isnt_a_squint(self):
+        # Leaning in close raised one real person's squint score +0.16 with no squinting; while
+        # leaning only a strong squint counts, and a real one (+0.26 or more) still does.
+        lean_only = run(SquintDetector(self.tune), [(10, frame()), (60, frame(0.26, width=0.50))])
+        self.assertEqual(lean_only, [])
+        squinting = run(SquintDetector(self.tune), [(10, frame()), (40, frame(0.36, width=0.50))])
+        self.assertEqual([(s.kind, s.tier) for s in squinting], [("squint", "strong")])
+
     def test_lean_counts_while_squinting(self):
         # Leaning in and squinting at once keeps the blink score high; face width doesn't depend on it.
         sigs = run(LeanDetector(self.tune), [(10, frame()), (30, frame(0.36, blink=0.6, width=0.36))])

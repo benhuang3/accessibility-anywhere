@@ -77,11 +77,13 @@ def ally_is_running(paths: Paths | None = None) -> bool:
         return False
 
 
-def protocol(free_minutes: float = 0, rearm_seconds: float = Tuning.rearm_seconds) -> list[dict]:
+def protocol(free_minutes: float = 0, rearm_seconds: float = Tuning.rearm_seconds,
+             cooldown_seconds: float = 30.0) -> list[dict]:
     """The scripted parts, with a 3 s rest between them. Calibration is first and lasts 15 s.
 
-    The rest before a struggle part outlasts rearm_seconds: a detector that just fired (the lean in
-    "Lean in") waits that long before it can fire again, which would hide the struggle.
+    The rest before a struggle part outlasts rearm_seconds and cooldown_seconds: a detector that just
+    fired (the lean in "Lean in") waits rearm_seconds before firing again, and after any struggle no
+    other is reported for cooldown_seconds. Either would hide the struggle.
     """
     parts = [{
         "name": "calibration", "title": "Read normally",
@@ -95,7 +97,7 @@ def protocol(free_minutes: float = 0, rearm_seconds: float = Tuning.rearm_second
     for name, title, text, seconds, expect, size in _TASKS:
         rest = dict(gap)
         if expect == "struggle":
-            rest["seconds"] = max(GAP_SECONDS, float(rearm_seconds) + 2.0)
+            rest["seconds"] = max(GAP_SECONDS, float(rearm_seconds) + 2.0, float(cooldown_seconds) + 2.0)
         parts.append(rest)
         parts.append({"name": name, "title": title, "text": text, "seconds": float(seconds),
                       "expect": expect, "size": size})
@@ -438,7 +440,8 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
         log.open_with(meta)
         if code != 0:
             return code
-        parts = protocol(free_minutes, Tuning.from_config(senses_cfg).rearm_seconds)
+        parts = protocol(free_minutes, Tuning.from_config(senses_cfg).rearm_seconds,
+                         float(senses_cfg.get("cooldown_seconds", 30)))
         total = len(parts)
         for index, part in enumerate(parts, start=1):
             current = {"name": part["name"], "expect": part["expect"], "start": now(), "partial": False}

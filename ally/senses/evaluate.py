@@ -320,7 +320,13 @@ def _score_label(label: dict, signals: list[dict], struggles: list[dict], source
     elif expect == "struggle":
         matched = bool(strugs)
         times = [float(s["ts"]) for s in strugs]
-    struggle_fp = len(strugs) if expect == "none" else 0
+    if expect == "none":
+        struggle_fp = len(strugs)
+    elif expect in ("squint", "lean"):
+        # One signal alone is no struggle: an offer here is false, unless that kind may fire solo.
+        struggle_fp = sum(1 for s in strugs if s.get("kind") != expect)
+    else:
+        struggle_fp = 0
     struggle_fn = 0 if matched or expect == "none" else 1
     row.update(struggle_fp=struggle_fp, struggle_fn=struggle_fn, signal_fp=fp_n, signal_fn=len(fn_by),
                _fp_by=fp_by, _fn_by=fn_by)
