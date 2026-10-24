@@ -231,6 +231,8 @@ class Senses:
                     sig = self.rage.click(t, x, y)
                 else:
                     self.hesitation.move(t, x, y)
+            elif e == "r":
+                self.hesitation.clickable = msg.get("clickable") if msg.get("clickable") in (True, False) else None
             elif e in ("k", "b"):
                 self.hesitation.key(t)
                 sig = self.retype.key(t, e == "b")

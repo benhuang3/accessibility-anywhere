@@ -311,6 +311,7 @@ class HesitationDetector:
         self.moved = False      # the pointer travelled before this rest (not just parked all along)
         self.fired = False
         self.pauses: collections.deque = collections.deque(maxlen=200)  # rests that ended in a click
+        self.clickable: bool | None = None
 
     def threshold(self) -> float:
         """The person's own 95th-percentile pause before a click, once there are 20 of them."""
@@ -323,6 +324,7 @@ class HesitationDetector:
         if self.pos is None or math.hypot(x - self.pos[0], y - self.pos[1]) > self.STILL_PX:
             self.moved = self.pos is not None
             self.pos, self.rest_since, self.fired = (x, y), t, False
+            self.clickable = None
 
     def click(self, t: float, x: int, y: int) -> None:
         if self.rest_since is not None and self.moved and not self.fired:
@@ -334,6 +336,8 @@ class HesitationDetector:
 
     def tick(self, t: float) -> Signal | None:
         if self.rest_since is None or not self.moved or self.fired or self.pos is None:
+            return None
+        if self.clickable is False:
             return None
         waited, limit = t - self.rest_since, self.threshold()
         if waited < limit or waited > limit + 5:  # long gone: they walked away or are reading

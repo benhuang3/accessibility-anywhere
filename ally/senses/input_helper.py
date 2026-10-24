@@ -51,6 +51,7 @@ def main() -> int:
                                                  "alt_r", "alt_gr", "cmd", "cmd_r", "caps_lock") if hasattr(keyboard.Key, n)}
     held: set = set()
     last_move = [0.0]
+    rest_generation = [0]
 
     def on_press(key):
         if key in held:  # auto-repeat while the key is held down
@@ -71,6 +72,19 @@ def main() -> int:
         if now - last_move[0] >= 0.1:
             last_move[0] = now
             emit({"e": "m", "t": round(now, 3), "x": int(x), "y": int(y)})
+            rest_generation[0] += 1
+            generation = rest_generation[0]
+            def classify():
+                time.sleep(1.0)
+                if generation != rest_generation[0]:
+                    return
+                try:
+                    from .clickable import is_clickable
+                    value = is_clickable(int(x), int(y))
+                except Exception:
+                    value = None
+                emit({"e": "r", "t": round(time.time(), 3), "x": int(x), "y": int(y), "clickable": value})
+            threading.Thread(target=classify, daemon=True).start()
 
     try:
         ml = mouse.Listener(on_click=on_click, on_move=on_move)

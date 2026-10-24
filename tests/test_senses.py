@@ -209,6 +209,15 @@ class InputTests(unittest.TestCase):
         d.click(12, 300, 200)
         self.assertIsNone(d.tick(17))
 
+    def test_hesitation_requires_clickable_when_known_false(self):
+        d = HesitationDetector(self.tune)
+        d.move(0, 10, 10)
+        d.move(1, 300, 200)
+        d.clickable = False
+        self.assertIsNone(d.tick(10))
+        d.clickable = None
+        self.assertIsNotNone(d.tick(5.2))
+
     def test_hesitation_adapts_to_the_person(self):
         d = HesitationDetector(self.tune)
         t = 0.0
