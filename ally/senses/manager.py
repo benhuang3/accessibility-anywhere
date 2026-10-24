@@ -58,6 +58,7 @@ class Senses:
         self.counts: collections.Counter = collections.Counter()
         self.last_signal: dict | None = None
         self.last_struggle: dict | None = None
+        self.snoozed_until: dict[str, float] = {}
         self.subscribers: list = []
         self.hud = False
         self._hud_at = 0.0
@@ -112,6 +113,19 @@ class Senses:
     def subscribe(self, callback) -> None:
         """callback(struggle_dict) is called on a worker thread for every Struggle."""
         self.subscribers.append(callback)
+
+    def answer(self, struggle: dict, answer: str) -> None:
+        if answer not in ("yes", "no"):
+            raise ValueError("answer must be yes or no")
+        if answer == "no":
+            now = float(struggle.get("ts", time.time()))
+            kinds = {p.get("kind") for p in struggle.get("detail", {}).get("signals", [])}
+            kinds.add(struggle.get("kind"))
+            until = now + float(self.cfg.get("decline_seconds", 90))
+            with self.lock:
+                for kind in kinds:
+                    if kind:
+                        self.snoozed_until[kind] = until
 
     # ---------------------------------------------------------------- baseline
     @property
@@ -263,6 +277,8 @@ class Senses:
 
     def _signal(self, sig: Signal) -> dict | None:
         with self.lock:
+            if self.snoozed_until.get(sig.kind, -1) > sig.ts:
+                return None
             self.counts[sig.kind] += 1
             self.last_signal = {"kind": sig.kind, "tier": sig.tier, "confidence": sig.confidence, "ts": sig.ts}
             struggle = self.fuser.add(sig)
@@ -344,6 +360,7 @@ class Senses:
                 "squint_delta": round(self.squint.delta, 3), "lean_ratio": round(self.lean.ratio, 3),
                 "hesitation_threshold": round(self.hesitation.threshold(), 1),
                 "signals": dict(self.counts), "last_signal": self.last_signal, "last_struggle": self.last_struggle,
+                "snoozed_until": dict(self.snoozed_until),
             }
         gaze = getattr(self.agent, "gaze", None)
         if out["vision"] == "error" and gaze is not None:
@@ -355,6 +372,10 @@ class Senses:
         i = self.info()
         f, b, tune = i["face"] or {}, i["baseline"] or {}, self.tune
         rows = [[f"vision: {i['vision']}   input: {i['input']}", "ok"]]
+        active_snoozes = [f"{k} {max(0, v - time.time()):.0f}s" for k, v in i.get("snoozed_until", {}).items()
+                          if v > time.time()]
+        if active_snoozes:
+            rows.append(["declined: " + ", ".join(active_snoozes), "warn"])
         if f:
             s = (f["squint_l"] + f["squint_r"]) / 2
             rows.append([f"squint {s:.2f} (L {f['squint_l']:.2f} R {f['squint_r']:.2f})  base "

@@ -376,6 +376,15 @@ class SensesManagerTests(unittest.TestCase):
         with self.assertRaises(Exception):
             s.simulate("sneeze")
 
+    def test_declined_struggle_snoozes_its_signal_kinds(self):
+        agent, _ = fake_agent(decline_seconds=90)
+        s = Senses(agent)
+        d = {"kind": "fused", "ts": 100.0, "detail": {"signals": [{"kind": "squint"}, {"kind": "lean"}]}}
+        s.answer(d, "no")
+        self.assertEqual(s.snoozed_until, {"fused": 190.0, "squint": 190.0, "lean": 190.0})
+        s._signal(Signal("squint", 0.8, 150, "strong"))
+        self.assertNotIn("squint", s.counts)
+
     def test_subscribers_and_a_failing_handler(self):
         agent, got = fake_agent()
         agent.on_struggle = lambda d: 1 / 0  # a broken brain must not break sensing

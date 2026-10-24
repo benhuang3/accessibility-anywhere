@@ -87,6 +87,7 @@ calibrate_seconds = 15
 solo = []                  # signals that count on their own when strong, e.g. ["rage_click"]; others need a second signal
 window_seconds = 4         # signals this close together are combined
 cooldown_seconds = 30      # quiet time after reporting a struggle
+decline_seconds = 90       # quiet time for declined signal kinds
 min_confidence = 0.5
 # Starting thresholds (unverified on real faces; tune them live with: python run.py tool senses_hud)
 squint_delta = 0.20        # squint score above your baseline for a strong squint...
