@@ -12,7 +12,9 @@ Settings "gaze" (default true) turns gaze points on; "signals" sends face number
 "signals_fps". Frames never leave this process and are never written to disk.
 
 Commands on stdin: "calibrate"; "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]"
-sets its rows. It exits when the agent closes its stdin (like the hotkey helper),
+sets its rows; "card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds)
+and "card off" closes it. The card also closes itself after seconds. Unknown or broken lines are ignored.
+It exits when the agent closes its stdin (like the hotkey helper),
 so a camera or MediaPipe crash can never take Ally down. The camera is only ever used here.
 Usage: python -m ally.gaze_helper '{"model": "...", "calibration": "...", "camera": 0, "fps": 20}'
 """
@@ -394,6 +396,155 @@ def _PAINT(user32, wintypes):
     return PAINTSTRUCT()
 
 
+CARD = "Ally card"
+CARD_SCALES = {"tiny": 0.4, "normal": 1.15, "large": 1.9}
+
+
+def parse_card(arg: str) -> dict | None:
+    """The JSON after `card`. None when the line is missing text or is not JSON."""
+    try:
+        spec = json.loads(arg)
+    except ValueError:
+        return None
+    if not isinstance(spec, dict):
+        return None
+    text = spec.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    size = spec.get("size", "normal")
+    if size not in CARD_SCALES:
+        size = "normal"
+    try:
+        seconds = float(spec.get("seconds") or 0)
+    except (TypeError, ValueError):
+        seconds = 0.0
+    title = spec.get("title") if isinstance(spec.get("title"), str) else ""
+    return {"text": text.strip(), "title": title.strip(), "size": size, "seconds": max(0.0, seconds)}
+
+
+def classify_command(cmd: str) -> tuple[str, object]:
+    """What a stdin line is asking for. Never raises; unknown lines are 'ignore'."""
+    if not isinstance(cmd, str) or not cmd:
+        return "ignore", None
+    try:
+        if cmd == "quit":
+            return "quit", None
+        if cmd == "calibrate":
+            return "calibrate", None
+        if cmd == "card off":
+            return "card_off", None
+        if cmd.startswith("card"):
+            spec = parse_card(cmd[4:].strip())
+            return ("card", spec) if spec else ("ignore", None)
+        if cmd.startswith("hud"):
+            arg = cmd[3:].strip()
+            if arg == "off":
+                return "hud_off", None
+            if arg.startswith("["):
+                try:
+                    rows = json.loads(arg)
+                except ValueError:
+                    return "hud_on", None
+                return ("hud_rows", rows) if isinstance(rows, list) else ("hud_on", None)
+            return "hud_on", None
+    except Exception:
+        return "ignore", None
+    return "ignore", None
+
+
+class CardWindow:
+    """A readable card. size tiny uses small text, for the 'read small text' recording task."""
+
+    def __init__(self, cv2, spec: dict, screen: tuple[int, int]):
+        self.cv2 = cv2
+        self.spec = spec
+        self.screen = screen
+        self.start = time.monotonic()
+        self.alive = True
+        cv2.namedWindow(CARD, cv2.WINDOW_NORMAL)
+        width, height = self._window_size()
+        cv2.resizeWindow(CARD, width, height)
+        try:
+            cv2.setWindowProperty(CARD, cv2.WND_PROP_TOPMOST, 1)
+        except Exception:
+            pass
+        try:
+            cv2.moveWindow(CARD, max(0, (int(screen[0]) - width) // 2), max(0, (int(screen[1]) - height) // 2))
+        except Exception:
+            pass
+        self.step()
+
+    def _window_size(self) -> tuple[int, int]:
+        sw, sh = int(self.screen[0]), int(self.screen[1])
+        if self.spec["size"] == "tiny":
+            return min(max(sw, 1), 900), min(max(sh, 1), 420)
+        if self.spec["size"] == "large":
+            return min(max(sw - 40, 1), 1400), min(max(sh - 40, 1), 800)
+        return min(max(sw - 80, 1), 1100), min(max(sh - 80, 1), 640)
+
+    def step(self) -> bool:
+        if not self.alive:
+            return False
+        seconds = float(self.spec.get("seconds") or 0)
+        if seconds and time.monotonic() - self.start >= seconds:
+            self.close()
+            return False
+        self._draw()
+        return True
+
+    def _draw(self) -> None:
+        import numpy as np
+
+        cv2 = self.cv2
+        width, height = self._window_size()
+        img = np.full((height, width, 3), 255, dtype=np.uint8)
+        scale = CARD_SCALES[self.spec["size"]]
+        thick = max(1, int(round(scale * 2)))
+        y = 36
+        if self.spec["title"]:
+            title_scale = scale if self.spec["size"] == "tiny" else min(scale + 0.35, 2.4)
+            y = self._line(img, self.spec["title"], y, title_scale, max(thick, 2), width)
+            y += 12
+        self._line(img, self.spec["text"], y, scale, thick, width)
+        cv2.imshow(CARD, img)
+        cv2.waitKey(1)
+
+    def _line(self, img, text: str, y: int, scale: float, thick: int, width: int) -> int:
+        cv2 = self.cv2
+        for line in _wrap(cv2, text, scale, thick, width - 48):
+            cv2.putText(img, line, (24, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thick, cv2.LINE_AA)
+            y += int(28 * max(scale, 0.6))
+        return y
+
+    def close(self) -> None:
+        if not self.alive:
+            return
+        self.alive = False
+        try:
+            self.cv2.destroyWindow(CARD)
+            self.cv2.waitKey(1)
+        except Exception:
+            pass
+
+
+def _wrap(cv2, text: str, scale: float, thick: int, width: int) -> list[str]:
+    words = text.split()
+    if not words:
+        return [""]
+    lines, cur = [], ""
+    for word in words:
+        trial = (cur + " " + word).strip()
+        (tw, _), _ = cv2.getTextSize(trial, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+        if cur and tw > width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = trial
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def main(argv: list[str]) -> int:
     try:
         cfg = json.loads(argv[1]) if len(argv) > 1 else {}
@@ -451,6 +602,7 @@ def main(argv: list[str]) -> int:
     last_sig, hud, hud_rows = 0.0, False, []
     smooth = gaze_model.OneEuro()
     calib: Calibration | None = None
+    card: CardWindow | None = None
     t_start = time.monotonic()
     last_face_msg, misses = 0.0, 0
     while True:
@@ -458,24 +610,39 @@ def main(argv: list[str]) -> int:
             cmd = cmds.get_nowait()
         except queue.Empty:
             cmd = None
-        if cmd == "quit":
+        try:
+            kind, payload = classify_command(cmd or "")
+        except Exception:
+            kind, payload = "ignore", None
+        if kind == "quit":
             break
-        if cmd == "calibrate" and calib is None:
-            calib = Calibration(size)
-        elif cmd and cmd.startswith("hud"):
-            arg = cmd[3:].strip()
-            if arg == "off" and hud:
-                try:
-                    cv2.destroyWindow(HUD)
-                    cv2.waitKey(1)
-                except Exception:
-                    pass
-            hud = arg != "off"
-            if arg.startswith("["):
-                try:
-                    hud_rows = json.loads(arg)
-                except ValueError:
-                    pass
+        try:
+            if kind == "calibrate" and calib is None:
+                calib = Calibration(size)
+            elif kind == "hud_off":
+                if hud:
+                    try:
+                        cv2.destroyWindow(HUD)
+                        cv2.waitKey(1)
+                    except Exception:
+                        pass
+                hud = False
+            elif kind == "hud_on":
+                hud = True
+            elif kind == "hud_rows":
+                hud = True
+                hud_rows = payload
+            elif kind == "card_off":
+                if card is not None:
+                    card.close()
+                    card = None
+            elif kind == "card":
+                if card is not None:
+                    card.close()
+                    card = None
+                card = CardWindow(cv2, payload, size)
+        except Exception:
+            pass
         if indicator.pump():
             emit({"camera_off": True})
             break
@@ -485,6 +652,8 @@ def main(argv: list[str]) -> int:
             misses += 1
             if misses > 100:
                 emit({"error": "the camera stopped sending pictures"})
+                if card is not None:
+                    card.close()
                 indicator.close()
                 cap.release()
                 try:
@@ -514,6 +683,16 @@ def main(argv: list[str]) -> int:
                 emit({"t": round(now, 3), "f": sig})
         if hud:
             draw_hud(cv2, frame, hud_rows)
+        if card is not None:
+            try:
+                if not card.step():
+                    card = None
+            except Exception:
+                try:
+                    card.close()
+                except Exception:
+                    pass
+                card = None
 
         if calib is not None:
             state = calib.step(feat, time.monotonic())
@@ -551,6 +730,8 @@ def main(argv: list[str]) -> int:
         spare = period - (time.monotonic() - tick)
         if spare > 0:
             time.sleep(spare)
+    if card is not None:
+        card.close()
     indicator.close()
     cap.release()
     try:

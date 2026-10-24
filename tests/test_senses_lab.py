@@ -19,7 +19,8 @@ from pathlib import Path
 
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
-from ally.gaze_helper import INDICATOR_EX_STYLE, INDICATOR_TEXT, note_once
+from ally.gaze_helper import (CARD_SCALES, INDICATOR_EX_STYLE, INDICATOR_TEXT, classify_command, note_once,
+                              parse_card)
 from ally.senses import evaluate, matrix
 
 
@@ -456,6 +457,38 @@ def _read_line(proc, timeout: float = 10) -> str:
         privacy.kill_tree(proc.pid)
         raise AssertionError("process did not start")
     return (box[0] if box else "").strip()
+
+
+class CardCommandTests(unittest.TestCase):
+    def test_card_json_and_junk_never_crash(self):
+        kind, spec = classify_command('card {"text": "Read this", "title": "Small", "size": "tiny", "seconds": 8}')
+        self.assertEqual(kind, "card")
+        self.assertEqual(spec["size"], "tiny")
+        self.assertEqual(spec["title"], "Small")
+        self.assertEqual(spec["seconds"], 8)
+        self.assertEqual(classify_command("card off"), ("card_off", None))
+        self.assertEqual(classify_command("card {"), ("ignore", None))
+        self.assertEqual(classify_command("card"), ("ignore", None))
+        self.assertEqual(classify_command("nope"), ("ignore", None))
+        self.assertEqual(classify_command(""), ("ignore", None))
+        self.assertEqual(classify_command("hud ["), ("hud_on", None))
+        kind, rows = classify_command('hud [["squint", "hot"]]')
+        self.assertEqual(kind, "hud_rows")
+        self.assertEqual(rows, [["squint", "hot"]])
+        self.assertEqual(classify_command("hud off"), ("hud_off", None))
+        self.assertEqual(classify_command("calibrate"), ("calibrate", None))
+        fixed = parse_card('{"text": "Read", "size": "huge", "seconds": "nope"}')
+        self.assertEqual(fixed["size"], "normal")
+        self.assertEqual(fixed["seconds"], 0)
+        self.assertIsNone(parse_card('{"title": "only a title"}'))
+        line = matrix.card_line({"text": "Hello", "title": "Setup", "size": "large", "seconds": 15})
+        kind, spec = classify_command(line)
+        self.assertEqual(kind, "card")
+        self.assertEqual((spec["size"], spec["seconds"], spec["text"]), ("large", 15, "Hello"))
+
+    def test_tiny_text_is_smaller_than_normal(self):
+        self.assertLess(CARD_SCALES["tiny"], CARD_SCALES["normal"])
+        self.assertLess(CARD_SCALES["normal"], CARD_SCALES["large"])
 
 
 class CameraOffTests(unittest.TestCase):
