@@ -20,6 +20,16 @@ class GazeModelTests(unittest.TestCase):
         self.assertGreater(moved[0],zero[0]); self.assertGreater(moved[2],zero[2])
         self.assertGreater(moved[1],zero[1]); self.assertGreater(moved[3],zero[3]); self.assertGreater(moved[6],0)
 
+    def test_v2_lid_feature_names_match_vector(self):
+        blendshapes = {"eyeBlinkLeft": .2, "eyeBlinkRight": .6}
+        landmarks = self.landmarks()
+        landmarks[gm.LEFT_EYE["top"], 1] = .47
+        landmarks[gm.LEFT_EYE["bottom"], 1] = .53
+        vector = gm.features_for_model({"features": "v2"}, landmarks, blendshapes, None, 640, 480)[0]
+        values = dict(zip(gm.FEATURES_V2, vector))
+        self.assertAlmostEqual(values["left_lid"], .225)
+        self.assertAlmostEqual(values["right_lid"], .15)
+
     def test_fit_validate_region_and_radius(self):
         samples=[]
         for x,y in [(100,100),(960,100),(1820,100),(100,540),(960,540),(1820,540),(100,980),(960,980),(1820,980)]:

@@ -8,7 +8,7 @@ import numpy as np
 RIGHT_EYE = {"outer": 33, "inner": 133, "top": 159, "bottom": 145, "iris": 468}
 LEFT_EYE = {"outer": 263, "inner": 362, "top": 386, "bottom": 374, "iris": 473}
 FEATURES = ["h", "v", "look_h", "look_v", "yaw", "pitch", "tx", "ty", "tz"]
-FEATURES_V2 = ["right_h", "right_v", "left_h", "left_v", "right_lid", "left_lid",
+FEATURES_V2 = ["right_h", "right_v", "left_h", "left_v", "left_lid", "right_lid",
                "up_left", "down_left", "up_right", "down_right", "yaw", "pitch", "roll",
                "tx", "ty", "tz"]
 MODEL_VERSION = 1
