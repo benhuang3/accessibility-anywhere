@@ -4,6 +4,11 @@ Hand a task to Codex or Cursor, running headless in its own git worktree.
   .\scripts\dispatch.ps1 -Agent codex  -Task "Add a 'sepia' color filter in ally/tools"
   .\scripts\dispatch.ps1 -Agent cursor -Task "Restyle the dashboard header" -Model sonnet-4
   .\scripts\dispatch.ps1 -Agent cursor -Task "Review agent/codex for bugs" -ReadOnly
+  .\scripts\dispatch.ps1 -Agent codex  -Task "Fix the failing test in tests/test_senses.py" -NoSandbox
+
+-NoSandbox runs Codex as you, without its sandbox (Cursor always runs that way). Codex's Windows
+sandbox uses separate accounts that can't read per-user installs such as Python, or ~/.gitconfig,
+so Codex can't run the tests or commit inside it.
 
 The worktree is ..\ally-<agent> on branch agent/<agent>, created from main the first time.
 Output goes to logs\agents\<agent>-<time>.log, the agent's final message to <same>.final.md.
@@ -13,7 +18,8 @@ param(
     [Parameter(Mandatory)][ValidateSet('codex', 'cursor')][string]$Agent,
     [Parameter(Mandatory)][string]$Task,
     [string]$Model,
-    [switch]$ReadOnly
+    [switch]$ReadOnly,
+    [switch]$NoSandbox
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,6 +58,7 @@ if ($Agent -eq 'codex') {
     $gitDir = Join-Path $repo '.git'
     $codexArgs = @('exec', '-C', $worktree, '-o', $final, '--color', 'never')
     if ($ReadOnly) { $codexArgs += @('-s', 'read-only') }
+    elseif ($NoSandbox) { $codexArgs += @('-s', 'danger-full-access') }
     else { $codexArgs += @('-s', 'workspace-write', '--add-dir', $gitDir) }
     if ($Model) { $codexArgs += @('-m', $Model) }
     $prompt | codex @codexArgs - *>&1 | Tee-Object -FilePath $log -Append
