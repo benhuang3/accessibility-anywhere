@@ -25,6 +25,7 @@ from .macros import Macros
 from .paths import Paths, load_env_file
 from .platforms import get_platform
 from .proactive import Coordinator, NullUI, NullVoice
+from .voice_bus import BusVoice
 from .registry import Outcome, PluginLoader, Registry, ToolError
 from .senses.manager import Senses
 from .server import PortBusy, start_server
@@ -89,6 +90,10 @@ class Agent:
         self.proactive = Coordinator(self.bus, lambda n, a, src: self.call_tool(n, a, source=src), self.habits,
                                      self.proactive_context, self.proactive_cfg,
                                      ui=NullUI(self.events), voice=NullVoice(self.speaker), events=self.events)
+        # Voice asks offers out loud and resolves them with the spoken answer, says "Done. Say undo..." after a
+        # fix and listens for "undo" (ally/voice_bus.py).
+        self.proactive.voice = BusVoice(self.confirm, self.bus, lambda n, a, src: self.call_tool(n, a, source=src),
+                                        snooze=getattr(self.proactive, "snooze", None))
         self.gaze.attach_bus(self.bus)  # offers can be answered by looking at Yes or No ([gaze] answer_offers)
         self.bus.subscribe("offer_result", self._offer_answered)
         self.sensors: list = []  # Hayden's senses run as self.senses; the patch's own sensors are not used
@@ -420,6 +425,8 @@ class Agent:
         self._stop.set()
         log.info("Ally stopping (code %s)", self.exit_code)
         extra = [self.proactive.stop] + ([self.overlay.stop] if self.overlay else [])
+        if hasattr(self.proactive.voice, "close"):
+            extra.append(self.proactive.voice.close)
         for step in (*extra, self.confirm.cancel, self.hotkeys.stop, self.listener.stop, self.senses.stop,
                      self.gaze.stop, self.speaker.stop, self.platform.shutdown, self.bridge.close_all):
             try:
