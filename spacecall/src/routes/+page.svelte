@@ -45,6 +45,7 @@
   $: elderCall = elderCallPresentation($incidentStore?.status, helperName, callEnded);
   $: elderRinging = link?.role === 'elder' && elderCall.state === 'ringing';
   $: elderConnected = link?.role === 'elder' && elderCall.state === 'connected';
+  $: elderEnded = link?.role === 'elder' && callEnded;
   $: unanswered = noAnswerNote(elderCall.state, helperName, openedAt, now);
   $: if (link?.role === 'elder') {
     document.documentElement.dataset.allyCall = elderCall.state;
@@ -251,13 +252,13 @@
     </nav>
 {/snippet}
 
-<main class:helper={isHelper} class:helper-call={isHelper && joined && !callEnded} class:elder-call={link && !isHelper && !callEnded && !elderRinging} class:elder-ringing={elderRinging} class:ended={callEnded}>
+<main class:helper={isHelper} class:helper-call={isHelper && joined && !callEnded} class:elder-call={link && !isHelper && !callEnded && !elderRinging} class:elder-ringing={elderRinging} class:elder-ended={elderEnded} class:ended={callEnded}>
   <div class="backdrop" aria-hidden="true"></div>
   {#if $remoteVideoUrl && !callEnded && !isHelper && !elderRinging}
     <img class="remote-video" src={$remoteVideoUrl} alt={isHelper ? 'Live video of your family member' : `Live video of ${helperName}`} />
   {/if}
 
-  {#if !elderRinging && !elderConnected}
+  {#if !elderRinging && !elderConnected && !elderEnded}
   <header class="glass topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">a</span> Ally Call</div>
     <p class="status" role="status" aria-live="polite">{link ? status : 'A familiar face, right here'}</p>
@@ -269,6 +270,11 @@
       <p class="eyebrow">Someone you trust. Just a call away.</p>
       <h1>Ally Call</h1>
       <p role="alert">{message || 'Please open the call link Ally sent you.'}</p>
+    </section>
+  {:else if elderEnded}
+    <section class="ended-card glass" aria-live="polite">
+      <span class="portrait" aria-hidden="true">&#10003;</span>
+      <h1>Call ended</h1>
     </section>
   {:else if callEnded}
     <section class="center-card glass" aria-live="polite">
@@ -370,7 +376,7 @@
 
   {/if}
 
-  {#if debug && !elderRinging}
+  {#if debug && !elderRinging && !elderEnded}
     <aside class="call-debug" aria-label="Call debug metrics">
       <p>Video fps ↑ {$callStats.videoUp.toFixed(1)} ↓ {$callStats.videoDown.toFixed(1)}</p>
       <p>Audio chunks/s ↑ {$callStats.audioUp.toFixed(1)} ↓ {$callStats.audioDown.toFixed(1)}</p>
@@ -381,5 +387,12 @@
       <p>One-way estimate: {$callStats.delayMs === null ? 'unavailable (no server timestamp)' : `${$callStats.delayMs.toFixed(0)} ms (server → here; clocks may differ)`}</p>
     </aside>
   {/if}
-  {#if !elderRinging && !elderConnected}<footer><a href="https://github.com/Lethalchip/SpaceChatDB" target="_blank" rel="noreferrer noopener">Built on SpaceChatDB</a></footer>{/if}
+  {#if !elderRinging && !elderConnected && !elderEnded}<footer><a href="https://github.com/Lethalchip/SpaceChatDB" target="_blank" rel="noreferrer noopener">Built on SpaceChatDB</a></footer>{/if}
 </main>
+
+<style>
+  .elder-ended { padding: 8px; gap: 0; justify-content: center; }
+  .ended-card { width: min(364px, 100%); padding: 24px; display: flex; align-items: center; gap: 16px; }
+  .ended-card .portrait { flex: none; width: 56px; height: 56px; border-radius: 50%; font-size: 30px; }
+  .ended-card h1 { font-size: 28px; line-height: 1.25; }
+</style>

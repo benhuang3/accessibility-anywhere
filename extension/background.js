@@ -557,6 +557,15 @@ const ACTIONS = {
     }
     // Info requests and load events wait until the new popup's identity is saved.
     const opening = callCreation.then(async () => {
+      if (service === "spacecall") {
+        const saved = await chrome.storage.session.get(null);
+        for (const [key, call] of Object.entries(saved)) {
+          if (!key.startsWith("allySpacecall:")) continue;
+          // Forget it first: its onRemoved must not report the new call as ended.
+          await chrome.storage.session.remove(key);
+          await chrome.windows.remove(call.windowId).catch(() => {});
+        }
+      }
       const mini = service === "spacecall" ? await openMiniCall(url) : null;
       const fallback = service === "spacecall" ? { width: 380, height: 360 } : { state: "maximized" };
       const win = mini || await chrome.windows.create({ url, type: "popup", ...fallback, focused: true });
@@ -832,7 +841,33 @@ async function insertCallCSS(tabId) {
   } catch { /* a closed or navigated tab must leave plain Meet usable */ }
 }
 
+// Keep the deadline in session storage so the next tab event can rearm a lost worker timer.
+const spacecallCloseTimers = new Map();
+chrome.tabs.onUpdated.addListener(async (tabId) => {
+  await callCreation;
+  try {
+    const saved = await chrome.storage.session.get(null);
+    for (const [key, call] of Object.entries(saved)) {
+      if (!key.startsWith("allySpacecall:") || spacecallCloseTimers.has(call.windowId)) continue;
+      if (!call.closeAt && call.tabId === tabId) {
+        const [page] = await chrome.scripting.executeScript({ target: { tabId },
+          func: () => document.documentElement.dataset.allyCall });
+        if (page?.result !== "ended") continue;
+        call.closeAt = Date.now() + 4000;
+        await chrome.storage.session.set({ [key]: call });
+      }
+      if (call.closeAt && !spacecallCloseTimers.has(call.windowId)) {
+        spacecallCloseTimers.set(call.windowId, setTimeout(() => {
+          chrome.windows.remove(call.windowId).catch(() => {});
+        }, Math.max(0, call.closeAt - Date.now())));
+      }
+    }
+  } catch { /* a closed or navigated call tab may no longer be readable */ }
+});
+
 chrome.windows.onRemoved?.addListener(async (windowId) => {
+  clearTimeout(spacecallCloseTimers.get(windowId));
+  spacecallCloseTimers.delete(windowId);
   try {
     const closing = chrome.storage.session.get(null); // capture records before the End call handler removes them
     await callCreation;

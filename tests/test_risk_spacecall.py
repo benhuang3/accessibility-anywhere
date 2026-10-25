@@ -462,7 +462,7 @@ const events = source.slice(titleStart, source.indexOf("// ---------------------
 const stored = {}, css = [], sent = [], created = [], updated = [];
 let removed, titleChanged, status = "ringing", next = 0, browser = null, displays = null;
 const context = {
-  URL, send: (msg) => sent.push(msg),
+  URL, setTimeout, clearTimeout, send: (msg) => sent.push(msg),
   chrome: {
     storage: { session: {
       get: async (key) => structuredClone(key === null ? stored : { [key]: stored[key] }),
@@ -518,7 +518,7 @@ vm.runInNewContext(`let callCreation = Promise.resolve(); const callKey = (id) =
   assert.equal(Object.keys(stored).length, 0);
   assert.ok(!JSON.stringify(sent).includes("private"));
 
-  // Ring and connect in the same corner, without a browser-bounds record or listener.
+  // Ring and connect in the same corner without changing browser bounds.
   browser = { id: 50, type: "normal", state: "maximized", left: 0, top: 0, width: 1600, height: 900 };
   const miniCall = await context.actions.openCall(options);
   const popup = created[created.length - 1];
@@ -527,7 +527,8 @@ vm.runInNewContext(`let callCreation = Promise.resolve(); const callKey = (id) =
   assert.equal(popup.top + popup.height, 900 - 16);
   assert.equal(popup.width, 380);
   assert.equal(popup.height, 360);
-  assert.equal(titleChanged, undefined);
+  status = "connected";
+  await titleChanged(miniCall.windowId, { title: "Priya is here" }, { windowId: miniCall.windowId });
   assert.equal(updated.length, 0);
   browser = { ...browser, state: "normal", width: 1000 };
   const fallback = await context.actions.openCall(options);
