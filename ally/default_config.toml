@@ -134,6 +134,8 @@ cooldown_seconds = 30      # quiet time after reporting a struggle
 decline_seconds = 90       # quiet time for declined signal kinds
 post_url = ""              # optional struggle event endpoint; empty disables posting
 min_confidence = 0.5
+squint_method = "v1"       # v1 | relative | geometric | hybrid; candidates need raw face numbers
+lean_method = "v1"         # v1 | distance | hybrid; candidates need raw face numbers
 # Starting thresholds (unverified on real faces; tune them live with: python run.py tool senses_hud)
 squint_delta = 0.20        # squint score above your baseline for a strong squint...
 squint_weak = 0.12         # ...or a weak one
@@ -157,6 +159,11 @@ retype_backspaces = 5      # backspaces within retype_seconds, then typing again
 retype_seconds = 3.0
 hesitation_seconds = 4.0   # pointer resting with no click; adapts to you after 20 clicks
 rearm_seconds = 20         # a signal waits this long before firing again
+relative_squint_weak = 0.45
+relative_squint_strong = 0.75
+geometric_aperture_drop = 0.12
+geometric_lower_rise = 0.035
+lean_distance_ratio = 1.15
 
 # Global keyboard shortcuts (work in every app).
 # <mod> = Ctrl+Alt on Windows/Linux, Ctrl+Cmd on Mac. Other keys: <ctrl> <alt> <shift> <cmd> <f1>...

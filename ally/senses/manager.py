@@ -26,7 +26,8 @@ from ..platforms.base import NO_WINDOW
 from ..registry import ToolError
 from ..state import atomic_write
 from .detectors import (Baseline, HesitationDetector, LeanDetector, RageClickDetector, RetypeDetector, Signal,
-                        SquintDetector, Tuning, gate)
+                        SquintDetector, Tuning, gate, RelativeSquintDetector, GeometricSquintDetector,
+                        HybridSquintDetector, DistanceLeanDetector, HybridLeanDetector)
 from .fusion import Fuser, Struggle
 from .contract import validate_struggle
 
@@ -84,7 +85,10 @@ class Senses:
     def _build(self) -> None:
         cfg = self.cfg
         self.tune = Tuning.from_config(cfg)
-        self.squint, self.lean = SquintDetector(self.tune), LeanDetector(self.tune)
+        self.squint = {"relative": RelativeSquintDetector, "geometric": GeometricSquintDetector,
+                       "hybrid": HybridSquintDetector}.get(cfg.get("squint_method"), SquintDetector)(self.tune)
+        self.lean = {"distance": DistanceLeanDetector, "hybrid": HybridLeanDetector}.get(
+            cfg.get("lean_method"), LeanDetector)(self.tune)
         self.rage, self.retype = RageClickDetector(self.tune), RetypeDetector(self.tune)
         self.hesitation = HesitationDetector(self.tune)
         self.fuser.configure(float(cfg.get("window_seconds", 4)), float(cfg.get("cooldown_seconds", 30)),
@@ -196,7 +200,7 @@ class Senses:
         self._calib_done.set()
 
     def _reset_vision(self) -> None:
-        self.squint, self.lean = SquintDetector(self.tune), LeanDetector(self.tune)
+        self._build()
 
     def forget_baseline(self) -> None:
         with self.lock:

@@ -42,6 +42,11 @@ class Tuning:
     retype_seconds: float = 3.0
     hesitation_seconds: float = 4.0  # pointer resting this long with no click (adapts after 20 rests)
     rearm_seconds: float = 20.0     # a detector that fired waits this long before firing again
+    relative_squint_weak: float = 0.45
+    relative_squint_strong: float = 0.75
+    geometric_aperture_drop: float = 0.12
+    geometric_lower_rise: float = 0.035
+    lean_distance_ratio: float = 1.15
 
     @classmethod
     def from_config(cls, cfg: dict) -> "Tuning":
@@ -277,6 +282,105 @@ class LeanDetector:
             conf = 0.35 + min(0.2, (r - tune.lean_weak) * 2)
         return Signal("lean", round(conf, 2), t, tier, "vision",
                       detail={"ratio": round(r, 3), "closer_pct": round((1 - 1 / r) * 100)})
+
+
+# Raw-number candidates. Input keys match ally.senses.features.extract; the legacy classes above
+# remain byte-for-byte behaviorally unchanged and are still the defaults.
+RELATIVE_SQUINT_SPREAD = 3.0
+RELATIVE_SQUINT_ROOM = 0.70
+GEOMETRIC_APERTURE_DROP = 0.12
+GEOMETRIC_LOWER_RISE = 0.035
+LEAN_DISTANCE_RATIO = 1.15
+
+
+class _RawHeld:
+    def __init__(self, tune, kind):
+        self.tune, self.kind = tune, kind
+        self.points = collections.deque()
+        self.fired_at = -1e9
+
+    def _held_signal(self, t, score, gate_ok=True, detail=None):
+        while self.points and t-self.points[0][0] > self.tune.squint_window:
+            self.points.popleft()
+        if not gate_ok:
+            self.points.clear()
+            return None
+        self.points.append((t, score))
+        threshold = self.weak_threshold
+        duration = held(self.points, threshold)
+        strong = held(self.points, self.strong_threshold) >= self.tune.squint_hold
+        if not strong and duration < self.tune.squint_hold:
+            return None
+        if t-self.fired_at < self.tune.rearm_seconds:
+            return None
+        self.fired_at = t
+        tier = "strong" if strong else "weak"
+        return Signal(self.kind, .75 if strong else .45, t, tier, "vision", detail=detail or {})
+
+
+class RelativeSquintDetector(_RawHeld):
+    def __init__(self, tune):
+        super().__init__(tune, "squint")
+        self.weak_threshold, self.strong_threshold = tune.relative_squint_weak, tune.relative_squint_strong
+
+    def feed(self, sig, t, base):
+        med = base.get("eyeSquint", {}).get("median", base.squint) if isinstance(base, dict) else base.squint
+        mad = base.get("eyeSquint", {}).get("mad", .02) if isinstance(base, dict) else .02
+        room = max(.05, 1-med)
+        value = sig.get("eyeSquint", (sig.get("eyeSquintLeft", 0)+sig.get("eyeSquintRight", 0))/2)
+        z = (value-med)/max(mad, .01)
+        norm = (value-med)/room
+        score = min(z/RELATIVE_SQUINT_SPREAD, norm/RELATIVE_SQUINT_ROOM)
+        gate_ok = abs(sig.get("head_yaw",0)) < self.tune.pose_gate and abs(sig.get("head_pitch",0)) < self.tune.pose_gate
+        gate_ok &= sig.get("eyeBlink",0) < self.tune.blink_gate and sig.get("mouthSmile",0) < self.tune.smile_gate
+        gate_ok &= abs(sig.get("eyeSquintLeft",value)-sig.get("eyeSquintRight",value)) < self.tune.wink_max
+        return self._held_signal(t, score, gate_ok, {"relative_score": round(score, 3)})
+
+
+class GeometricSquintDetector(_RawHeld):
+    def __init__(self, tune):
+        super().__init__(tune, "squint")
+        self.weak_threshold, self.strong_threshold = .6, 1.0
+    def feed(self, sig, t, base):
+        def b(k, default=0):
+            return base.get(k, {}).get("median", default) if isinstance(base,dict) else default
+        both=[]
+        for side in ("l","r"):
+            ap=sig.get("aperture_"+side, sig.get("aperture",0)); low=sig.get("lower_height_"+side,sig.get("lower_height",0))
+            both.append(ap <= b("aperture_"+side,ap)*(1-self.tune.geometric_aperture_drop) and low >= b("lower_height_"+side,low)+self.tune.geometric_lower_rise)
+        down = sig.get("iris_vertical", .5) > .8 and sig.get("upper_height",0) < b("upper_height",sig.get("upper_height",0))-.02
+        blink=sig.get("eyeBlink",0) >= self.tune.blink_gate or sig.get("aperture",1)<.04
+        expr=sig.get("mouthSmile",0)>=self.tune.smile_gate or sig.get("cheekSquint",0)>.5 or sig.get("jawOpen",0)>.65
+        turn=abs(sig.get("head_yaw",0))>=self.tune.pose_gate or abs(sig.get("head_pitch",0))>=self.tune.pose_gate
+        return self._held_signal(t, 1.0, all(both) and not (down or blink or expr or turn), {"geometry": True})
+
+
+class HybridSquintDetector(GeometricSquintDetector):
+    def feed(self,sig,t,base):
+        g=super().feed(sig,t,base)
+        if g is None: return None
+        # Geometry is the harder gate; relative evidence must also be present.
+        value=sig.get("eyeSquint",0); med=base.get("eyeSquint",{}).get("median",0) if isinstance(base,dict) else base.squint
+        if value-med < .08: return None
+        return g
+
+
+class DistanceLeanDetector(LeanDetector):
+    def feed(self,sig,t,base):
+        ratio=sig.get("head_distance",0)
+        b=base.get("head_distance",{}).get("median",0) if isinstance(base,dict) else 0
+        if not ratio or not b: return super().feed(sig,t,base)
+        s=dict(sig); s["width"]=base.width*ratio/b if isinstance(base,Baseline) else ratio
+        return super().feed(s,t,base)
+
+
+class HybridLeanDetector(DistanceLeanDetector):
+    def feed(self,sig,t,base):
+        bdist=base.get("head_distance",{}).get("median",0) if isinstance(base,dict) else 0
+        dw=sig.get("head_distance",0)/bdist if bdist else 1.0
+        wr=sig.get("width",0)/(base.width if isinstance(base,Baseline) else base.get("face_width",{}).get("median",1))
+        s=dict(sig); s["width"]=(max(dw,wr))*base.width if isinstance(base,Baseline) else max(dw,wr)
+        return super(DistanceLeanDetector,self).feed(s,t,base)
 
 
 # --------------------------------------------------------------------------- mouse and keyboard
