@@ -45,7 +45,13 @@
   }
 
   function skipped(el) {
-    return P.isAlly(el) || P.allyHidden(el);
+    return P.isAlly(el) || (P.allyHidden(el) && !demoMenu(el));
+  }
+
+  // A demo page's menu tagged data-demo-clutter="menu" (demo/simple-mode) is hidden by the clutter step but still
+  // read here, so the Ally menu has its links. Only on pages with <meta name="ally-demo">.
+  function demoMenu(el) {
+    return !!(el.closest && el.closest('[data-demo-clutter="menu"]') && document.querySelector('meta[name="ally-demo"]'));
   }
 
   // A link that only works through the site's script: no href, "#" or javascript:.

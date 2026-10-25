@@ -1,0 +1,8 @@
+photo-city.jpg: File:Fayetteville, NC Downtown Skyline.jpg (Public domain) https://commons.wikimedia.org/wiki/File:Fayetteville,_NC_Downtown_Skyline.jpg
+photo-storm.jpg: File:Don det sky laos storm mekong tree.jpg (CC0) https://commons.wikimedia.org/wiki/File:Don_det_sky_laos_storm_mekong_tree.jpg
+photo-game.jpg: File:2021-08-21 - FIFA Beach Soccer World Cup - Match 11 - Tahiti v Spain - Photo 011.jpg (CC0) https://commons.wikimedia.org/wiki/File:2021-08-21_-_FIFA_Beach_Soccer_World_Cup_-_Match_11_-_Tahiti_v_Spain_-_Photo_011.jpg
+photo-market.jpg: File:New Toronto Stock Exchange trading floor.jpg (Public domain) https://commons.wikimedia.org/wiki/File:New_Toronto_Stock_Exchange_trading_floor.jpg
+photo-space.jpg: File:Full moon partially obscured by atmosphere.jpg (Public domain) https://commons.wikimedia.org/wiki/File:Full_moon_partially_obscured_by_atmosphere.jpg
+photo-food.jpg: File:Amy's lentil vegetable soup.jpg (CC0) https://commons.wikimedia.org/wiki/File:Amy%27s_lentil_vegetable_soup.jpg
+photo-car.jpg: File:Choi Hung Estate, Hong Kong (Unsplash ZfK2x91gJOg).jpg (CC0) https://commons.wikimedia.org/wiki/File:Choi_Hung_Estate,_Hong_Kong_(Unsplash_ZfK2x91gJOg).jpg
+photo-beach.jpg: File:Miami Beach - Overlooking the shoreline 01.jpg (Public domain) https://commons.wikimedia.org/wiki/File:Miami_Beach_-_Overlooking_the_shoreline_01.jpg

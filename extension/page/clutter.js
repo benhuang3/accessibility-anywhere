@@ -31,6 +31,12 @@
   const SECRET_NAME = /card|cvv|cvc|iban|otp|one.?time|passcode|security code|verification code/i;
   const NAV = "nav, [role=navigation], [role=menubar]";
   const MAIN = "main, article, [role=main]";
+  // Demo pages (demo/simple-mode) tag their distracting pieces data-demo-clutter="<kind>" so a demo run removes
+  // exactly those, even ones the rules above would miss. Only on pages that opt in with
+  // <meta name="ally-demo" content="simple-mode">. A tagged "menu" is hidden too; the menus step still reads its
+  // links for the Ally menu (page/menus.js demoMenu).
+  const DEMO_KINDS = { ad: "ads", ads: "ads", cookie: "cookie", chat: "chat", share: "share", popup: "promo",
+    promo: "promo", banner: "promo", animation: "promo", toast: "promo", menu: "promo" };
   const LIVE = "[role=alert], [role=alertdialog], [aria-live]";
   const DIALOG = "[role=dialog], [role=alertdialog], [aria-modal=true], dialog[open]";
   const BUTTONISH = new Set(["hidden", "submit", "button", "reset", "image"]);
@@ -311,6 +317,12 @@
     if (want.has("cookie") || want.has("promo")) {
       for (const f of fixed) if (shown(f)) heuristic(f, add);
       for (const [b, kind] of backdrops(fixed, hits)) if (!dialogShowing(hits, b)) add(b, kind, "backdrop");
+    }
+    if (document.querySelector('meta[name="ally-demo"]')) {
+      for (const el of document.querySelectorAll("[data-demo-clutter]")) {
+        const kind = DEMO_KINDS[el.getAttribute("data-demo-clutter")];
+        if (kind && P.visible(el) && !hardBlock(el)) add(el, kind, "demo tag");
+      }
     }
     // Keep only the outermost hit of each nested group.
     for (const el of Array.from(hits.keys())) {
