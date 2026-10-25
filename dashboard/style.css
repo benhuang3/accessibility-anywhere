@@ -95,3 +95,25 @@ textarea { width: 100%; font-size: 0.92rem; line-height: 1.45; padding: 12px; bo
 
 footer { max-width: 980px; margin: 0 auto; padding: 0 16px 40px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; color: var(--muted); }
 footer span { flex: 1 1 auto; }
+
+/* ---- Ally mascot + speech bubble (placeholder art) ---- */
+.agent { display: flex; align-items: flex-start; gap: 14px; margin-top: 14px; }
+.mascot { flex: none; line-height: 0; }
+.mascot svg { display: block; }
+.m-face { fill: var(--card); stroke: var(--fg); stroke-width: 4; }
+.m-stroke { stroke: var(--fg); stroke-width: 4; stroke-linecap: round; }
+.m-accent { fill: var(--accent); }
+.m-eye { fill: var(--fg); }
+.m-cheek { fill: color-mix(in srgb, var(--accent) 45%, transparent); }
+.m-mouth { fill: var(--accent); transform-box: fill-box; transform-origin: center; }
+.mascot.talking .m-mouth { animation: ally-talk 0.42s ease-in-out infinite; }
+.mascot.talking .m-eye { animation: ally-blink 2.6s ease-in-out infinite; }
+@keyframes ally-talk { 0%, 100% { transform: scaleY(0.5); } 50% { transform: scaleY(1.25); } }
+@keyframes ally-blink { 0%, 92%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.1); } }
+
+.bubble { position: relative; flex: 1 1 auto; min-width: 0; background: var(--bg);
+  border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; }
+.bubble::before { content: ""; position: absolute; left: -11px; top: 22px; width: 18px; height: 18px;
+  background: var(--bg); border-left: 2px solid var(--line); border-bottom: 2px solid var(--line);
+  transform: rotate(45deg); }
+.bubble .reply { margin: 0; min-height: 1.5em; }
