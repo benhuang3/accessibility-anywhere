@@ -76,6 +76,15 @@ class GazeModelTests(unittest.TestCase):
         self.assertAlmostEqual(tuned['offset'][1], -350, delta=1)
         self.assertAlmostEqual(gm.predict(tuned, samples[0][0])[0] - gm.predict(model, samples[0][0])[0], 600, delta=1)
         self.assertEqual(model.get('offset'), [0.0, 0.0])
+        # Re-tuning again while still drifted by the same amount keeps the correction, not zero.
+        again = [(f, (gm.predict(model, f)[0] + 600, gm.predict(model, f)[1] - 350)) for f, _ in samples[:5]]
+        self.assertAlmostEqual(gm.retune(tuned, again)['offset'][0], 600, delta=1)
+        # A click correction on a re-tuned model adds to the re-tune offset instead of replacing it.
+        c = gm.Corrector(tuned)
+        for i, (f, _) in enumerate(samples[:6]):
+            p = gm.predict(tuned, f)
+            c.add(f, (p[0] + 100, p[1]), i)
+        self.assertAlmostEqual(c.model['offset'][0], 700, delta=1)
 
     def test_fixation(self):
         pts = [(i * 0.05, 100 + i % 2, 100) for i in range(8)] + [(0.4, 500, 500)] + [(0.45 + i * 0.05, 300, 300) for i in range(14)]

@@ -120,8 +120,13 @@ def retune(model, samples):
     if len(residuals) < 3:
         raise ValueError('retuning needs at least three targets')
     tuned = dict(model)
-    tuned['offset'] = np.median(np.asarray(residuals), axis=0).tolist()
+    # predict() already includes the current offset, so the residual is what is still left over.
+    tuned['offset'] = (_offset(model) + np.median(np.asarray(residuals), axis=0)).tolist()
     return tuned
+
+
+def _offset(model) -> np.ndarray:
+    return np.asarray(model.get('offset', [0.0, 0.0]), dtype=float)
 
 def predict(model: dict, f) -> tuple[float, float]:
     """Predict the screen pixel position for one feature vector."""
@@ -231,7 +236,8 @@ class Corrector:
                 after = np.median(np.linalg.norm(vectors[inliers] - consensus, axis=1))
                 if after < before:
                     self.model = dict(self.base)
-                    self.model['offset'] = consensus.tolist()
+                    # Errors are measured against the base, which may already carry a re-tune offset.
+                    self.model['offset'] = (_offset(self.base) + consensus).tolist()
         return True
 
     def predict(self, features):
