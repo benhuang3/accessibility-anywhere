@@ -123,7 +123,7 @@ def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET, openness_cutoff=None,
 
 def retune(model, samples):
     """Return a copy translated by the median target-minus-prediction residual."""
-    residuals = [np.asarray(target, float) - np.asarray(predict(model, f), float) for f, target in samples]
+    residuals = [np.asarray(target, float) - np.asarray(predict(model, f, clamp=False), float) for f, target in samples]
     if len(residuals) < 3:
         raise ValueError('retuning needs at least three targets')
     tuned = dict(model)
@@ -135,12 +135,18 @@ def retune(model, samples):
 def _offset(model) -> np.ndarray:
     return np.asarray(model.get('offset', [0.0, 0.0]), dtype=float)
 
-def predict(model: dict, f) -> tuple[float, float]:
-    """Predict a screen point, clamped to a 10% margin beyond its edges."""
+def predict(model: dict, f, clamp: bool = True) -> tuple[float, float]:
+    """Predict a screen point, clamped to a 10% margin beyond its edges.
+
+    clamp=False gives the raw estimate: retune and Corrector measure drift from it, because after a
+    head move the estimate can sit far off screen and clamping would hide most of the shift.
+    """
     raw = expand(f, model.get('features', 'v1'))
     x = np.column_stack([np.ones(len(raw)), (raw - np.array(model['mean'])) / np.array(model['std'])])
     p = (x @ np.array(model['coef']))[0]
     p += np.asarray(model.get('offset', [0.0, 0.0]), dtype=float)
+    if not clamp:
+        return (float(p[0]), float(p[1]))
     width, height = model['screen']
     p[0] = np.clip(p[0], -0.1 * width, 1.1 * width)
     p[1] = np.clip(p[1], -0.1 * height, 1.1 * height)
@@ -261,7 +267,7 @@ class Corrector:
 
     def add(self, features, target, t):
         """Store a click and update the translation after four-of-six consensus."""
-        base_prediction = np.asarray(predict(self.base, features))
+        base_prediction = np.asarray(predict(self.base, features, clamp=False))
         error = np.asarray(target, dtype=float) - base_prediction
         sample = (features, tuple(target), float(t), error)
         self.samples.append(sample)

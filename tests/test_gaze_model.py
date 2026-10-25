@@ -97,6 +97,26 @@ class GazeModelTests(unittest.TestCase):
             c.add(f, (p[0] + 100, p[1]), i)
         self.assertAlmostEqual(c.model['offset'][0], 700, delta=1)
 
+    def test_retune_recovers_drift_that_puts_the_estimate_off_screen(self):
+        # A real head move put estimates about 1000 px above the screen. Clamped predictions hid
+        # most of that shift, so a re-tune only got back to about 640 px.
+        samples = [([x / 1920, y / 1080, 0, 0, 0, 0, 0, 0, 1], (x, y))
+                   for x, y in [(100, 100), (960, 100), (1820, 100), (100, 540), (960, 540), (1820, 540), (100, 980), (960, 980), (1820, 980)]]
+        good = gm.fit(samples, (1920, 1080))
+        drifted = dict(good, offset=[-500.0, -1000.0])
+        self.assertEqual(gm.predict(drifted, samples[4][0])[1], -108.0)  # what Ally uses is clamped...
+        # ...but the re-tune measures the whole shift: afterwards it predicts like the undrifted model.
+        on_target = [(f, gm.predict(good, f)) for f, _ in samples]
+        tuned = gm.retune(drifted, on_target[:5])
+        for f, (x, y) in on_target:
+            px, py = gm.predict(tuned, f)
+            self.assertLess(abs(px - x) + abs(py - y), 5)
+        c = gm.Corrector(drifted)
+        for i, (f, target) in enumerate(on_target[:6]):
+            c.add(f, target, i)
+        px, py = c.predict(on_target[8][0])
+        self.assertLess(abs(px - on_target[8][1][0]) + abs(py - on_target[8][1][1]), 5)
+
     def test_fixation(self):
         pts = [(i * 0.05, 100 + i % 2, 100) for i in range(8)] + [(0.4, 500, 500)] + [(0.45 + i * 0.05, 300, 300) for i in range(14)]
         f = gm.fixation(pts, 0, 1.2, 5)
