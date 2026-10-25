@@ -140,6 +140,13 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 05:28 PT — Hayden (via Claude Code) — `main`, commit `5367b3c`
+
+**Changed:** the eye-tracker marker ("show where I am looking"). It was a large yellow blob. It is
+now a thin dark ring at the edge of the estimate, sized by the tracker's uncertainty, with a small
+centre dot and a faint white edge for dark pages. Only `ally/gaze_dot.py` changes, and the eye
+tracker tests pass.
+
 ### Oct 25, ~03:45 PT — Ganesh (via Claude Code) — `risk-branch` -> `main`
 
 **Merged `risk-branch` into `main` (main merged into it first; clean). 1096 tests pass on Windows.**
