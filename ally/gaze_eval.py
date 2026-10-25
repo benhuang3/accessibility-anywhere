@@ -1,10 +1,12 @@
-"""Offline evaluator for numeric eye tracker recordings (python -m ally.gaze_eval report PATHS)."""
+"""Offline evaluator for numeric eye tracker recordings."""
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 import numpy as np
 from . import gaze_model as gm
+
 
 def _frame_before_click(feats, click_time):
     """Return the closest feature frame at or before 100 ms before a click."""
@@ -15,8 +17,33 @@ def _frame_before_click(feats, click_time):
     frame = max(candidates, key=lambda item: item[0])
     return frame if cutoff - frame[0] <= 0.25 else None
 
+
+def _summarize(points, screen):
+    """Summarize target/prediction pairs using the public validation metrics."""
+    errors = []
+    hits = 0
+    for target, prediction in points:
+        errors.append(float(np.linalg.norm(np.asarray(prediction) - np.asarray(target))))
+        hits += gm.region(*prediction, screen) == gm.region(*target, screen)
+    return {'error_px': float(np.median(errors)) if errors else None,
+            'region_hits': hits, 'region_total': len(points)}
+
+
+def _grouped_samples(targets, feats, phase):
+    groups = {}
+    for target in targets:
+        if target.get('phase') != phase:
+            continue
+        items = [(f, (target['x'], target['y']), op) for t, f, op in feats
+                 if target['start'] <= t <= target['end']]
+        clean = gm.clean_samples(items, preserve_openness=True)
+        if clean:
+            groups.setdefault(tuple((target['x'], target['y'])), []).extend(clean)
+    return groups
+
+
 def evaluate(path):
-    """Evaluate v1 and v2 models on the held-out phases in one JSONL recording."""
+    """Evaluate validation, drift, leave-one-target-out retuning, and click correction."""
     rows = [json.loads(s) for s in Path(path).read_text(encoding='utf-8').splitlines() if s.strip()]
     meta = next((r for r in rows if r.get('rec') == 'meta'), {})
     screen = tuple(meta.get('screen', (1920, 1080)))
@@ -29,53 +56,91 @@ def evaluate(path):
             z = gm.features_for_model({'features': fs}, fr['lm'], fr.get('bs'), fr.get('mat'), fr['w'], fr['h'])
             if z:
                 feats.append((fr['t'], z[0], z[1]))
-
-        def samples(phases):
-            """Collect cleaned frame features and targets for the requested phases."""
-            out = []
-            for target in targets:
-                if target.get('phase') not in phases:
-                    continue
-                for t, f, op in feats:
-                    if target['start'] <= t <= target['end']:
-                        out.append((f, (target['x'], target['y']), op))
-            return gm.clean_samples(out, preserve_openness=True)
-        train = samples({'calibration'})
-        if len({t for _, t, _ in train}) < 6:
+        calibration = _grouped_samples(targets, feats, 'calibration')
+        train = [item for group in calibration.values() for item in group]
+        if len(calibration) < 6:
             continue
-        model = gm.fit([(f, t) for f, t, _ in train], screen, fs)
+        model = gm.fit([(f, target) for f, target, _ in train], screen, fs)
         corrector = gm.Corrector(model)
         for click in sorted((r for r in rows if r.get('rec') == 'click'), key=lambda c: c['t']):
             nearest = _frame_before_click(feats, click['t'])
             if nearest:
                 corrector.add(nearest[1], (click['x'], click['y']), click['t'])
+
+        validation = _grouped_samples(targets, feats, 'validation')
+        drift = _grouped_samples(targets, feats, 'drift')
+        validation_points = []
+        for target, group in validation.items():
+            pred = np.median([gm.predict(model, f) for f, _, _ in group], axis=0)
+            validation_points.append((target, pred))
+        drift_points = []
+        retuned_points = []
+        click_points = []
+        drift_items = list(drift.items())
+        for index, (target, group) in enumerate(drift_items):
+            pred = np.median([gm.predict(model, f) for f, _, _ in group], axis=0)
+            drift_points.append((target, pred))
+            other = [item for i, (_, other_group) in enumerate(drift_items) if i != index
+                     for f, t, _ in other_group]
+            tuned = gm.retune(model, other) if len({tuple(t) for _, t in other}) >= 3 else model
+            retuned = np.median([gm.predict(tuned, f) for f, _, _ in group], axis=0)
+            retuned_points.append((target, retuned))
+            corrected = np.median([corrector.predict(f) for f, _, _ in group], axis=0)
+            click_points.append((target, corrected))
+        summaries = {
+            'validation': _summarize(validation_points, screen),
+            'drift': _summarize(drift_points, screen),
+            'drift_retuned': _summarize(retuned_points, screen),
+            'drift_click_corrected': _summarize(click_points, screen),
+        }
+        retuned = summaries['drift_retuned']
+        clicked = summaries['drift_click_corrected']
         for phase in ('validation', 'drift'):
-            data = samples({phase})
-            plain = gm.validate(model, [(f, t) for f, t, _ in data]) if data else None
-            corrected = gm.validate(corrector.model, [(f, t) for f, t, _ in data]) if data else None
-            results.append({'file': str(path), 'features': fs, 'phase': phase, 'error_px': plain['error_px'] if plain else None, 'region_hits': plain['region_hits'] if plain else None, 'region_total': plain['region_total'] if plain else None, 'corrected_error_px': corrected['error_px'] if corrected else None, 'corrected_region_hits': corrected['region_hits'] if corrected else None, 'corrected_region_total': corrected['region_total'] if corrected else None})
+            summary = summaries[phase]
+            results.append({'file': str(path), 'features': fs, 'phase': phase, **summary,
+                            'retuned_error_px': retuned['error_px'] if phase == 'drift' else None,
+                            'retuned_region_hits': retuned['region_hits'] if phase == 'drift' else None,
+                            'retuned_region_total': retuned['region_total'] if phase == 'drift' else None,
+                            'click_error_px': clicked['error_px'] if phase == 'drift' else None,
+                            'click_region_hits': clicked['region_hits'] if phase == 'drift' else None,
+                            'click_region_total': clicked['region_total'] if phase == 'drift' else None})
     return results
 
-def report(paths):
-    """Print a Markdown summary and write a CSV beside the evaluated recordings."""
+
+def _meets(row, prefix=''):
+    error = row.get(prefix + 'error_px')
+    total = row.get(prefix + 'region_total') or 0
+    needed = math.ceil(0.89 * total)
+    return error is not None and error <= 150 and total > 0 and row.get(prefix + 'region_hits', 0) >= needed
+
+
+def report(paths, out=None):
+    """Print a Markdown summary and write a CSV to out or the current folder."""
     files = []
     for raw in paths:
         p = Path(raw)
         files.extend(sorted(p.rglob('*.jsonl')) if p.is_dir() else [p])
     rows = [r for p in files for r in evaluate(p)]
-    headers = ['file', 'features', 'phase', 'error_px', 'region_hits', 'region_total', 'corrected_error_px', 'corrected_region_hits', 'corrected_region_total']
+    headers = ['file', 'features', 'phase', 'error_px', 'region_hits', 'region_total',
+               'retuned_error_px', 'retuned_region_hits', 'retuned_region_total',
+               'click_error_px', 'click_region_hits', 'click_region_total']
     print('| ' + ' | '.join(headers) + ' |\n|' + '|'.join(['---'] * len(headers)) + '|')
-    for r in rows:
-        print('| ' + ' | '.join((str(r.get(k, '')) for k in headers)) + ' |')
-    out = files[0].parent / 'gaze_eval.csv' if files else Path('gaze_eval.csv')
-    with out.open('w', newline='', encoding='utf-8') as f:
-        w = csv.DictWriter(f, fieldnames=headers)
-        w.writeheader()
-        w.writerows(rows)
-    print(f'\nCSV: {out}')
+    for row in rows:
+        print('| ' + ' | '.join(str(row.get(k, '')) for k in headers) + ' |')
+    output = Path(out) if out else Path.cwd() / 'gaze_eval.csv'
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open('w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f'\nCSV: {output}')
+    phases = [('validation', 'validation', ''), ('drift', 'drift', ''),
+              ('drift', 'drift after retune', 'retuned_')]
     for fs in ('v1', 'v2'):
-        sessions = {r['file'] for r in rows if r['features'] == fs and r['phase'] == 'validation' and (r['error_px'] is not None) and (r['error_px'] <= 150) and (r['region_hits'] >= 8)}
-        print(f'{fs} meets the validation bar on {len(sessions)} session(s); recordings are required for a real accuracy conclusion.')
+        for phase, label, prefix in phases:
+            sessions = {row['file'] for row in rows if row['features'] == fs and row['phase'] == phase and _meets(row, prefix)}
+            print(f'{fs} meets the bar on {len(sessions)} session(s) for {label}.')
+
 
 def main():
     """Run the command-line report subcommand."""
@@ -83,7 +148,10 @@ def main():
     sub = ap.add_subparsers(dest='cmd', required=True)
     rp = sub.add_parser('report')
     rp.add_argument('paths', nargs='+')
-    a = ap.parse_args()
-    report(a.paths)
+    rp.add_argument('--out', default=None, help='CSV output path (default: ./gaze_eval.csv)')
+    args = ap.parse_args()
+    report(args.paths, args.out)
+
+
 if __name__ == '__main__':
     main()

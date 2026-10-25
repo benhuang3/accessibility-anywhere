@@ -187,7 +187,7 @@ class GazeModelTests(unittest.TestCase):
             validation = [row for row in rows if row['phase'] == 'validation']
             self.assertEqual({row['features'] for row in validation}, {'v1', 'v2'})
             self.assertTrue(all(row['error_px'] < 50 for row in validation), validation)
-            gaze_eval.report([p])
+            gaze_eval.report([p], Path(td) / 'gaze_eval.csv')
             self.assertTrue((Path(td) / 'gaze_eval.csv').is_file())
 if __name__ == '__main__':
     unittest.main()
