@@ -143,3 +143,19 @@ footer a:hover { text-decoration: underline; }
   .helper-call .controls .end-call { min-height: 44px; }
   .helper-call .controls svg { width: 18px; height: 18px; }
 }
+
+/* Helper actions stay below the screen, within reach in portrait. */
+.with-helper-actions { display: flex; flex-direction: column; }
+.action-screen-view { position: relative; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.with-helper-actions .screen-image { position: relative; }
+.with-helper-actions .point-mode { cursor: crosshair; outline: 3px solid #78b7ff; outline-offset: -3px; }
+.helper-point-ring { position: absolute; width: 48px; height: 48px; transform: translate(-50%, -50%); border: 5px solid #55a6ff; border-radius: 50%; box-shadow: 0 0 0 3px #fff, 0 2px 14px #052653aa; pointer-events: none; }
+.helper-action-bar { flex: none; padding: 10px; background: #142c29; color: #fff; border-top: 1px solid #527069; }
+.helper-action-buttons { display: grid; grid-template-columns: 1.15fr .8fr 1.15fr; gap: 8px; }
+.helper-action-buttons .helper-action { min-height: 64px; min-width: 0; padding: 10px 8px; border-radius: 14px; font-size: 16px; line-height: 1.2; color: #123b30; background: #e0eee3; border: 2px solid transparent; overflow-wrap: anywhere; }
+.helper-action-buttons .helper-action:disabled { opacity: .65; }
+.helper-action-buttons .point-selected { background: #d5e9ff; color: #123f73; border-color: #68acff; }
+.helper-action-reason { min-height: 22px; margin-top: 8px; text-align: center; font-size: 13px; color: #deebe5; }
+@media (min-width: 900px) {
+  .helper-action-buttons .helper-action { min-height: 64px; font-size: 18px; }
+}

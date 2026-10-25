@@ -8,10 +8,13 @@
     localVideoStream, remoteVideoUrl, muted, toggleMute, flipCamera,
     connectionSlow, audioNeedsTap, mediaError, callStats
   } from '$lib/callRuntime';
+  import { helperActions, incomingHelperAction, createElderRelay, actionDisabledReason, type HelperActionKind, type Point } from '$lib/helperActions';
   import { remoteScreen } from '$lib/screenshare';
   import SharedScreen from '$lib/SharedScreen.svelte';
   import { screenFreshness } from '$lib/screenPolicy';
   import { parseRoomHash, kindLabels, type RoomLink } from '$lib/room';
+
+  const { pending: pendingActions, results: actionResults } = helperActions;
 
   let link: RoomLink | null = null;
   let conn: DbConnection | null = null;
@@ -33,6 +36,7 @@
   $: helperName = $incidentStore?.helperName ?? link?.name ?? 'your helper';
   $: screenHint = screenFreshness($remoteScreen?.updatedAt ?? null, now);
   $: sharingOn = sharingAvailable && ($incidentStore?.screenSharing ?? true);
+  $: actionReason = actionDisabledReason($isConnected && joined && !callEnded && $incidentStore?.status === 'connected', sharingOn);
   $: isHelper = link?.role === 'helper';
   $: callEnded = ended || $incidentStore?.status === 'ended';
   $: status = callEnded ? 'Call ended'
@@ -117,7 +121,19 @@
     }
   }
 
+  function sendHelperAction(action: HelperActionKind, point?: Point): boolean {
+    if (actionReason || !conn || !link) return false;
+    const connection = conn, roomId = link.roomId;
+    return helperActions.send(action, row => connection.reducers.sendHelperAction({ roomId, ...row }), point) !== null;
+  }
+
   onMount(() => {
+    const relay = createElderRelay(window, async (seq, ok) => {
+      if (conn && link?.role === 'elder') await conn.reducers.reportActionResult({ roomId: link.roomId, seq, ok });
+    });
+    const stopActions = incomingHelperAction.subscribe(row => {
+      if (row && link?.role === 'elder' && conn) relay.handle(row);
+    });
     const params = new URLSearchParams(window.location.hash.slice(1));
     sharingAvailable = params.get('screen') !== 'off';
     elderName = params.get('elderName')?.trim().slice(0, 64) || 'Family';
@@ -141,6 +157,8 @@
     const leave = () => { ended = true; disconnectStdb(); };
     window.addEventListener('pagehide', leave);
     return () => {
+      stopActions();
+      relay.stop();
       clearInterval(freshnessTimer);
       window.removeEventListener('pagehide', leave);
       window.removeEventListener('hashchange', updateDebug);
@@ -253,7 +271,8 @@
   {:else}
     {#if isHelper}
       <section class="helper-workspace" aria-label="Your family member's screen and camera">
-        <SharedScreen screen={$remoteScreen} sharing={sharingOn} hint={screenHint} />
+        <SharedScreen screen={$remoteScreen} sharing={sharingOn} hint={screenHint}
+          disabledReason={actionReason} pending={$pendingActions} results={$actionResults} onaction={sendHelperAction} />
         <aside class="helper-rail" aria-label="Family and call controls">
           <div class="helper-faces">
             <button class="glass family-tile" onclick={() => { faceExpanded = !faceExpanded; }}

@@ -1,10 +1,13 @@
 """Adapt local page and process rules to the risk event bus."""
 
 import logging
+import math
 import re
 import secrets
+import struct
 import threading
 import time
+import unicodedata
 import urllib.parse
 
 from ally.contracts import EventBus, Offer, Risk
@@ -131,7 +134,7 @@ class RiskWire:
                  poll_seconds=10.0, clock=time.time, deduper=None, ask=None, call=None,
                  broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None,
                  overlay_active=None, review_timeout_s=10.0, contact=None, notify=None, say=None,
-                 screen_capture=None, screen_share=True):
+                 screen_capture=None, screen_share=True, done=None):
         self.screen_capture = screen_capture
         self.screen_share = screen_share
         self._screen_share = None
@@ -142,14 +145,19 @@ class RiskWire:
         self.overlay_active = overlay_active or (lambda: False)  # the in-page banner only stands in for it
         self.guardian = guardian        # second opinion from a vision model (consent and budget live inside it)
         self.review_timeout_s = review_timeout_s
-        self.highlight = highlight      # unused here; marks go to the offer so the overlay draws them
+        self.highlight = highlight      # helper points use the same physical pixels as the overlay
         self.screen_size = screen_size  # () -> (width, height) of the screenshot the guardian saw
         self._marks = {}
         self._tab_ids = {}
+        self._page_questions = {}
+        self._closed_tabs = set()
+        self._point_timer = None
+        self._point_generation = 0
         self.ask = ask
         self.call = call
         self.broadcast = broadcast
         self.kill = kill
+        self.done = done or notify or (lambda message: None)
         self.notify = notify or (lambda message: None)
         self.say = say or (lambda message: None)
         self._inflight = set()
@@ -194,13 +202,26 @@ class RiskWire:
             generation = self._generation
             self.deduper.snooze(key, HOLD_SECONDS)
             tab_id = self._tab_ids.pop(key, None)
+            if tab_id in self._closed_tabs:
+                self._inflight.discard(key)
+                return
+            question = {"risk": risk, "tab_id": tab_id, "cancelled": threading.Event(), "offer": None}
+            self._page_questions[key] = question
+
+        def ask_offer(offer):
+            with self._lock:
+                if question["cancelled"].is_set():
+                    return "dismissed"
+                question["offer"] = offer
+            return self.ask(offer)
+
         prompt, action_id = proposal
 
         def ask_and_act():
             answer, snooze_seconds = "timeout", TIMEOUT_SNOOZE_SECONDS
             try:
                 with self._lock:
-                    if generation != self._generation or self._stop.is_set():
+                    if generation != self._generation or self._stop.is_set() or question["cancelled"].is_set():
                         return
                     box = self._marks.pop(key, None)
                 offer = Offer(prompt, context="risk", reason=risk, timeout=20.0, highlight=box)
@@ -214,21 +235,23 @@ class RiskWire:
                         if alert is not None:
                             alert["offer"] = offer
                         self._contact_action(offer, risk, alert)
-                answer = self.ask(offer)
+                answer = ask_offer(offer)
                 with self._lock:
-                    current = generation == self._generation and not self._stop.is_set()
+                    current = (generation == self._generation and not self._stop.is_set()
+                               and not question["cancelled"].is_set())
                 if answer == "no" and current:
                     wording = render("confirm_close")
                     confirmation = Offer(wording.title + " " + wording.body,
                                          options=tuple(a.label for a in wording.actions),
                                          context="risk", reason=risk, timeout=20.0)
-                    answer = self.ask(confirmation)
+                    answer = ask_offer(confirmation)
                     if answer == "no":
                         snooze_seconds = DECLINE_SNOOZE_SECONDS
                 if answer not in ("yes", "no"):
                     answer = "timeout"
                 with self._lock:
-                    current = generation == self._generation and not self._stop.is_set()
+                    current = (generation == self._generation and not self._stop.is_set()
+                               and not question["cancelled"].is_set())
                 if answer == "yes" and current:
                     ok, fallback = self._perform_action(action_id, risk, tab_id)
                     self.bus.publish("risk_action", {"action": action_id, "ok": ok,
@@ -240,7 +263,11 @@ class RiskWire:
                 log.debug("risk offer failed", exc_info=True)
             finally:
                 with self._lock:
-                    current = generation == self._generation
+                    current = generation == self._generation and not question["cancelled"].is_set()
+                    if self._page_questions.get(key) is question:
+                        self._page_questions.pop(key, None)
+                    if question["cancelled"].is_set():
+                        self._inflight.discard(key)
                     if current:
                         if snooze_seconds:
                             self.deduper.snooze(key, snooze_seconds)
@@ -256,6 +283,7 @@ class RiskWire:
         except Exception:
             with self._lock:
                 self._inflight.discard(key)
+                self._page_questions.pop(key, None)
                 self.deduper.snooze(key, TIMEOUT_SNOOZE_SECONDS)
 
     def _perform_action(self, action_id, risk, tab_id) -> tuple[bool, str]:
@@ -353,6 +381,106 @@ class RiskWire:
         if service in ("meet", "spacecall"):
             self._stop_screen_share()
             self.bus.publish("risk_call_ended", {"service": service})
+
+    def on_helper_action(self, msg) -> None:
+        """Announce only the three bounded helper actions; malformed bridge messages are inert."""
+        try:
+            if not isinstance(msg, dict) or msg.get("ok") is not True:
+                return
+            action = msg.get("action")
+            if action not in ("close_tab", "bigger", "point"):
+                return
+            name = msg.get("helper_name", "Your helper")
+            if not isinstance(name, str):
+                return
+            name = " ".join("".join(ch for ch in name if not unicodedata.category(ch).startswith("C")).split())[:30]
+            name = name or "Your helper"
+            if action == "close_tab":
+                self._helper_closed_page(msg.get("tab_id"))
+                message = f"{name} closed that page for you."
+            elif action == "bigger":
+                message = f"{name} made the page bigger."
+            else:
+                x, y = msg.get("x"), msg.get("y")
+                if (type(x) not in (int, float) or type(y) not in (int, float)
+                        or not math.isfinite(x) or not math.isfinite(y) or not 0 <= x <= 1 or not 0 <= y <= 1):
+                    return
+                if not self._helper_point(x, y):
+                    return
+                message = f"{name} is pointing here."
+            for callback in (self.done, self.say):
+                try:
+                    callback(message)
+                except Exception:
+                    log.debug("helper action note failed")
+        except Exception:
+            log.debug("helper action ignored")
+
+    def _helper_closed_page(self, tab_id):
+        with self._lock:
+            tab_id = tab_id if type(tab_id) is int else self.last_page.get("tab_id")
+            if tab_id is not None:
+                self._closed_tabs.add(tab_id)
+            url = self.last_page["url"]
+            for key, question in self._page_questions.items():
+                risk = question["risk"]
+                if not risk.url:
+                    continue
+                if (tab_id is not None and question["tab_id"] is not None
+                        and tab_id != question["tab_id"]):
+                    continue
+                if question["tab_id"] is None and url and risk.url != url:
+                    continue
+                question["cancelled"].set()
+                offer = question["offer"]
+                if offer is not None:
+                    offer.resolve("dismissed", "helper")
+                self.deduper.snooze(key, HOLD_SECONDS)
+            if tab_id is None or self.last_page.get("tab_id") == tab_id:
+                self.last_page.update(url="", card_present=False, last_scam_text_at=None)
+
+    def _helper_point(self, x, y) -> bool:
+        if self.highlight is None:
+            return False
+        if self.screen_capture is not None:
+            raw = self.screen_capture()
+            if isinstance(raw, tuple):
+                raw = raw[0]
+            if isinstance(raw, bytes) and raw[:8] == b"\x89PNG\r\n\x1a\n":
+                width, height = struct.unpack(">II", raw[16:24])
+            else:
+                width, height = raw.size
+        elif self.screen_size is not None:
+            width, height = self.screen_size()
+        else:
+            return False
+        if not (0 < width <= 100000 and 0 < height <= 100000):
+            return False
+        # Capture is the whole primary screen, including the taskbar, in physical pixels.
+        # Do not use the 1280px transport JPEG, browser viewport or DPI-scaled work area.
+        side = min(140, width, height)
+        box = (max(0, min(width - side, round(x * width - side / 2))),
+               max(0, min(height - side, round(y * height - side / 2))), side, side)
+        with self._lock:
+            self._point_generation += 1
+            generation = self._point_generation
+            if self._point_timer is not None:
+                self._point_timer.cancel()
+            self.highlight(box)
+
+            def clear():
+                with self._lock:
+                    if generation != self._point_generation:
+                        return
+                    try:
+                        self.highlight(None)
+                    except Exception:
+                        pass
+
+            self._point_timer = threading.Timer(8.0, clear)
+            self._point_timer.daemon = True
+            self._point_timer.start()
+        return True
 
     def _stop_screen_share(self):
         with self._lock:
@@ -466,12 +594,14 @@ class RiskWire:
         if not page:
             return
         with self._lock:
+            if page["tab_id"] in self._closed_tabs:
+                return
             risks = _scan(page, bool(joined.running_tools(self._snapshot)))
             beh = behavior.behavior_flags(page["signals"])
             if beh.suspicious:
                 risks = _sorted(risks + [Risk("scam_popup", "medium", beh.evidence, page["url"],
                                               source="risk.behavior")])
-            self.last_page.update(url=page["url"],
+            self.last_page.update(url=page["url"], tab_id=page["tab_id"],
                                   card_present=fields.detect_card_fields(page["fields"]).present)
             if any(r.kind == "scam_popup" for r in risks):
                 self.last_page["last_scam_text_at"] = self.clock()
@@ -499,6 +629,8 @@ class RiskWire:
                 self.deduper.forget(before)
         if chosen:
             with self._lock:
+                if page["tab_id"] in self._closed_tabs:
+                    return
                 self._tab_ids[Deduper.key(chosen)] = page["tab_id"]
             self.bus.publish("risk", chosen)
 
@@ -646,6 +778,9 @@ class RiskWire:
     def stop(self):
         with self._lock:
             self._stop.set()
+            self._point_generation += 1
+            if self._point_timer is not None:
+                self._point_timer.cancel()
             if self._screen_share is not None:
                 self._screen_share.stop()
                 self._screen_share = None
@@ -720,6 +855,16 @@ def attach(agent) -> RiskWire:
             # An existing risk card rejects info cards, including after an API answer.
             ui.show_card(message, actions=("OK",), kind="risk")
 
+    def done(message):
+        ui = getattr(getattr(agent, "proactive", None), "ui", None)
+        if ui is not None:
+            ui.show_card(message, actions=("OK",), kind="done")
+
+    def highlight(box):
+        ui = getattr(getattr(agent, "proactive", None), "ui", None)
+        if ui is not None:
+            ui.highlight(box)
+
     def say(message):
         voice = getattr(getattr(agent, "proactive", None), "voice", None)
         if voice is not None and hasattr(voice, "say"):
@@ -736,11 +881,12 @@ def attach(agent) -> RiskWire:
                     broadcast=getattr(bridge, "broadcast", None),
                     guardian=guardian, screen_size=screen_size,
                     overlay_active=lambda: getattr(agent, "overlay", None) is not None,
-                    contact=_make_contact(agent), notify=notify, say=say,
+                    contact=_make_contact(agent), notify=notify, say=say, done=done, highlight=highlight,
                     screen_capture=lambda: ScreenShare.capture_screen(lambda: agent.platform.screenshot_png()),
                     screen_share=risk_config.get("screen_share", True) is True)
     if hasattr(bridge, "on_page"):
         bridge.on_page = wire.on_page
         bridge.on_call_ended = wire.on_call_ended
+        bridge.on_helper_action = wire.on_helper_action
     wire.start()
     return wire

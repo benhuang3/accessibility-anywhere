@@ -71,3 +71,23 @@ export const VideoFrameEvent = __t.object("VideoFrameEvent", {
 });
 export type VideoFrameEvent = __Infer<typeof VideoFrameEvent>;
 
+
+export const HelperActionEvent = __t.object("HelperActionEvent", {
+  roomId: __t.string(),
+  recipient: __t.identity(),
+  seq: __t.u32(),
+  action: __t.string(),
+  x: __t.f32(),
+  y: __t.f32(),
+  serverAt: __t.timestamp(),
+});
+export type HelperActionEvent = __Infer<typeof HelperActionEvent>;
+
+export const ActionResultEvent = __t.object("ActionResultEvent", {
+  roomId: __t.string(),
+  recipient: __t.identity(),
+  seq: __t.u32(),
+  ok: __t.bool(),
+  serverAt: __t.timestamp(),
+});
+export type ActionResultEvent = __Infer<typeof ActionResultEvent>;

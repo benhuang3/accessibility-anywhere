@@ -34,6 +34,8 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import SendHelperActionReducer from "./send_helper_action_reducer";
+import ReportActionResultReducer from "./report_action_result_reducer";
 import EndCallReducer from "./end_call_reducer";
 import HeartbeatReducer from "./heartbeat_reducer";
 import HelperRespondingReducer from "./helper_responding_reducer";
@@ -48,6 +50,8 @@ import SetScreenSharingReducer from "./set_screen_sharing_reducer";
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import HelperActionEventRow from "./helper_action_event_table";
+import ActionResultEventRow from "./action_result_event_table";
 import AudioFrameEventRow from "./audio_frame_event_table";
 import CallIncidentRow from "./call_incident_table";
 import ScreenFrameEventRow from "./screen_frame_event_table";
@@ -57,6 +61,8 @@ import VideoFrameEventRow from "./video_frame_event_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  helperActionEvent: __table({ name: 'helper_action_event', indexes: [], constraints: [], event: true }, HelperActionEventRow),
+  actionResultEvent: __table({ name: 'action_result_event', indexes: [], constraints: [], event: true }, ActionResultEventRow),
   audioFrameEvent: __table({
     name: 'audio_frame_event',
     indexes: [
@@ -92,6 +98,8 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("send_helper_action", SendHelperActionReducer),
+  __reducerSchema("report_action_result", ReportActionResultReducer),
   __reducerSchema("end_call", EndCallReducer),
   __reducerSchema("heartbeat", HeartbeatReducer),
   __reducerSchema("helper_responding", HelperRespondingReducer),

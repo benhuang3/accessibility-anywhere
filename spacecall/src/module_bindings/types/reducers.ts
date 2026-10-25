@@ -6,6 +6,8 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import SendHelperActionReducer from "../send_helper_action_reducer";
+import ReportActionResultReducer from "../report_action_result_reducer";
 import EndCallReducer from "../end_call_reducer";
 import HeartbeatReducer from "../heartbeat_reducer";
 import HelperRespondingReducer from "../helper_responding_reducer";
@@ -28,3 +30,6 @@ export type SendScreenFrameParams = __Infer<typeof SendScreenFrameReducer>;
 export type SendVideoFrameParams = __Infer<typeof SendVideoFrameReducer>;
 export type SetScreenSharingParams = __Infer<typeof SetScreenSharingReducer>;
 
+
+export type SendHelperActionParams = __Infer<typeof SendHelperActionReducer>;
+export type ReportActionResultParams = __Infer<typeof ReportActionResultReducer>;

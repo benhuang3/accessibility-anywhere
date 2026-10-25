@@ -92,6 +92,8 @@ class Tone:
 
 def card_tone(card: "CardContent | None", offer: "OfferContent | None") -> Tone:
     """Urgency lives in words and the bear's face, never in the card colour."""
+    if card is not None and card.kind == "done":
+        return Tone(None, "check", "happy", toast=True)
     if card is not None and card.kind == "risk":
         _, body = split_title(card.text)
         if offer is None and not body and card.text.startswith("Closed"):

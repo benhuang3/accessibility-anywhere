@@ -314,6 +314,12 @@ class Overlay:
             self._show_highlight(cmd[1])
             return
         if kind == "card":
+            current = self._panel.current_offer
+            offer = self._offers.get(current.id) if current is not None else None
+            if cmd[3] == "done" and offer is not None and offer.done:
+                self._offers.pop(current.id, None)
+                self._panel.offer_done(current.id)
+                self._clear_highlight()
             self._panel.card(cmd[1], cmd[2], cmd[3])
             self._render()
             return

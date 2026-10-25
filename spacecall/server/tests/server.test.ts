@@ -172,3 +172,88 @@ test('face profiles are private to their owner, upserted and deletable', () => {
   f.harness.withReducerTx(f.elder, ctx => module.delete_face_profile(ctx, {}));
   assert.equal(module.own_face_profile(f.harness.viewContext(f.elder)).length, 0);
 });
+
+const helperAction = { room_id: room, seq: 7, action: 'point', x: 0.25, y: 0.75 };
+
+test('helper actions derive the elder recipient and results derive the helper recipient', () => {
+  const f = fixture(); f.open(); f.join();
+  f.harness.clock.set(new Timestamp(123456n));
+  for (const action of ['point', 'close_tab', 'bigger']) {
+    f.harness.withReducerTx(f.helper, ctx => {
+      module.send_helper_action(ctx, { ...helperAction, action });
+      const [event] = [...ctx.db.helperActionEvent.iter()];
+      assert.equal(event.room_id, room);
+      assert.equal(event.seq, 7);
+      assert.equal(event.action, action);
+      assert.equal(event.x, action === 'point' ? 0.25 : 0);
+      assert.equal(event.y, action === 'point' ? 0.75 : 0);
+      assert.equal(event.server_at.microsSinceUnixEpoch, 123456n);
+      assert.ok(event.recipient.isEqual(f.harness.viewContext(f.elder).sender));
+      assert.ok(!event.recipient.isEqual(f.harness.viewContext(f.helper).sender));
+    });
+  }
+  for (const ok of [true, false]) {
+    f.harness.withReducerTx(f.elder, ctx => {
+      module.report_action_result(ctx, { room_id: room, seq: 7, ok });
+      const [event] = [...ctx.db.actionResultEvent.iter()];
+      assert.equal(event.ok, ok);
+      assert.equal(event.seq, 7);
+      assert.equal(event.room_id, room);
+      assert.equal(event.server_at.microsSinceUnixEpoch, 123456n);
+      assert.ok(event.recipient.isEqual(f.harness.viewContext(f.helper).sender));
+    });
+  }
+  assert.equal([...f.harness.db.helperActionEvent.iter()].length, 0);
+  assert.equal([...f.harness.db.actionResultEvent.iter()].length, 0);
+});
+
+test('only the joined helper sends actions and only the joined elder reports results', () => {
+  const f = fixture(); f.open(); f.join();
+  for (const auth of [f.elder, f.outsider]) {
+    assert.throws(() => f.harness.withReducerTx(auth, ctx => module.send_helper_action(ctx, helperAction)));
+  }
+  for (const auth of [f.helper, f.outsider]) {
+    assert.throws(() => f.harness.withReducerTx(auth, ctx => module.report_action_result(ctx, {
+      room_id: room, seq: 7, ok: true
+    })));
+  }
+  for (const role of ['helper', 'elder']) {
+    const row = f.harness.db.presence.slot.find(`${room}:${role}`)!;
+    f.harness.withReducerTx(f.elder, ctx => ctx.db.presence.slot.update({ ...row, joined: false }));
+    assert.throws(() => f.harness.withReducerTx(f.helper, ctx => module.send_helper_action(ctx, helperAction)));
+    assert.throws(() => f.harness.withReducerTx(f.elder, ctx => module.report_action_result(ctx, {
+      room_id: room, seq: 7, ok: true
+    })));
+    f.harness.withReducerTx(f.elder, ctx => ctx.db.presence.slot.update(row));
+  }
+});
+
+test('actions require a connected live room and explicit screen sharing', () => {
+  const f = fixture(); f.open();
+  assert.throws(() => f.harness.withReducerTx(f.helper, ctx => module.send_helper_action(ctx, helperAction)), /connected/);
+  f.harness.withReducerTx(f.helper, ctx => module.helper_responding(ctx, { room_id: room }));
+  assert.throws(() => f.harness.withReducerTx(f.helper, ctx => module.send_helper_action(ctx, helperAction)), /connected/);
+  f.join();
+  f.harness.withReducerTx(f.elder, ctx => module.set_screen_sharing(ctx, { room_id: room, on: false }));
+  assert.throws(() => f.harness.withReducerTx(f.helper, ctx => module.send_helper_action(ctx, helperAction)), /Screen sharing is off/);
+  // An action already executed can still be acknowledged after sharing is paused.
+  f.harness.withReducerTx(f.elder, ctx => module.report_action_result(ctx, { room_id: room, seq: 7, ok: false }));
+  f.harness.withReducerTx(f.elder, ctx => module.end_call(ctx, { room_id: room }));
+  assert.throws(() => f.harness.withReducerTx(f.helper, ctx => module.send_helper_action(ctx, helperAction)), /connected/);
+  assert.throws(() => f.harness.withReducerTx(f.elder, ctx => module.report_action_result(ctx, { room_id: room, seq: 7, ok: true })), /connected/);
+  const expired = fixture(); expired.open(); expired.join();
+  expired.harness.clock.set(new Timestamp(2n * 60n * 60n * 1000000n));
+  assert.throws(() => expired.harness.withReducerTx(expired.helper, ctx => module.send_helper_action(ctx, helperAction)), /connected/);
+});
+
+test('unknown actions, nonfinite coordinates and points outside the screen are rejected', () => {
+  const f = fixture(); f.open(); f.join();
+  for (const bad of [{ action: 'click' }, { action: 'type' }, { action: 'scroll' }, { action: '' },
+    { x: -0.01 }, { x: 1.01 }, { y: -0.01 }, { y: 1.01 }, { x: NaN }, { y: Infinity }]) {
+    assert.throws(() => f.harness.withReducerTx(f.helper, ctx => module.send_helper_action(ctx, { ...helperAction, ...bad })));
+  }
+  for (const x of [0, 1]) for (const y of [0, 1]) {
+    f.harness.withReducerTx(f.helper, ctx => module.send_helper_action(ctx, { ...helperAction, x, y }));
+  }
+  assert.throws(() => f.harness.withReducerTx(f.helper, ctx => module.send_helper_action(ctx, { ...helperAction, room_id: otherRoom })));
+});

@@ -3,6 +3,7 @@ import { DbConnection, tables } from '../module_bindings';
 import { STDB_URI, DB_NAME } from './config';
 import { handleAudioEvent, handleVideoEvent, setTransmitting, stopCallRuntime, trackReducerCall, recordSendFailure } from './callRuntime';
 import { handleScreenEvent, clearScreen } from './screenshare';
+import { helperActions, incomingHelperAction, isHelperAction } from './helperActions';
 import { INCIDENT_TTL_MS, type RoomLink } from './room';
 import type { Incident } from './types';
 
@@ -29,6 +30,8 @@ export function connectStdb(link: RoomLink): Promise<DbConnection> {
   connectionError.set('');
   incidentStore.set(null);
   clearScreen(true);
+  helperActions.reset();
+  incomingHelperAction.set(null);
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       connectionError.set('The call could not connect. Please check your internet and open the link again.');
@@ -48,6 +51,12 @@ export function connectStdb(link: RoomLink): Promise<DbConnection> {
             if (link.role === 'helper' && row.roomId === link.roomId && incident?.screenSharing &&
                 incident.status === 'connected') handleScreenEvent(row);
           });
+          conn.db.helperActionEvent.onInsert((_ctx, row) => {
+            if (link.role === 'elder' && row.roomId === link.roomId && isHelperAction(row)) incomingHelperAction.set(row);
+          });
+          conn.db.actionResultEvent.onInsert((_ctx, row) => {
+            if (link.role === 'helper' && row.roomId === link.roomId) helperActions.complete(row.seq, row.ok);
+          });
           conn.subscriptionBuilder().onApplied(() => {
             clearTimeout(timeout);
             isConnected.set(true);
@@ -61,7 +70,9 @@ export function connectStdb(link: RoomLink): Promise<DbConnection> {
             tables.callIncident.where(row => row.roomId.eq(link.roomId)),
             tables.audioFrameEvent.where(row => row.roomId.eq(link.roomId).and(row.recipient.eq(identity))),
             tables.videoFrameEvent.where(row => row.roomId.eq(link.roomId).and(row.recipient.eq(identity))),
-            tables.screenFrameEvent.where(row => row.roomId.eq(link.roomId).and(row.recipient.eq(identity)))
+            tables.screenFrameEvent.where(row => row.roomId.eq(link.roomId).and(row.recipient.eq(identity))),
+            tables.helperActionEvent.where(row => row.roomId.eq(link.roomId).and(row.recipient.eq(identity))),
+            tables.actionResultEvent.where(row => row.roomId.eq(link.roomId).and(row.recipient.eq(identity)))
           ]);
           heartbeatTimer = setInterval(() => {
             const row = get(incidentStore);
@@ -82,6 +93,8 @@ export function connectStdb(link: RoomLink): Promise<DbConnection> {
           setTransmitting(false);
           stopCallRuntime();
           clearScreen(true);
+          helperActions.reset();
+          incomingHelperAction.set(null);
           if (!disposed && get(incidentStore)?.status !== 'ended') {
             connectionError.set('The connection was lost. Please open a new call from Ally.');
           }
@@ -99,6 +112,8 @@ export function disconnectStdb() {
   clearInterval(heartbeatTimer);
   connection?.disconnect();
   connection = null;
+  helperActions.reset();
+  incomingHelperAction.set(null);
   isConnected.set(false);
   stopCallRuntime();
   clearScreen(true);
