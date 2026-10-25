@@ -108,6 +108,16 @@ def evaluate(record, kind="squint", tuning=None):
                              "group_glasses":record["meta"].get("glasses","unknown"),
                              "group_light":record["meta"].get("light","unknown"),
                              "latency":round(hits[0].ts-seg["start"],3) if hits and is_positive else ""})
+        if any(isinstance(x["raw"],dict) and "lm" in x["raw"] for x in frames):
+            # Gaze data is explicitly all-negative for squint; include signals in gaps between targets.
+            if kind=="squint":
+                rows.append({"person":record["meta"].get("alias","unknown"),"method":name,"kind":kind,
+                             "segment":"whole gaze recording","expect":"none","hit":"",
+                             "false_positive":int(bool(signals)),"latency":"",
+                             "group_eyes":record["meta"].get("eyes","unknown"),
+                             "group_age":record["meta"].get("age","unknown"),
+                             "group_glasses":record["meta"].get("glasses","unknown"),
+                             "group_light":record["meta"].get("light","unknown")})
     return rows
 
 
