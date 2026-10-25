@@ -140,6 +140,27 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 20:25 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `f4292fc`
+
+**Fixed:** offline phrase rules for the gaze dot and the eye-follow speed. Without an API key the
+phrase rules are the only way Ally understands requests, and the gaze-dot rule only matched the
+exact words "show where i am looking".
+- **Symptom:** "show where I'm looking at" did nothing, and "show me where I'm looking" magnified
+  instead.
+- **Fix:** `ally/rules.py` now accepts everyday wordings (I'm/I am, "at", "me", dot/circle/marker),
+  and those rules run before `look_magnify`.
+- **Tests:** 434 pass.
+- **For everyone:** if you add offline phrases, test the contracted forms too ("I'm", "don't").
+
+**Evidence:** first recording with the three-position calibration (Hayden, glasses off, bright light):
+
+| Model | Right after calibration | After moving, no re-tune | After a 5-dot re-tune |
+| --- | --- | --- | --- |
+| v4 (default) | 105 px (4/4 regions) | 176 px | 71 px |
+| v1 | 614 px | 625 px | 200 px |
+
+v1 can't use calibration across several head positions; v4 is the only model that benefits from it.
+
 ### Oct 24, 20:15 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `11be275`
 
 The eye tracker after live testing: it now copes with head movement, follows the eyes calmly, and
