@@ -392,6 +392,7 @@ class _MagThread(threading.Thread):
         self.follow = "mouse"
         self.gaze = None  # callable -> (x, y) of the eyes on the screen, or None
         self.pan_speed = 1.0
+        self.max_pan = None  # top pan speed, screen widths per second
 
     def call(self, op: str, value, timeout: float = 3.0):
         done = threading.Event()
@@ -540,7 +541,8 @@ class _MagThread(threading.Thread):
                         self._eye_pan = pan
                         gaze = None if g is None else (g[0] / max(w, 1), g[1] / max(h, 1))
                         vw, vh = w / self.level, h / self.level
-                        pos[:] = pan["read"].step(gaze, pos, (vw, vh), (w - vw, h - vh), dt, self.pan_speed)
+                        pos[:] = pan["read"].step(gaze, pos, (vw, vh), (w - vw, h - vh), dt, self.pan_speed,
+                                                     self.max_pan)
                         xy = (int(pos[0]), int(pos[1]))
                         if xy != self.offset and mag.MagSetFullscreenTransform(ctypes.c_float(self.level), *xy):
                             self.offset = xy
@@ -574,7 +576,7 @@ class WindowsPlatform(Platform):
                     return None
                 t = _MagThread()
                 if self._gaze is not None:
-                    t.gaze, t.pan_speed = self._gaze
+                    t.gaze, t.pan_speed, t.max_pan = self._gaze
                 t.start()
                 t.ready.wait(5)
                 self._mag = t
@@ -631,10 +633,12 @@ class WindowsPlatform(Platform):
     def other_magnifier_open(self) -> bool:
         return magnifier_app_open()
 
-    def set_gaze_source(self, latest, pan_speed: float = 1.0) -> None:
-        self._gaze = (latest, pan_speed)  # handed to the magnifier thread when it starts
+    def set_gaze_source(self, latest, pan_speed: float = 1.0, max_speed: float | None = None) -> None:
+        if max_speed is None and self._gaze is not None:
+            max_speed = self._gaze[2]  # a speed change keeps the saved top speed
+        self._gaze = (latest, pan_speed, max_speed)  # handed to the magnifier thread when it starts
         if self._mag is not None:
-            self._mag.gaze, self._mag.pan_speed = latest, pan_speed
+            self._mag.gaze, self._mag.pan_speed, self._mag.max_pan = latest, pan_speed, max_speed
 
     def magnify(self, level: float) -> str:
         level = max(1.0, min(16.0, float(level)))

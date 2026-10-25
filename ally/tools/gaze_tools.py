@@ -136,9 +136,12 @@ def where_am_i_looking(ctx):
     return looking_text(info, _element_at(info))
 
 
+LOOK_ZOOM = 1.5  # "magnify what I'm looking at" when no level is named and the magnifier is off
+
+
 @tool(timeout=20)
 def magnify_where_i_look(ctx, level: Annotated[float, "Magnification, e.g. 2 = 200%. 0 = keep the current "
-                                                      "level (2x if the magnifier is off)."] = 0):
+                                                      "level (1.5x if the magnifier is off)."] = 0):
     """Magnify the part of the screen the user is looking at, in any app, using the webcam eye tracker.
 
     Use for "magnify what I'm looking at", "zoom in where I'm looking", "make this bigger" when the
@@ -158,7 +161,7 @@ def magnify_where_i_look(ctx, level: Annotated[float, "Magnification, e.g. 2 = 2
               + (f"; {why}" if why else "")
               + f"; {info.get('samples', '?')} samples, steady within {info.get('spread_px', '?')} px",
               kind="gaze")
-    level = float(level) if level and level > 1.0 else (lvl if lvl > 1.0 else max(2.0, ctx.os.last_magnify or 2.0))
+    level = float(level) if level and level > 1.0 else (lvl if lvl > 1.0 else LOOK_ZOOM)
     done = ctx.os.magnify_at(max(1.0, min(8.0, level)), cx, cy, follow="eyes")
     if looked.get("source") == "mouse" and why:
         return f"{done} {why}"
@@ -251,7 +254,7 @@ def magnifier_follow(ctx, target: Literal["eyes", "mouse"]):
 
 
 # Named speeds. "medium" is the calm default. slower/faster step from whatever is saved now.
-PAN_SPEEDS = {"slow": 0.2, "medium": 0.35, "fast": 1.0}
+PAN_SPEEDS = {"slow": 0.4, "medium": 0.85, "fast": 1.5}
 PAN_MIN, PAN_MAX = 0.1, 2.0
 
 
@@ -342,7 +345,7 @@ def eye_follow_speed(ctx, speed: Annotated[str, "slower, faster, slow, medium, f
     Use for "follow my eyes slower", "follow my eyes faster", or when they name a speed.
     Applies immediately and is saved, so it stays after Ally restarts.
     """
-    current = float(ctx.agent.config.data.get("gaze", {}).get("pan_speed", 0.35))
+    current = float(ctx.agent.config.data.get("gaze", {}).get("pan_speed", 0.85))
     value = resolve_pan_speed(speed, current)
     _save_gaze_key(ctx, "pan_speed", _fmt_speed(value))
     platform = getattr(ctx.agent, "platform", None)

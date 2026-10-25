@@ -369,13 +369,13 @@ class PanSpeedTests(unittest.TestCase):
 
     def test_panning_waits_then_eases(self):
         held, vel = (0.0, 0.0), (0.0, 0.0)
-        for _ in range(2):
+        for _ in range(5):  # about half a second at the edge before anything moves
             vx, vy, held = ease_pan(0.0, 0.5, held, vel, 0.1)
             vel = (vx, vy)
             self.assertEqual((vx, vy), (0.0, 0.0))
-        self.assertLess(held[0], 0.3)
-        vx, vy, held = ease_pan(0.0, 0.5, held, vel, 0.1)
-        self.assertGreaterEqual(held[0], 0.3)
+        self.assertLess(held[0], 0.6)
+        vx, vy, held = ease_pan(0.0, 0.5, held, vel, 0.11)
+        self.assertGreaterEqual(held[0], 0.6)
         self.assertLess(vx, 0.0)
         self.assertGreater(vx, -1.0)  # eased in, not a jump to full speed
         self.assertEqual(vy, 0.0)
@@ -391,9 +391,9 @@ class PanSpeedTests(unittest.TestCase):
         self.assertGreater(stopped, vx)
 
     def test_speed_words_and_a_saved_live_change(self):
-        self.assertEqual(resolve_pan_speed("slow", 0.35), 0.2)
-        self.assertEqual(resolve_pan_speed("medium", 1.0), 0.35)
-        self.assertEqual(resolve_pan_speed("fast", 0.2), 1.0)
+        self.assertEqual(resolve_pan_speed("slow", 0.35), 0.4)
+        self.assertEqual(resolve_pan_speed("medium", 1.0), 0.85)
+        self.assertEqual(resolve_pan_speed("fast", 0.2), 1.5)
         self.assertEqual(resolve_pan_speed("slower", 0.35), 0.2)
         self.assertEqual(resolve_pan_speed("faster", 0.35), 0.5)
         self.assertEqual(resolve_pan_speed("0.5", 0.35), 0.5)
@@ -431,12 +431,14 @@ class PanSpeedTests(unittest.TestCase):
         agent.config.read_text = lambda: text
         agent.save_config = save_config
         agent.platform = types.SimpleNamespace(
-            set_gaze_source=lambda latest, pan_speed=1.0: applied.update(speed=pan_speed, latest=latest))
+            set_gaze_source=lambda latest, pan_speed=1.0, max_speed=None: applied.update(
+                speed=pan_speed, latest=latest, max_speed=max_speed))
         agent.config.data["gaze"]["pan_speed"] = 0.35
         said = eye_follow_speed(types.SimpleNamespace(agent=agent), "slower")
         self.assertIn("0.2", said)
         self.assertIn("pan_speed = 0.2            # how fast the view moves", saved["text"])
         self.assertEqual(applied["speed"], 0.2)
+        self.assertIsNone(applied["max_speed"])  # a speed change keeps the saved top speed
         self.assertIs(applied["latest"].__self__, gaze)
         self.assertEqual(match("follow my eyes slower").actions, [("eye_follow_speed", {"speed": "slower"})])
         self.assertEqual(match("follow my eyes faster").actions, [("eye_follow_speed", {"speed": "faster"})])
@@ -448,17 +450,18 @@ class ReadingPanTests(unittest.TestCase):
 
     W, H = 1920, 1080
 
-    def run_reader(self, level=2.0, rate=150, bias=(80, 40), jitter=10, speed=0.35, lines=3,
-                   start=150, end=1750):
+    def run_reader(self, level=2.0, rate=150, bias=(80, 40), jitter=10, speed=0.85, lines=3,
+                   start=150, end=1750, max_speed=None):
         """A reader moves along each line in 0.25 s fixations at `rate` px/s (unmagnified), then
         looks for the start of the next line. The tracker adds a fixed bias and jitter."""
         rnd = random.Random(7)
         vw, vh = self.W / level, self.H / level
         pan = ReadingPan()
-        x, y = start + 100 - vw / 2, 300 - vh / 2
+        x, y = max(0.0, start + 100 - vw / 2), max(0.0, 300 - vh / 2)
         cx, line, fix, t = float(start), 0, 0.0, 0.0
         seeking = False
-        out = {"frames": 0, "outside": 0, "returns": 0, "starts": [], "pace": []}
+        out = {"frames": 0, "outside": 0, "returns": 0, "starts": [], "pace": [], "fastest": 0.0,
+               "fastest_return": 0.0}
         while line < lines and t < 60:
             if not seeking:
                 fix += 1 / 30
@@ -478,8 +481,12 @@ class ReadingPanTests(unittest.TestCase):
             gx = (cx - x) * level + bias[0] + rnd.gauss(0, jitter)
             gy = (300 + 28 * line - y) * level + bias[1] + rnd.gauss(0, jitter)
             was = pan.returning
-            x2, y2 = pan.step((gx / self.W, gy / self.H), (x, y), (vw, vh), (self.W - vw, self.H - vh), 1 / 30, speed)
+            x2, y2 = pan.step((gx / self.W, gy / self.H), (x, y), (vw, vh), (self.W - vw, self.H - vh), 1 / 30, speed,
+                              max_speed)
             out["returns"] += was is None and pan.returning is not None
+            views_per_s = max(abs(x2 - x) / vw, abs(y2 - y) / vh) * 30
+            key = "fastest" if was is None and pan.returning is None else "fastest_return"
+            out[key] = max(out[key], views_per_s)
             if not seeking and pan.returning is None and 0.45 <= (cx - start) / (end - start) <= 0.75:
                 out["pace"].append((x2 - x) * 30)
             x, y, t = x2, y2, t + 1 / 30
@@ -496,9 +503,19 @@ class ReadingPanTests(unittest.TestCase):
         for bias in ((0, 0), (150, 80), (-150, -60)):
             got = self.run_reader(bias=bias, jitter=30)
             self.assertLess(got["outside"] / got["frames"], 0.02, bias)
-        for speed in (0.1, 0.35, 2.0):
+        for speed in (0.1, 0.85, 2.0):
             got = self.run_reader(level=3.0, rate=200, speed=speed)
             self.assertLess(got["outside"] / got["frames"], 0.02, speed)
+
+    def test_the_top_speed_caps_every_pan(self):
+        for level, rate in ((1.5, 150), (2.0, 150)):
+            got = self.run_reader(level=level, rate=rate, max_speed=0.35)
+            self.assertLessEqual(got["fastest"], 0.35 + 1e-6)
+            self.assertLessEqual(got["fastest_return"], 2 * 0.35 + 0.02)  # the trip back may go twice as fast
+            self.assertLess(got["outside"] / got["frames"], 0.02, (level, rate))
+            self.assertEqual(got["returns"], 2)
+        dx, _ = self.step_many(ReadingPan(), [(0.02, 0.5)] * 90, max_speed=0.1)
+        self.assertGreaterEqual(dx, -0.1 * 960 * 3 - 1)  # 3 s at an edge, never past the cap
 
     def test_looking_back_left_returns_to_the_start_of_the_line(self):
         got = self.run_reader(lines=3)
@@ -517,11 +534,11 @@ class ReadingPanTests(unittest.TestCase):
         self.assertEqual(x, 0.0)
         self.assertIsNone(pan.returning)
 
-    def step_many(self, pan, points, pos=(400.0, 200.0), level=2.0):
+    def step_many(self, pan, points, pos=(400.0, 200.0), level=2.0, max_speed=None):
         vw, vh = self.W / level, self.H / level
         x, y = pos
         for nx, ny in points:
-            x, y = pan.step((nx, ny), (x, y), (vw, vh), (self.W - vw, self.H - vh), 1 / 30, 0.35)
+            x, y = pan.step((nx, ny), (x, y), (vw, vh), (self.W - vw, self.H - vh), 1 / 30, 0.85, max_speed)
         return x - pos[0], y - pos[1]
 
     def test_staring_or_one_glance_right_does_not_pan(self):
@@ -540,7 +557,7 @@ class ReadingPanTests(unittest.TestCase):
                 points += [p] * rnd.randint(8, 27)
             dx, dy = self.step_many(ReadingPan(), points[:1800])
             moved += abs(dx) + abs(dy)
-        self.assertLess(moved, 100)
+        self.assertLess(moved, 200)  # four minutes: at most one brief, gentle nudge
 
     def test_an_edge_still_pans(self):
         dx, dy = self.step_many(ReadingPan(), [(0.02, 0.5)] * 60)

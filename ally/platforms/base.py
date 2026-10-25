@@ -56,7 +56,7 @@ def popen(argv: list[str], stdin_bytes: bytes | None = None) -> subprocess.Popen
 
 
 # The gaze has to sit in the edge band this long before the view starts to move.
-EDGE_DWELL = 0.3
+EDGE_DWELL = 0.6
 # How quickly the pan velocity eases toward its target. A look that only brushes the edge
 # does not kick the view, and a change of speed never jumps.
 PAN_EASE = 0.2
@@ -123,7 +123,8 @@ RETURN_JUMP = 0.35     # a jump left this far (fraction of the view) ...
 RETURN_TO = 0.3        # ... that lands left of here ...
 RETURN_DWELL = 0.25    # ... and stays this long goes back to the start of the line,
 RETURN_AFTER = 1.5     # if the user was reading this recently
-RETURN_TIME = 0.8      # seconds to carry the view back
+RETURN_TIME = 0.8      # seconds to carry the view back (longer when the top speed would be passed)
+RETURN_BOOST = 2.0     # the trip back may peak at this many times the top speed
 
 
 class ReadingPan:
@@ -139,6 +140,7 @@ class ReadingPan:
         self.read_since = None  # when the current stretch of reading began
         self.left_since = None
         self.returning = None  # (from x, from y, to x, to y, started) while carrying the view back
+        self.return_time = RETURN_TIME
 
     def reading(self, vw: float) -> bool:
         """The eyes moved forward along one line in small steps over the last READ_WINDOW."""
@@ -160,13 +162,15 @@ class ReadingPan:
             return False
         return mids[-1] - mids[0] >= READ_PROGRESS * vw
 
-    def step(self, gaze, pos, view, limit, dt: float, speed: float = 1.0) -> tuple[float, float]:
+    def step(self, gaze, pos, view, limit, dt: float, speed: float = 1.0,
+             max_speed: float | None = None) -> tuple[float, float]:
         """The view's new top-left after one frame.
 
         `gaze` is (nx, ny), where the eyes are as a fraction of the screen, or None. `pos` is the
         view's top-left and `view` its size, in unmagnified screen pixels; `limit` is the largest
         top-left. `speed` is the user's pan_speed: it scales edge panning, and how eagerly the
-        view keeps up while reading.
+        view keeps up while reading. `max_speed` caps any pan, in views per second (on the glass,
+        screen widths per second); None means no cap.
         """
         dt = max(0.0, float(dt))
         self.t += dt
@@ -180,7 +184,7 @@ class ReadingPan:
 
         if self.returning is not None:
             fx, fy, tx, ty, t0 = self.returning
-            k = min(1.0, (self.t - t0) / RETURN_TIME)
+            k = min(1.0, (self.t - t0) / self.return_time)
             k = k * k * (3 - 2 * k)  # eases in and out
             if k >= 1.0:
                 self.returning = None
@@ -209,6 +213,10 @@ class ReadingPan:
             # Bring the new line toward the middle when it is low in the view.
             ty = min(max(y + (ny - 0.5) * vh, 0.0), limit[1]) if ny > 0.62 else y
             self.returning = (x, y, tx, ty, self.t)
+            self.return_time = RETURN_TIME
+            if max_speed:  # the eased trip peaks at 1.5 times its average speed
+                trip = max(abs(x - tx) / max(vw, 1.0), abs(y - ty) / max(vh, 1.0))
+                self.return_time = max(RETURN_TIME, 1.5 * trip / (RETURN_BOOST * max_speed))
             self.vel, self.edge, self.held, self.left_since = 0.0, (0.0, 0.0), (0.0, 0.0), None
             return x, y
 
@@ -224,8 +232,11 @@ class ReadingPan:
         if ex < 0:
             self.vel = 0.0
         vx = ex * speed if ex < 0 else max(ex * speed, self.vel)
+        vy = ey * speed
+        if max_speed:
+            vx, vy = max(-max_speed, min(max_speed, vx)), max(-max_speed, min(max_speed, vy))
         x = min(max(x + vx * vw * dt, 0.0), limit[0])
-        y = min(max(y + ey * vh * speed * dt, 0.0), limit[1])
+        y = min(max(y + vy * vh * dt, 0.0), limit[1])
         if self.line_start is not None and x < self.line_start:
             self.line_start = x  # panned left past where the line began: that is the new start
         return x, y
@@ -304,8 +315,10 @@ class Platform:
     def clear_text_overlays(self) -> None:
         """Remove any reading cards shown by show_text_overlay. Default: nothing to clear."""
 
-    def set_gaze_source(self, latest, pan_speed: float = 1.0) -> None:
-        """latest() -> where the eyes are on the screen (or None); a magnifier can pan with it."""
+    def set_gaze_source(self, latest, pan_speed: float = 1.0, max_speed: float | None = None) -> None:
+        """latest() -> where the eyes are on the screen (or None); a magnifier can pan with it.
+
+        max_speed caps the pan in screen widths per second; None keeps the current cap."""
 
     def move_pointer(self, x: int, y: int) -> None:
         try:

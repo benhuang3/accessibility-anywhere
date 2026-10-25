@@ -112,13 +112,15 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
 2. Say **"Ally, what am I looking at"** for the area of the screen. On Windows, Ally also names the
    button, link, or text under that spot. **"this"**, **"that"**, and **"here"** use the same tool.
 3. Say **"Ally, magnify what I'm looking at"** (or "magnify here"), or press `<mod>+G`. The screen
-   zooms around where you looked (2x unless you name a level) and becomes a reading aid: as you read
+   zooms around where you looked (1.5x unless you name a level) and becomes a reading aid: as you read
    along a line, the view glides right at your pace and keeps the words you are reading near the
    middle. At the end of the line, look back to the left and it returns to where the line began
    (and brings the next line toward the middle). Looking around without reading leaves it still,
    and looking near an edge pans that way, calmly, after a moment. "Ally, help me read this" does the
    same. Say **"follow my eyes slower"** or **"follow my eyes faster"** to change how eagerly it
-   moves (saved as `[gaze] pan_speed`, default 0.35). Move the mouse and the view follows the mouse again. Say
+   moves (saved as `[gaze] pan_speed`, default 0.85). It never pans faster than
+   `[gaze] max_pan_speed` (default 0.35 screen widths a second), and looking near an edge waits
+   about half a second first. Move the mouse and the view follows the mouse again. Say
    "follow my eyes" / "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
    Say **"show where I am looking"** for a soft circle on the spot the tracker is using (click-through;
    it does not get in the way), and **"hide the eye dot"** to remove it. `[gaze] show_dot` remembers
