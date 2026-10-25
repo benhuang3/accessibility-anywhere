@@ -19,9 +19,9 @@ from pathlib import Path
 
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
-from ally.gaze_helper import (CARD_SCALES, INDICATOR_EX_STYLE, INDICATOR_TEXT, NUM_FACES, SECOND_FACE,
-                              card_origin, choose_face, classify_command, face_width, note_once, parse_card,
-                              signal_line)
+from ally.gaze_helper import (AU_COUNT, CARD_SCALES, DEFAULT_AU_FPS, INDICATOR_EX_STYLE, INDICATOR_TEXT,
+                              NUM_FACES, SECOND_FACE, au_due, au_mode, au_rate, card_origin, choose_face,
+                              classify_command, face_width, note_once, parse_card, signal_line)
 from ally.senses import evaluate, matrix
 
 
@@ -237,7 +237,52 @@ class RecordTests(unittest.TestCase):
         self.assertTrue(args["signals"])
         self.assertTrue(args["raw"])
         self.assertEqual(args["signals_fps"], 15)
+        self.assertNotIn("au", args)
         self.assertIn("ally.gaze_helper", " ".join(command))
+        self.assertEqual(rows[0]["au_model"], "off")
+        self.assertNotIn("au_license", rows[0])
+
+    def test_au_recording_notes_the_model_and_keeps_twelve_numbers(self):
+        from ally.senses.au import LICENSE
+
+        def spawn(kind, command):
+            self.calls.append((kind, command))
+            line = _raw_line()
+            line["au"] = [i / 12 for i in range(12)]
+            if kind == "camera":
+                return _Proc([
+                    json.dumps({"ready": True, "calibrated": False, "screen": [1920, 1080]}),
+                    json.dumps(line),
+                ])
+            return _Proc([json.dumps({"ready": True})])
+
+        clock = _Clock()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = matrix.record(
+                "ada", "no", "bright", camera=0, run="au", root=self.tmp, model=self.model,
+                spawn=spawn, sleep=clock.sleep, ally_running=lambda: False, now=clock.now,
+                commit="abc123", senses={"fps": 10, "squint_delta": 0.2}, screen=(1920, 1080), au=True)
+        self.assertEqual(code, 0, buf.getvalue())
+        kind, command = self.calls[-2]
+        self.assertEqual(kind, "camera")
+        args = json.loads(command[-1])
+        self.assertEqual(args["au"], "libreface")
+        self.assertEqual(args["au_fps"], 5)
+        self.assertTrue(args["signals"])
+        self.assertTrue(args["raw"])
+        path = self.tmp / "senses_runs" / "au" / "ada-no-bright.jsonl"
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        self.assertEqual(rows[0]["au_model"], "libreface")
+        self.assertEqual(rows[0]["au_license"], LICENSE)
+        self.assertIn("USC Stevens Center", rows[0]["au_license"])
+        face = next(row for row in rows if row["rec"] == "helper" and "f" in row)
+        self.assertEqual(len(face["au"]), 12)
+        self.assertNotIn("frame", face)
+        self.assertNotIn("jpeg", face)
+        dropped = matrix.sanitize({"t": 1, "f": _face(), "au": [0.1] * 11, "extra": list(range(12))})
+        self.assertNotIn("au", dropped)
+        self.assertNotIn("extra", dropped)
 
     def test_raw_line_keeps_numbers_and_drops_pictures(self):
         nested = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
@@ -284,6 +329,55 @@ class RecordTests(unittest.TestCase):
         self.assertNotIn("frame", clean)
         self.assertNotIn("png", clean)
         self.assertNotIn("base64", json.dumps(clean))
+
+    def test_au_is_on_the_line_only_when_it_is_passed(self):
+        summary = _face()
+        points = [(0.123456, 0.2, -0.33333)] * 478
+        shapes = {"eyeSquintLeft": 0.2}
+        grid = [1.0, 0.0, 0.0, 0.0] * 4
+        scores = [i / 100 for i in range(AU_COUNT)]
+        plain = signal_line(summary, points, shapes, grid, 640, 480, raw=False, au=scores)
+        self.assertEqual(set(plain), {"f", "au"})
+        self.assertEqual(len(plain["au"]), AU_COUNT)
+        self.assertEqual(plain["au"][1], 0.01)
+        self.assertEqual(plain["au"][3], round(0.03, 4))
+        raw = signal_line(summary, points, shapes, grid, 640, 480, raw=True, au=scores)
+        self.assertEqual(set(raw), {"f", "lm", "bs", "mat", "w", "h", "au"})
+        self.assertEqual(raw["au"], [round(i / 100, 4) for i in range(AU_COUNT)])
+        off = signal_line(summary, points, shapes, grid, 640, 480, raw=False)
+        self.assertEqual(set(off), {"f"})
+        self.assertNotIn("au", signal_line(summary, points, shapes, grid, 640, 480, raw=True))
+        self.assertNotIn("au", signal_line(summary, points, shapes, grid, 640, 480, au=[1, 2, 3]))
+        self.assertNotIn("au", signal_line(summary, points, shapes, grid, 640, 480, au=["x"] * AU_COUNT))
+        text = json.dumps(plain)
+        self.assertNotIn("jpeg", text)
+        self.assertNotIn("frame", text)
+        self.assertEqual(au_mode(None), "off")
+        self.assertEqual(au_mode("LibreFace"), "libreface")
+        self.assertEqual(au_mode("torch"), "off")
+        self.assertEqual(au_rate(None), DEFAULT_AU_FPS)
+        self.assertEqual(au_rate(True), DEFAULT_AU_FPS)
+        self.assertEqual(au_rate(0), 1)
+        self.assertEqual(au_rate(100), 30)
+        self.assertFalse(au_due(10.0, 10.1, DEFAULT_AU_FPS))
+        self.assertTrue(au_due(10.0, 10.25, DEFAULT_AU_FPS))
+
+    def test_raw_live_adds_the_raw_numbers(self):
+        summary = _face()
+        points = [(0.123456, 0.2, -0.33333)] * 478
+        shapes = {"eyeSquintLeft": 0.25, "jpeg": "hidden"}
+        grid = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        body = signal_line(summary, points, shapes, grid, 640, 480, raw=False, raw_live=True)
+        self.assertEqual(set(body), {"f", "lm", "bs", "mat", "w", "h"})
+        self.assertEqual(len(body["lm"]), 478)
+        self.assertEqual(body["lm"][0], [0.1235, 0.2, -0.3333])
+        self.assertEqual((body["w"], body["h"]), (640, 480))
+        self.assertNotIn("jpeg", body["bs"])
+        text = json.dumps(body)
+        self.assertNotIn("frame", text)
+        self.assertNotIn("base64", text)
+        plain = signal_line(summary, points, shapes, grid, 640, 480, raw=False, raw_live=False)
+        self.assertEqual(set(plain), {"f"})
 
     def test_new_parts_keep_old_names_and_expect_values(self):
         parts = matrix.protocol(0)

@@ -55,6 +55,7 @@ SPEC = {
              "click_learning": bool, "max_radius_px": NUM, "answer_offers": bool},
     "senses": {"vision": bool, "input": bool, "fps": int, "calibrate_seconds": NUM, "solo": list,
                "squint_method": ("v1", "relative", "geometric", "personal", "hybrid"), "lean_method": ("v1", "distance", "hybrid"),
+               "au_model": ("off", "libreface"), "raw_live": bool,
                "window_seconds": NUM, "cooldown_seconds": NUM, "min_confidence": NUM, "decline_seconds": NUM,
                "squint_delta": NUM, "squint_weak": NUM, "squint_hold": NUM, "squint_window": NUM, "wink_max": NUM,
                "smile_gate": NUM, "blink_gate": NUM, "blink_max": NUM, "blink_closed": NUM,

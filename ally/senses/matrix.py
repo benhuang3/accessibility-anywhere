@@ -1,13 +1,14 @@
 """Record a scripted senses session, or run the live face self-check.
 
-    python -m ally.senses.matrix record --person ALIAS --glasses yes|no --light bright|dim [--free MINUTES] [--eyes SHAPE] [--age BAND] [--repeat N] [--parts NAME,NAME]
+    python -m ally.senses.matrix record --person ALIAS --glasses yes|no --light bright|dim [--free MINUTES] [--eyes SHAPE] [--age BAND] [--repeat N] [--parts NAME,NAME] [--au]
     python -m ally.senses.matrix selfcheck
 
 The camera helper and the mouse/keyboard helper run as child processes. This writes numbers only
 (face scores, clicks, labels, the settings in effect) to state/senses_runs/<run>/<alias>-<glasses>-<light>.jsonl.
 A recording also asks the camera helper for raw face numbers on each signals line: 478 landmarks,
 every blendshape, the 16-number face matrix (or null), and the frame width and height. Still no
-picture. Stop Ally first (`python run.py stop`): only one program can use the camera.
+picture. `--au` also stores 12 LibreFace action-unit probabilities on each of those lines, and the
+header notes the model and its license. Stop Ally first (`python run.py stop`): only one program can use the camera.
 
 Ctrl+C keeps whatever has already been written.
 """
@@ -31,6 +32,7 @@ from ..hotkeys import python_for_children
 from ..paths import CODE_ROOT, Paths
 from ..platforms.base import NO_WINDOW
 from ..supervisor import current_port, listening
+from .au import LICENSE as AU_LICENSE
 from .detectors import Tuning
 
 CALIBRATION_SECONDS = 15.0
@@ -48,6 +50,8 @@ _MAX_BLENDSHAPES = 128  # the face landmarker reports 52; a longer map is not bl
 _DROP = object()
 # The recorder asks for this many signals a second. Live senses keep their own fps and never set raw.
 RECORD_SIGNALS_FPS = 15
+RECORD_AU_FPS = 5  # LibreFace is about 20 ms a frame; five a second is the live cap too
+_AU_COUNT = 12  # LibreFace presence head, BP4D order
 # Self-described, all optional. Eye shape, age, and glasses are what change how eyes look
 # to the camera. Race, ethnicity, and skin color are not collected.
 EYES = ("monolid", "double", "hooded", "unsure")
@@ -240,6 +244,19 @@ def _clean_blendshapes(value):
     return out
 
 
+def _clean_au(value):
+    """12 action-unit probabilities. Any other length is dropped, so a picture cannot hide here."""
+    if not isinstance(value, list) or len(value) != _AU_COUNT:
+        return _DROP
+    out = []
+    for item in value:
+        number = _number(item)
+        if number is _DROP:
+            return _DROP
+        out.append(number)
+    return out
+
+
 def _clean_matrix(value):
     """16 numbers, or null. A 4x4 list is flattened. Anything else is dropped."""
     if value is None:
@@ -295,6 +312,8 @@ def _clean(value):
                 cleaned = _clean_blendshapes(item)
             elif key == "mat":
                 cleaned = _clean_matrix(item)
+            elif key == "au":
+                cleaned = _clean_au(item)
             else:
                 cleaned = _clean(item)
             if cleaned is _DROP:
@@ -305,11 +324,14 @@ def _clean(value):
 
 
 def camera_command(model: Path, calibration: Path, camera: int, fps: int, signals_fps: int,
-                   raw: bool = False) -> list[str]:
+                   raw: bool = False, au: bool = False) -> list[str]:
     args = {"model": str(model), "calibration": str(calibration), "camera": int(camera), "fps": int(fps),
             "gaze": False, "signals": True, "signals_fps": int(signals_fps)}
     if raw:
         args["raw"] = True
+    if au:
+        args["au"] = "libreface"
+        args["au_fps"] = RECORD_AU_FPS
     return [python_for_children(), "-m", "ally.gaze_helper", json.dumps(args)]
 
 
@@ -502,13 +524,18 @@ def _output_path(state_dir: Path, run: str, person: str, glasses: str, light: st
 
 
 def _session_meta(person: str, glasses: str, light: str, camera: int, screen, senses_cfg: dict,
-                  commit_id: str, started: float, eyes: str | None, age: str | None) -> dict:
+                  commit_id: str, started: float, eyes: str | None, age: str | None,
+                  au: bool = False) -> dict:
     """The first JSONL line. eyes and age are null when the person skipped them."""
-    return {
+    meta = {
         "rec": "meta", "alias": person, "glasses": glasses, "light": light,
         "eyes": eyes, "age": age, "camera": int(camera), "screen": list(screen),
         "senses": senses_cfg, "commit": commit_id, "started": started,
+        "au_model": "libreface" if au else "off",
     }
+    if au:
+        meta["au_license"] = AU_LICENSE
+    return meta
 
 
 def record(person: str, glasses: str, light: str, free_minutes: float = 0, camera: int | None = None,
@@ -516,7 +543,7 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
            sleep=None, ally_running=None, now=None, commit: str | None = None,
            senses: dict | None = None, screen: tuple[int, int] | None = None,
            paths: Paths | None = None, eyes: str | None = None, age: str | None = None,
-           repeat: int = 1, parts: str | None = None) -> int:
+           repeat: int = 1, parts: str | None = None, au: bool = False) -> int:
     """Walk one person through the protocol and write the JSONL. Returns a process exit code."""
     paths = paths or Paths()
     if not TOKEN.fullmatch(person or ""):
@@ -573,7 +600,7 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
     threads = []
     try:
         camera_proc = spawn("camera", camera_command(
-            Path(model_path), calib_path, int(camera), fps, RECORD_SIGNALS_FPS, raw=True))
+            Path(model_path), calib_path, int(camera), fps, RECORD_SIGNALS_FPS, raw=True, au=bool(au)))
         procs.append(camera_proc)
         input_proc = spawn("input", input_command())
         procs.append(input_proc)
@@ -604,7 +631,7 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
             meta_screen = list(got) if isinstance(got, list) and len(got) == 2 else list(screen or (0, 0))
         commit_id = git_commit() if commit is None else commit
         meta = _session_meta(person, glasses, light, int(camera), meta_screen, senses_cfg,
-                             commit_id, now(), eyes, age)
+                             commit_id, now(), eyes, age, au=bool(au))
         log.open_with(meta)
         if code != 0:
             return code
@@ -626,7 +653,7 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
         if not log._open:
             log.open_with(_session_meta(
                 person, glasses, light, int(camera), list(screen or (0, 0)), senses_cfg,
-                git_commit() if commit is None else commit, now(), eyes, age))
+                git_commit() if commit is None else commit, now(), eyes, age, au=bool(au)))
         if current is not None:
             current["end"] = now()
             current["partial"] = True
@@ -874,12 +901,14 @@ def main(argv: list[str] | None = None) -> int:
                      help="run the scripted block this many times after one calibration")
     rec.add_argument("--parts", default="",
                      help="comma-separated part names, in that order; default is the full script")
+    rec.add_argument("--au", action="store_true",
+                     help="record LibreFace action units on each face line, 5 times a second")
     chk = sub.add_parser("selfcheck", help="about 60 seconds of guided face checks")
     chk.add_argument("--camera", type=int, default=None)
     args = parser.parse_args(argv)
     if args.cmd == "record":
         return record(args.person, args.glasses, args.light, args.free, args.camera, args.run,
-                      eyes=args.eyes, age=args.age, repeat=args.repeat, parts=args.parts)
+                      eyes=args.eyes, age=args.age, repeat=args.repeat, parts=args.parts, au=args.au)
     if args.cmd == "selfcheck":
         return selfcheck(camera=args.camera)
     return 2

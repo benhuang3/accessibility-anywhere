@@ -24,7 +24,7 @@ import urllib.request
 from pathlib import Path
 
 from . import gaze_model
-from .gaze_helper import pose_count
+from .gaze_helper import pose_count, sense_helper_args
 from .claude import ssl_context
 from .hotkeys import python_for_children
 from .paths import CODE_ROOT
@@ -204,9 +204,10 @@ class GazeManager:
             if self.camera_wanted():
                 self.error = "eye tracking and face sensing need: pip install mediapipe opencv-python"
             return
+        sense = sense_helper_args(self._senses_cfg())
         signature = (int(self.cfg.get("camera", 0)), int(self.cfg.get("fps", 20)), self.wanted(),
                      self.senses_wanted(), self._senses_fps(), str(self.cfg.get("features", "v1")),
-                     bool(self.cfg.get("click_learning", True)))
+                     bool(self.cfg.get("click_learning", True)), sense["au"], bool(sense["raw_live"]))
         if signature == self._signature and (self.running or self._gave_up):
             self._push_dot()
             return
@@ -232,6 +233,7 @@ class GazeManager:
                     "features": self.cfg.get("features", "v1"),
                     "click_learning": bool(self.cfg.get("click_learning", True)),
                     "show_dot": bool(self.cfg.get("show_dot", False))}
+            args.update(sense_helper_args(self._senses_cfg()))
             self._view_sent = None
             try:
                 self.proc = subprocess.Popen(
@@ -347,6 +349,13 @@ class GazeManager:
         with self._lock:
             self._kill()
         self._signature = None
+
+    def _senses_cfg(self) -> dict:
+        senses = getattr(self.agent, "senses", None)
+        cfg = getattr(senses, "cfg", None) if senses is not None else None
+        if isinstance(cfg, dict):
+            return cfg
+        return {}
 
     def _senses_fps(self) -> int:
         senses = getattr(self.agent, "senses", None)

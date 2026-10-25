@@ -21,6 +21,10 @@ mediapipe>=0.10.20
 # v5 eye tracking runs MobileGaze (mobileone_s0) on each frame, in memory. The picture is not saved.
 # Download the model once with: python scripts/get_gaze_models.py
 # Without onnxruntime, eye tracking stays on v4.
+# The same package runs LibreFace action units when [senses] au_model = "libreface" (off by default).
+# Download those models once with: python scripts/get_au_models.py
+# USC research license: free for education, research and non-profit use; commercial use needs a
+# license from the USC Stevens Center. The ONNX files are not bundled.
 onnxruntime>=1.16
 
 # Windows UI Automation: read and edit the text/bounds of elements in native apps (ally/platforms/win_uia.py).
