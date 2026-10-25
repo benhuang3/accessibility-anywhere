@@ -140,6 +140,23 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 01:56 PT — Hayden (via Claude Code) — branch `hayden/voice-calibration`, commit `d578f76`
+
+**Fixed a Windows bug that affects anyone with a Cartesia key: Ally was silent and ignored voice commands.**
+867 tests pass.
+- **Cause:** Cartesia's `/tts/bytes` WAV is streamed, so its RIFF and data sizes are `0xFFFFFFFF`.
+  - Windows `PlaySound` refuses it. `_Sound` plays asynchronously, so nothing is heard and there is
+    no error.
+  - Python's `wave` reads it as about 25 hours long. The Speaker then believed it was still saying
+    the greeting, and the listener treated everything as Ally's own voice (only "Ally, stop"
+    worked).
+  - `doctor` showed this as "89478.5 s of audio".
+- **Fix:** `speech.fix_wav_sizes` writes the real sizes into every Cartesia clip, and into cached
+  prompt files saved before the fix. New `StreamingWavTests`.
+- **Ben W and Ben H:** please merge this branch, or at least `d578f76`, into `main` soon. On Windows
+  with `CARTESIA_API_KEY` set, voice is broken without it. Delete `state/voice_cache` once if you
+  like; the old files are repaired on read either way.
+
 ### Oct 25, 01:31 PT — Hayden (via Claude Code) — branch `hayden/voice-calibration` (from `main` `77dd943`), commit `bc5b13f`
 
 **Fixed:** the eye-tracker setup's spoken prompts no longer get cut off mid-word. 865 tests pass.
