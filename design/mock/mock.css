@@ -27,6 +27,7 @@
   /* buttons */
   --primary: #115E59;        /* white on it: 7.6:1 */
   --primary-hover: #0D4D49;
+  --primary-edge: #0B3F3C;
   --primary-ink: #FFFFFF;
   --secondary: #F3F1EC;
   --secondary-hover: #E9E6DF;
@@ -48,6 +49,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Keep fills when printing or saving to PDF (browsers drop backgrounds by default). */
+html, body, * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 body {
   margin: 0;
   padding: var(--space-8) var(--space-7) 96px;
@@ -152,7 +155,9 @@ body {
   transition: background-color 120ms ease, transform 120ms ease;
 }
 .btn:active:not([disabled]) { transform: translateY(1px); }
-.btn-primary { background: var(--primary); color: var(--primary-ink); }
+/* The primary always carries a stronger edge than the secondary, so it still reads as the main
+   choice if fills are dropped (print, forced colours). */
+.btn-primary { background-color: var(--primary); color: var(--primary-ink); border: 2px solid var(--primary-edge); }
 .btn-primary:hover { background: var(--primary-hover); }
 .btn-quiet { background: var(--secondary); color: var(--secondary-ink); border-color: var(--secondary-line); }
 .btn-quiet:hover { background: var(--secondary-hover); }
@@ -202,6 +207,22 @@ body {
 .rules div { padding: var(--space-5); border-radius: 18px; background: #fff; box-shadow: var(--card-shadow); }
 .rules dt { font-weight: 700; color: var(--title); margin-bottom: var(--space-2); }
 .rules dd { margin: 0; color: var(--text); font-size: 16px; line-height: 1.55; }
+
+/* Print / PDF: one column, nothing splits across pages. */
+@page { margin: 12mm; }
+@media print {
+  body { padding: 0; background: var(--page); }
+  .grid { grid-template-columns: 1fr; }
+  .scene, .stage, .rules div, .ally-card { break-inside: avoid; page-break-inside: avoid; }
+  .states, .specs { break-before: page; }
+}
+
+/* Windows high-contrast: keep every button and the card edge visible. */
+@media (forced-colors: active) {
+  .btn { border: 2px solid ButtonText; }
+  .btn-primary { border-width: 3px; }
+  .ally-card { border: 1px solid CanvasText; }
+}
 
 @media (prefers-reduced-motion: reduce) { .dots i { animation: none; opacity: 0.8; } .btn { transition: none; } }
 @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } .rules { grid-template-columns: 1fr 1fr; } }
