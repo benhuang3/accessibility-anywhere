@@ -7,18 +7,44 @@ from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
 MAX_TEXT_LEN = 400
-CARD_TOP_MARGIN = 40
-CARD_MAX_WIDTH = 900
-CARD_WIDTH_FRAC = 0.8
 HIGHLIGHT_BORDER = 6
 
-# Clarity theme: near-black ink on white, electric-blue accent, amber reserved for risk.
-INFO_BG = "#FFFFFF"
-INFO_FG = "#0A0C10"
-RISK_BG = "#FFF4DF"
-RISK_FG = "#0A0C10"
-RISK_BORDER = "#9A4B00"
-HIGHLIGHT_COLOR = "#0B57D0"
+# Companion layout (design/mock): the bear sits in the bottom-right corner of the work area and the
+# card, its speech, sits 12px to its left with the bottoms aligned. Sizes are for a 96-DPI screen.
+CARD_WIDTH = 440
+CARD_PAD = 24
+BEAR_WIDTH = 140
+BEAR_WIDTHS = (140, 175, 210, 280)  # sprites in bear/, one per common display scaling
+BEAR_GAP = 12
+EDGE_MARGIN = 24
+STACK_GAP = 12
+TOAST_SECONDS = 6.0
+
+# Companion palette: a fixed light card (every text pair meets WCAG AAA, 7:1).
+CARD_BG = "#FFFFFF"
+CARD_EDGE = "#D6D3CD"
+TITLE_FG = "#111827"
+TEXT_FG = "#374151"
+DIVIDER = "#E5E7EB"
+BADGE_BG = "#FEF3C7"
+BADGE_FG = "#78350F"
+BADGE_ICON = "#D97706"
+GOOD_FG = "#15803D"
+PRIMARY_BG = "#115E59"
+PRIMARY_HOVER = "#0D4D49"
+PRIMARY_EDGE = "#0B3F3C"
+PRIMARY_FG = "#FFFFFF"
+QUIET_BG = "#F3F1EC"
+QUIET_HOVER = "#E9E6DF"
+QUIET_EDGE = "#D6D3CD"
+QUIET_FG = "#1F2937"
+DISABLED_BG = "#F3F4F6"
+DISABLED_FG = "#6B7280"
+DISABLED_EDGE = "#D1D5DB"
+LINK_PRIMARY = "#115E59"
+LINK_FG = "#4B5563"
+KEY_COLOR = "#FE01FD"  # keyed out to make the window borderless; appears nowhere in the design
+HIGHLIGHT_COLOR = "#1D4ED8"
 MERGE_SECONDS = 1.5
 
 
@@ -46,8 +72,66 @@ def button_labels(prompt: str, options: Sequence[str] = ("yes", "no")) -> tuple[
     if len(options) == 2 and tuple(options) != ("yes", "no"):
         return sanitize_text(options[0]), sanitize_text(options[1])
     if sanitize_text(prompt).startswith("Want me to close"):
-        return "Yes, close it", "No, keep it"
+        return "Yes, close it", "Keep it open"
     return "Yes", "No"
+
+
+def button_text(label: str) -> str:
+    """A verb on every button: a bare 'OK' reads as 'Got it'."""
+    return "Got it" if label.strip().upper() == "OK" else label
+
+
+@dataclass(frozen=True)
+class Tone:
+    """How urgent a panel looks: the status badge, its icon, the bear's face, and whether it is a toast."""
+    badge: str | None
+    icon: str | None
+    bear: str
+    toast: bool = False
+
+
+def card_tone(card: "CardContent | None", offer: "OfferContent | None") -> Tone:
+    """Urgency lives in words and the bear's face, never in the card colour."""
+    if card is not None and card.kind == "risk":
+        _, body = split_title(card.text)
+        if offer is None and not body and card.text.startswith("Closed"):
+            return Tone(None, "check", "happy", toast=True)  # an action result: "Closed the page."
+        return Tone("Safety check", "shield", "worried" if (body or offer) else "concerned")
+    if card is not None:
+        return Tone(None, None, "happy")
+    if offer is not None and offer.context == "risk":
+        return Tone("Just checking", "question", "concerned")
+    return Tone(None, None, "listening")
+
+
+def bear_width(scale: float) -> int:
+    """The sprite width closest to the bear's size at this display scaling."""
+    want = BEAR_WIDTH * scale
+    return min(BEAR_WIDTHS, key=lambda w: abs(w - want))
+
+
+def corner_origin(work: tuple[int, int, int, int], width: int, height: int,
+                  margin: int = EDGE_MARGIN) -> tuple[int, int]:
+    """Top-left corner that puts a width x height window in the bottom-right of the work area
+    (left, top, right, bottom), never off its top or left edge."""
+    left, top, right, bottom = work
+    return max(left, right - margin - width), max(top, bottom - margin - height)
+
+
+def rounded_rect(x0: float, y0: float, x1: float, y1: float,
+                 radii: tuple[float, float, float, float], steps: int = 6) -> list[float]:
+    """Polygon points for a rectangle with per-corner radii (top-left, top-right, bottom-right, bottom-left)."""
+    import math
+
+    tl, tr, br, bl = radii
+    corners = ((x0 + tl, y0 + tl, tl, 180), (x1 - tr, y0 + tr, tr, 270),
+               (x1 - br, y1 - br, br, 0), (x0 + bl, y1 - bl, bl, 90))
+    points: list[float] = []
+    for cx, cy, r, start in corners:
+        for i in range(steps + 1):
+            a = math.radians(start + 90 * i / steps)
+            points += [cx + r * math.cos(a), cy + r * math.sin(a)]
+    return points
 
 
 @dataclass(frozen=True)
@@ -127,14 +211,6 @@ class PanelState:
         self.current_card = None
         self.merged = False
         return self.view
-
-
-def fit_card(screen_w: int, screen_h: int) -> tuple[int, int, int]:
-    """Top-center placement: y=40px, width 900px (45% of a very wide screen), never over 80% of the screen."""
-    w = min(max(CARD_MAX_WIDTH, int(screen_w * 0.45)), int(screen_w * CARD_WIDTH_FRAC))
-    x = max(0, (screen_w - w) // 2)
-    y = CARD_TOP_MARGIN
-    return x, y, w
 
 
 def sanitize_text(text: str, max_len: int = MAX_TEXT_LEN) -> str:

@@ -14,30 +14,65 @@ from ally.overlay.layout import (
     DisplayState,
     PanelState,
     answer_offer,
+    bear_width,
     button_labels,
-    fit_card,
+    button_text,
+    card_tone,
+    corner_origin,
     highlight_bars,
     key_to_choice,
     make_card_command,
     make_clear_command,
     make_highlight_command,
     make_offer_command,
+    rounded_rect,
     sanitize_text,
     split_title,
     wrap_lines,
 )
-from ally.overlay.overlay import Overlay
+from ally.overlay.layout import CardContent, OfferContent
+from ally.overlay.overlay import Overlay, PRIMARY_BG
 
 
-class FitCardTests(unittest.TestCase):
-    def test_top_center_and_width(self):
-        x, y, w = fit_card(1000, 800)
-        self.assertEqual(y, 40)
-        self.assertEqual(w, 800)
-        self.assertEqual(x, 100)
-        x2, _, w2 = fit_card(2000, 1200)
-        self.assertEqual(w2, 900)
-        self.assertEqual(x2, (2000 - 900) // 2)
+class CompanionLayoutTests(unittest.TestCase):
+    def test_bottom_right_of_the_work_area_and_never_off_screen(self):
+        self.assertEqual(corner_origin((0, 0, 1920, 1040), 600, 400), (1920 - 24 - 600, 1040 - 24 - 400))
+        self.assertEqual(corner_origin((100, 50, 500, 300), 600, 400), (100, 50))
+
+    def test_bear_sprite_matches_display_scaling(self):
+        self.assertEqual([bear_width(s) for s in (1.0, 1.25, 1.5, 2.0, 3.0)], [140, 175, 210, 280, 280])
+
+    def test_rounded_rect_stays_inside_its_box(self):
+        pts = rounded_rect(0, 0, 100, 50, (20, 20, 4, 20))
+        xs, ys = pts[0::2], pts[1::2]
+        self.assertAlmostEqual(min(xs), 0)
+        self.assertAlmostEqual(max(xs), 100)
+        self.assertAlmostEqual(min(ys), 0)
+        self.assertAlmostEqual(max(ys), 50)
+
+    def test_tone_puts_urgency_in_the_badge_and_the_bear(self):
+        warning = CardContent("This may not be real. It asks you to call.", ("OK",), "risk")
+        question = OfferContent(1, "risk", "Want me to close this page?")
+        self.assertEqual(card_tone(warning, question), card_tone(warning, None))
+        self.assertEqual((card_tone(warning, None).badge, card_tone(warning, None).bear), ("Safety check", "worried"))
+        done = card_tone(CardContent("Closed the page.", ("OK",), "risk"), None)
+        self.assertEqual((done.badge, done.bear, done.toast), (None, "happy", True))
+        failed = card_tone(CardContent("I can't close AnyDesk myself. Please click the X.", ("OK",), "risk"), None)
+        self.assertEqual((failed.badge, failed.toast), ("Safety check", False))
+        self.assertEqual(card_tone(None, question).badge, "Just checking")
+        self.assertEqual(card_tone(None, OfferContent(2, "browser:x", "Make this bigger?")).bear, "listening")
+        self.assertIsNone(card_tone(CardContent("Hello.", ("OK",), "info"), None).badge)
+
+    def test_every_button_has_a_verb(self):
+        self.assertEqual(button_text("OK"), "Got it")
+        self.assertEqual(button_text("Close it"), "Close it")
+
+    def test_every_sprite_exists(self):
+        from pathlib import Path
+        folder = Path(ROOT) / "ally" / "overlay" / "bear"
+        for bear in ("idle", "happy", "concerned", "worried", "listening"):
+            for width in (140, 175, 210, 280):
+                self.assertTrue((folder / f"{bear}-{width}.png").exists(), f"{bear}-{width}")
 
 
 class TextTests(unittest.TestCase):
@@ -257,7 +292,7 @@ class PanelTextTests(unittest.TestCase):
                 self.assertEqual(split_title(text), expected)
 
     def test_button_labels(self):
-        self.assertEqual(button_labels("Want me to close this page?"), ("Yes, close it", "No, keep it"))
+        self.assertEqual(button_labels("Want me to close this page?"), ("Yes, close it", "Keep it open"))
         self.assertEqual(button_labels("Want me to make this page bigger?"), ("Yes", "No"))
         self.assertEqual(button_labels(""), ("Yes", "No"))
 
@@ -387,6 +422,7 @@ class PanelRenderingTests(unittest.TestCase):
         ov._tk = Mock()
         ov._root = Mock()
         ov._screen_size = Mock(return_value=(1200, 900))
+        ov._work_area = Mock(return_value=(0, 0, 1200, 900))
         ov._hl_wins = []
         ov._card_win = ov._offer_win = None
         ov._card_bottom = ov._offer_x = 0
@@ -438,17 +474,18 @@ class PanelRenderingTests(unittest.TestCase):
                 win = ov._card_win
                 bindings = {call.args[0]: call.args[1] for call in win.bind.call_args_list}
                 labels = {call.kwargs["text"]: call.kwargs for call in ov._tk.Label.call_args_list}
-                self.assertEqual(labels["Ally safety check"]["fg"], "#9A4B00")  # Clarity risk amber
-                self.assertEqual(labels["Warning."]["font"], ("Segoe UI", -32, "bold"))
-                self.assertEqual(labels["Be careful."]["font"], ("Segoe UI", -26, "normal"))
+                self.assertEqual(labels["Warning."]["font"], ("Segoe UI", -26, "bold"))
+                self.assertEqual(labels["Be careful."]["font"], ("Segoe UI", -19, "normal"))
                 self.assertGreater(labels[offer.prompt]["wraplength"], 0)
+                drawn = [c.kwargs.get("text") for c in ov._tk.Canvas.return_value.create_text.call_args_list]
+                self.assertIn("Safety check", drawn)  # the amber status badge
                 buttons = ov._tk.Button.call_args_list[-2:]
-                self.assertEqual([c.kwargs["text"] for c in buttons], ["Yes, close it", "No, keep it"])
-                self.assertEqual(buttons[0].kwargs["bg"], "#0B57D0")  # Clarity accent (primary)
-                self.assertEqual(buttons[1].kwargs["bg"], "#FFFFFF")
-                edges = [c for c in ov._tk.Frame.call_args_list if c.kwargs.get("width") == 260]
-                self.assertTrue(edges)
-                self.assertTrue(all(c.kwargs["height"] >= 64 for c in edges))
+                self.assertEqual([c.kwargs["text"] for c in buttons], ["Yes, close it", "Keep it open"])
+                self.assertEqual(buttons[0].kwargs["bg"], PRIMARY_BG)
+                self.assertEqual(buttons[1].kwargs["bg"], "#F3F1EC")
+                holders = [c for c in ov._tk.Canvas.call_args_list if c.kwargs.get("height") == 64][-2:]
+                self.assertEqual(len(holders), 2)
+                self.assertTrue(all(c.kwargs["width"] >= 180 for c in holders))
                 win.focus_force.reset_mock()
                 ov._render()
                 win.focus_force.assert_not_called()
@@ -457,7 +494,7 @@ class PanelRenderingTests(unittest.TestCase):
                 self.assertEqual(ov._panel.view[0], "none")
                 win.destroy.assert_called_once()
 
-    def test_non_risk_bubble_stays_below_card(self):
+    def test_card_sits_in_the_corner_and_a_non_risk_question_stacks_above_it(self):
         ov = self.overlay()
         ov.show_card("Warning.", kind="risk")
         ov.offer(Offer("Make this bigger?", context="browser:example.com"))
@@ -466,7 +503,34 @@ class PanelRenderingTests(unittest.TestCase):
         self.assertEqual(ov._tk.Toplevel.call_count, 2)
         self.assertIsNotNone(ov._card_win)
         self.assertIsNotNone(ov._offer_win)
-        self.assertEqual(ov._offer_win.geometry.call_args.args[0], f"+150+{ov._card_bottom + 12}")
+        size = ov._card_win.geometry.call_args_list[0].args[0]
+        w, h = (int(n) for n in size.split("+")[0].split("x"))
+        left, top = ov._card_box
+        self.assertEqual(ov._card_win.geometry.call_args.args[0], f"+{1200 - 24 - w}+{900 - 24 - h}")
+        self.assertEqual(ov._offer_win.geometry.call_args.args[0], f"+{left}+{top - 12 - 420}")
+        self.assertFalse(ov._offer_has_bear)
+
+    def test_question_takes_the_bear_when_the_card_goes(self):
+        ov = self.overlay()
+        ov.show_card("Warning.", kind="risk")
+        ov.offer(Offer("Make this bigger?", context="browser:example.com"))
+        while not ov._q.empty():
+            ov._handle(ov._q.get_nowait())
+        ov._card_action("OK")
+        self.assertIsNone(ov._card_win)
+        self.assertTrue(ov._offer_has_bear)
+
+    def test_done_note_dismisses_itself_but_not_a_newer_card(self):
+        ov = self.overlay()
+        ov.show_card("Closed the page.", kind="risk")
+        ov._handle(ov._q.get_nowait())
+        card = ov._panel.current_card
+        ov._root.after.assert_called_once_with(6000, ov._dismiss_toast, card)
+        ov._panel.card("Another warning. Look.", kind="risk")
+        ov._dismiss_toast(card)
+        self.assertIsNotNone(ov._panel.current_card)
+        ov._dismiss_toast(ov._panel.current_card)
+        self.assertEqual(ov._panel.view[0], "none")
 
     def test_extra_action_rebuilds_pending_and_final_notes_without_blocking_or_repeating(self):
         for merged in (True, False):

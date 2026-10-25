@@ -1,4 +1,4 @@
-"""On-screen safety panel, help bubble, and highlight."""
+"""On-screen companion: Ally's bear in the corner of the screen, its speech card, and the highlight."""
 
 from __future__ import annotations
 
@@ -7,26 +7,55 @@ import queue
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .layout import (
     no_label,
     pause_left,
+    BADGE_BG,
+    BADGE_FG,
+    BADGE_ICON,
+    BEAR_GAP,
+    CARD_BG,
+    CARD_EDGE,
+    CARD_PAD,
+    CARD_WIDTH,
+    DISABLED_BG,
+    DISABLED_EDGE,
+    DISABLED_FG,
+    DIVIDER,
+    EDGE_MARGIN,
+    GOOD_FG,
     HIGHLIGHT_COLOR,
-    INFO_BG,
-    INFO_FG,
-    RISK_BG,
-    RISK_BORDER,
+    KEY_COLOR,
+    LINK_PRIMARY,
+    PRIMARY_BG,
+    PRIMARY_EDGE,
+    PRIMARY_FG,
+    PRIMARY_HOVER,
+    QUIET_BG,
+    QUIET_EDGE,
+    QUIET_FG,
+    QUIET_HOVER,
+    STACK_GAP,
+    TEXT_FG,
+    TITLE_FG,
+    TOAST_SECONDS,
     DisplayState,
     PanelState,
     answer_offer,
+    bear_width,
     button_labels,
-    fit_card,
+    button_text,
+    card_tone,
+    corner_origin,
     highlight_bars,
     make_card_command,
     make_clear_command,
     make_highlight_command,
     make_offer_command,
+    rounded_rect,
     split_title,
 )
 
@@ -34,10 +63,14 @@ log = logging.getLogger("ally")
 
 START_TIMEOUT = 3.0
 FONT_FAMILY = "Segoe UI"
-BODY_PX = 26
-TITLE_PX = 32
-BUTTON_PX = 24
-PRIMARY_BG = "#0B57D0"  # Clarity accent: electric blue primary button
+SEMIBOLD = "Segoe UI Semibold"
+TITLE_PX = 26
+BODY_PX = 19
+BUTTON_PX = 18
+BUTTON_H = 64
+BEAR_DIR = Path(__file__).with_name("bear")
+# Segoe Fluent Icons / Segoe MDL2 Assets code points.
+GLYPHS = {"shield": "", "question": "", "check": "", "phone": ""}
 
 
 def _set_dpi_aware() -> None:
@@ -53,6 +86,7 @@ def _set_dpi_aware() -> None:
 _SWP_NOSIZE, _SWP_NOMOVE, _SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
 _HWND_TOPMOST = -1
 _GWL_EXSTYLE, _WS_EX_NOACTIVATE, _WS_EX_TOPMOST = -20, 0x08000000, 0x00000008
+_SPI_GETWORKAREA = 0x0030
 
 
 def _hwnd(win) -> int:
@@ -110,6 +144,27 @@ def _raise_without_focus(win) -> bool:
         return False
 
 
+def _windows_work_area() -> tuple[int, int, int, int] | None:
+    """The screen minus the taskbar, in physical pixels."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        if ctypes.windll.user32.SystemParametersInfoW(_SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
+            return rect.left, rect.top, rect.right, rect.bottom
+    except Exception:
+        pass
+    return None
+
+
+def _int(value, default: int) -> int:
+    """Tk sizes as ints; tests drive the overlay with mocked widgets that return mocks."""
+    return value if isinstance(value, int) else default
+
+
 class Overlay:
     def __init__(self, on_action: Callable[[str], None] | None = None):
         self.on_action = on_action
@@ -127,6 +182,10 @@ class Overlay:
         self._offers: dict[int, Any] = {}
         self._pause_until: dict[int, float] = {}   # offer id -> when its 'Continue' unlocks
         self._extra_done: dict[int, str] = {}      # offer id -> confirmation shown after the extra action
+        self._card_box = (0, 0)                    # left and top of the visible card, for stacking a question above it
+        self._offer_has_bear = False
+        self._images: dict[str, Any] = {}
+        self._glyph_font: str | None = None
 
     def start(self) -> bool:
         if self._thread is not None and self._thread.is_alive():
@@ -178,6 +237,7 @@ class Overlay:
     def _run(self) -> None:
         try:
             import tkinter as tk
+            import tkinter.font as tkfont
 
             _set_dpi_aware()
             root = tk.Tk()
@@ -187,6 +247,11 @@ class Overlay:
                 self._scale = max(1.0, root.winfo_fpixels("1i") / 96.0)
             except Exception:
                 self._scale = 1.0
+            try:
+                families = set(tkfont.families(root))
+                self._glyph_font = next((f for f in ("Segoe Fluent Icons", "Segoe MDL2 Assets") if f in families), None)
+            except Exception:
+                self._glyph_font = None
             self._tk = tk
             self._root = root
             self._hl_wins: list[Any] = []
@@ -285,6 +350,13 @@ class Overlay:
     def _screen_size(self) -> tuple[int, int]:
         return self._root.winfo_screenwidth(), self._root.winfo_screenheight()
 
+    def _work_area(self) -> tuple[int, int, int, int]:
+        area = _windows_work_area()
+        if area is not None:
+            return area
+        sw, sh = self._screen_size()
+        return 0, 0, sw, sh - self._px(48)  # leave room for a taskbar or dock
+
     def _show_highlight(self, box) -> None:
         tk = self._tk
         self._clear_highlight()
@@ -328,22 +400,60 @@ class Overlay:
             self._close_offer()
             self._bubble_key = None
         if card is None:
+            if self._card_win is not None:
+                self._bubble_key = None  # the question moves down into the corner and takes the bear
             self._close_card()
         elif card_key != self._card_key:
             self._card_win = self._build_panel(self._card_win, card, merged_offer)
         self._card_key = card_key
 
+        # Only the window in the corner carries the bear: a question above a card gives it up.
+        if bubble is not None and self._card_win is not None and self._offer_has_bear:
+            self._bubble_key = None
         if bubble is not None and bubble != self._bubble_key:
             self._offer_win = self._build_panel(self._offer_win, None, bubble)
             self._bubble_key = bubble
-        self._park_offer_below_card()
+        self._park_offer_above_card()
 
     def _force_render(self) -> None:
         self._card_key = self._bubble_key = None
         self._render()
 
+    # ------------------------------------------------------------------ drawing
+    def _px(self, n: float) -> int:
+        return int(round(n * getattr(self, "_scale", 1.0)))
+
+    def _bear_image(self, name: str):
+        width = bear_width(getattr(self, "_scale", 1.0))
+        key = f"{name}-{width}"
+        if key not in self._images:
+            path = BEAR_DIR / f"{key}.png"
+            try:
+                self._images[key] = self._tk.PhotoImage(master=self._root, file=str(path)) if path.exists() else None
+            except Exception:
+                log.debug("bear sprite failed: %s", path)
+                self._images[key] = None
+        return self._images[key]
+
+    def _text_width(self, text: str, font) -> int:
+        try:
+            import tkinter.font as tkfont
+
+            return int(tkfont.Font(root=self._root, font=font).measure(text))
+        except Exception:
+            return int(len(text) * abs(font[1]) * 0.6)
+
+    def _glyph(self, parent, name: str, color: str, size: int, bg: str = CARD_BG):
+        """A small icon from the Windows symbol font, or nothing when that font is missing."""
+        if not self._glyph_font:
+            return None
+        lbl = self._tk.Label(parent, text=GLYPHS[name], font=(self._glyph_font, -self._px(size)),
+                             fg=color, bg=bg, bd=0, padx=0, pady=0)
+        return lbl
+
     def _build_panel(self, win, card, offer):
         tk = self._tk
+        px = self._px
         is_new = win is None
         had_focus = False
         if is_new:
@@ -351,6 +461,10 @@ class Overlay:
             win.withdraw()
             win.overrideredirect(True)
             win.attributes("-topmost", True)
+            try:
+                win.attributes("-transparentcolor", KEY_COLOR)  # Windows: the canvas around the card shows through
+            except Exception:
+                pass
         else:
             focused = win.focus_get()
             had_focus = focused is not None and focused.winfo_toplevel() == win
@@ -358,70 +472,117 @@ class Overlay:
                 child.destroy()
         for key in ("<Return>", "<KP_Enter>", "<Escape>"):
             win.unbind(key)
+        win.configure(bg=KEY_COLOR)
 
-        risk = card is not None and card.kind == "risk"
-        bg = RISK_BG if risk else INFO_BG
-        win.configure(bg=RISK_BORDER if risk else INFO_FG)
-        surface = tk.Frame(win, bg=bg)
-        surface.pack(fill="both", expand=True, padx=3, pady=3)  # Clarity: a crisp, visible edge
-        if risk:
-            tk.Frame(surface, bg=RISK_BORDER, width=self._px(10)).pack(side="left", fill="y")
-        px = self._px
-        inner = tk.Frame(surface, bg=bg)
-        inner.pack(fill="both", expand=True, padx=px(32), pady=px(32))
-        sw, sh = self._screen_size()
-        x, y, width = fit_card(sw, sh)
-        wrap = max(1, width - 4 - px(64) - (px(10) if risk else 0))
+        tone = card_tone(card, offer)
+        with_bear = card is not None or self._card_win is None
+        card_w = px(CARD_WIDTH)
+        if tone.toast:  # a short note hugs its text
+            text_w = self._text_width(card.text, (SEMIBOLD, -px(BODY_PX)))
+            card_w = min(card_w, 2 * px(CARD_PAD) + px(34) + text_w + px(4))
+        inner_w = card_w - 2 * px(CARD_PAD)
+        canvas = tk.Canvas(win, bg=KEY_COLOR, highlightthickness=0, bd=0)
+        canvas.pack(fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=CARD_BG)
 
-        def label(text, size, color=INFO_FG, weight="normal", pady=(0, 0), family=FONT_FAMILY):
-            tk.Label(inner, text=text, wraplength=wrap,
-                     font=(family, -px(size), weight), fg=color, bg=bg,
-                     justify="left", anchor="w").pack(fill="x", pady=pady)
+        def label(parent, text, size, color, family=FONT_FAMILY, weight="normal", pady=(0, 0)):
+            lbl = tk.Label(parent, text=text, wraplength=inner_w, font=(family, -px(size), weight),
+                           fg=color, bg=CARD_BG, justify="left", anchor="w", bd=0, padx=0, pady=0)
+            lbl.pack(fill="x", pady=pady)
+            return lbl
 
-        if card is not None:
-            if risk:
-                label("Ally safety check", 18, RISK_BORDER, pady=(0, px(12)))
-            title, body = split_title(card.text)
-            label(title, TITLE_PX, weight="bold")
-            if body:
-                label(body, BODY_PX, "#2B2B2B", pady=(px(12), 0))
-        if offer is not None:
-            label(offer.prompt, 28, pady=(px(16) if card else 0, 0), family="Segoe UI Semibold")
-        row = tk.Frame(inner, bg=bg)
-        row.pack(pady=(px(24), 0))
         first_btn = None
-        if offer is not None:
-            real = self._offers.get(offer.id, offer)  # the panel state holds a copy; options live on the Offer
-            labels = button_labels(offer.prompt, getattr(real, "options", ("yes", "no")))
-            pause = int(getattr(real, "pause_seconds", 0) or 0)
-            if pause:
-                self._pause_until.setdefault(offer.id, time.time() + pause)
-            for index, (text, choice) in enumerate(zip(labels, ("yes", "no"))):
-                btn = self._button(row, text, lambda c=choice, oid=offer.id: self._pick(oid, c),
-                                   primary=index == 0, gap=24 if index == 0 else 0)
-                if first_btn is None:
-                    first_btn = btn
-                if choice == "no":
-                    self._no_btn, self._no_text = btn, text
-            if pause:
-                self._pause_tick(offer.id)
-            for key, choice in (("<Return>", "yes"), ("<KP_Enter>", "yes"), ("<Escape>", "no")):
-                win.bind(key, lambda _e, c=choice, oid=offer.id: self._pick(oid, c))
-            extra = getattr(real, "extra_action", None)
-            if extra:
-                self._extra_row(inner, bg, offer.id, extra)
+        footer = False
+        if tone.toast:
+            row = tk.Frame(inner, bg=CARD_BG)
+            row.pack(fill="x")
+            icon = self._glyph(row, "check", GOOD_FG, 22)
+            if icon is not None:
+                icon.pack(side="left", padx=(0, px(12)))
+            tk.Label(row, text=card.text, font=(SEMIBOLD, -px(BODY_PX)), fg=TITLE_FG, bg=CARD_BG,
+                     wraplength=inner_w - px(34), justify="left", anchor="w").pack(side="left", fill="x")
+            if self._root is not None:
+                self._root.after(int(TOAST_SECONDS * 1000), self._dismiss_toast, card)
         else:
-            for text in (("OK",) if risk else card.actions):
-                btn = self._button(row, text, lambda lbl=text: self._card_action(lbl))
-                if first_btn is None:
-                    first_btn = btn
+            if tone.badge:
+                self._badge(inner, tone.badge, tone.icon).pack(anchor="w", pady=(0, px(12)))
+            if card is not None:
+                title, body = split_title(card.text)
+                label(inner, title, TITLE_PX, TITLE_FG, weight="bold")
+                if body:
+                    label(inner, body, BODY_PX, TEXT_FG, pady=(px(8), 0))
+            if offer is not None:
+                if card is not None:
+                    label(inner, offer.prompt, BODY_PX, TITLE_FG, family=SEMIBOLD, pady=(px(20), px(10)))
+                else:
+                    title, body = split_title(offer.prompt)
+                    label(inner, title, TITLE_PX, TITLE_FG, weight="bold")
+                    if body:
+                        label(inner, body, BODY_PX, TEXT_FG, pady=(px(8), 0))
+            row = tk.Frame(inner, bg=CARD_BG)
+            row.pack(fill="x", pady=(0 if (offer is not None and card is not None) else px(20), 0))
+            if offer is not None:
+                real = self._offers.get(offer.id, offer)  # the panel state holds a copy; options live on the Offer
+                labels = button_labels(offer.prompt, getattr(real, "options", ("yes", "no")))
+                pause = int(getattr(real, "pause_seconds", 0) or 0)
+                if pause:
+                    self._pause_until.setdefault(offer.id, time.time() + pause)
+                width = (inner_w - px(12)) // 2
+                for index, (text, choice) in enumerate(zip(labels, ("yes", "no"))):
+                    btn = self._button(row, text, lambda c=choice, oid=offer.id: self._pick(oid, c),
+                                       primary=index == 0, gap=12 if index == 0 else 0, width=width)
+                    if first_btn is None:
+                        first_btn = btn
+                    if choice == "no":
+                        self._no_btn, self._no_text = btn, text
+                if pause:
+                    self._pause_tick(offer.id)
+                for key, choice in (("<Return>", "yes"), ("<KP_Enter>", "yes"), ("<Escape>", "no")):
+                    win.bind(key, lambda _e, c=choice, oid=offer.id: self._pick(oid, c))
+                extra = getattr(real, "extra_action", None)
+                if extra:
+                    self._extra_row(inner, offer.id, extra)
+                    footer = True
+            else:
+                actions = card.actions or ("OK",)
+                width = (inner_w - px(12) * (len(actions) - 1)) // len(actions)
+                for index, text in enumerate(actions):
+                    btn = self._button(row, button_text(text), lambda lbl=text: self._card_action(lbl),
+                                       primary=index == 0, gap=12 if index < len(actions) - 1 else 0,
+                                       width=width)
+                    if first_btn is None:
+                        first_btn = btn
 
         win.update_idletasks()
-        height = win.winfo_reqheight()
+        pad = px(CARD_PAD)
+        if tone.toast:
+            top_pad = bottom_pad = px(18)
+        else:
+            top_pad, bottom_pad = pad, (px(12) if footer else pad)
+        card_h = top_pad + _int(inner.winfo_reqheight(), px(300)) + bottom_pad
+        bear = self._bear_image(tone.bear) if with_bear else None
+        bear_w, bear_h = (_int(bear.width(), 0), _int(bear.height(), 0)) if bear is not None else (0, 0)
+        width = card_w + (px(BEAR_GAP) + bear_w if bear is not None else 0)
+        height = max(card_h, bear_h)
+        card_top = height - card_h
+        canvas.configure(width=width, height=height)
+        # One white surface. The 1px edge stands in for the mock's soft shadow, which Tk can't draw.
+        r, tight = px(20), px(4)
+        canvas.create_polygon(rounded_rect(0, card_top, card_w - 1, height - 1, (r, r, tight if bear else r, r)),
+                              fill=CARD_BG, outline=CARD_EDGE, width=1)
+        canvas.create_window(pad, card_top + top_pad, anchor="nw", window=inner, width=inner_w)
+        if bear is not None:
+            canvas.create_image(width, height, anchor="se", image=bear)
+        if card is None:
+            self._offer_has_bear = bear is not None
+
+        x, y = corner_origin(self._work_area(), width, height, px(EDGE_MARGIN))
         if card is None and self._card_win is not None:
-            y = self._card_bottom + 12
+            left, top = self._card_box
+            x, y = left, top - px(STACK_GAP) - height
         self._place(win, x, y, width, height)
         if card is not None:
+            self._card_box = (x, y + card_top)
             self._card_bottom = y + height
         else:
             self._offer_x = x
@@ -433,22 +594,57 @@ class Overlay:
             first_btn.focus_set()
         return win
 
-    def _px(self, n: float) -> int:
-        return int(round(n * getattr(self, "_scale", 1.0)))
+    def _badge(self, parent, text: str, icon: str | None):
+        """The status line: the only place amber appears."""
+        tk, px = self._tk, self._px
+        font = (FONT_FAMILY, -px(16), "bold")
+        height = px(32)
+        icon_w = px(18) if (icon and self._glyph_font) else 0
+        left = px(10)
+        text_x = left + (icon_w + px(8) if icon_w else px(2))
+        width = text_x + self._text_width(text, font) + px(12)
+        badge = tk.Canvas(parent, width=width, height=height, bg=CARD_BG, highlightthickness=0, bd=0)
+        half = height / 2
+        badge.create_polygon(rounded_rect(0, 0, width - 1, height - 1, (half, half, half, half)),
+                             fill=BADGE_BG, outline=BADGE_BG)
+        if icon_w:
+            badge.create_text(left, half, text=GLYPHS[icon], anchor="w", fill=BADGE_ICON,
+                              font=(self._glyph_font, -px(16)))
+        badge.create_text(text_x, half, text=text, anchor="w", fill=BADGE_FG, font=font)
+        return badge
 
-    def _button(self, row, text: str, command, primary: bool = True, gap: int = 0):
+    def _button(self, row, text: str, command, primary: bool = True, gap: int = 0, width: int = 190):
+        """A 64px button with 14px corners: a canvas draws the rounded shape, a flat Tk button inside it
+        carries the text, the click, and keyboard focus. Clicking the rounded margin counts too."""
         tk = self._tk
         px = self._px
-        # Frames give buttons pixel dimensions; Tk Button.width uses characters.
-        edge = tk.Frame(row, bg=PRIMARY_BG if primary else INFO_FG, width=px(260), height=px(64))
-        edge.pack(side="left", padx=(0, px(gap)))
-        edge.pack_propagate(False)
-        bg, fg = (PRIMARY_BG, INFO_BG) if primary else (INFO_BG, INFO_FG)
-        btn = tk.Button(edge, text=text, font=(FONT_FAMILY, -px(BUTTON_PX)),
-                        bg=bg, fg=fg, activebackground=bg, activeforeground=fg,
-                        relief="flat", borderwidth=0, highlightthickness=0,
+        height = px(BUTTON_H)
+        holder = tk.Canvas(row, width=width, height=height, bg=CARD_BG, highlightthickness=0, bd=0)
+        holder.pack(side="left", padx=(0, px(gap)))
+        r = px(14)
+        fill, edge, ink, hover = ((PRIMARY_BG, PRIMARY_EDGE, PRIMARY_FG, PRIMARY_HOVER) if primary
+                                  else (QUIET_BG, QUIET_EDGE, QUIET_FG, QUIET_HOVER))
+        border = 2 if primary else 1
+        shape = holder.create_polygon(rounded_rect(1, 1, width - 2, height - 2, (r, r, r, r)),
+                                      fill=fill, outline=edge, width=border)
+        btn = tk.Button(holder, text=text, font=(FONT_FAMILY, -px(BUTTON_PX), "bold"),
+                        bg=fill, fg=ink, activebackground=hover, activeforeground=ink,
+                        relief="flat", borderwidth=0, highlightthickness=0, cursor="hand2",
                         command=command)
-        btn.pack(fill="both", expand=True, padx=0 if primary else px(2), pady=0 if primary else px(2))
+        inset = px(8)
+        holder.create_window(width // 2, height // 2, window=btn, width=width - 2 * inset, height=height - 2 * inset)
+        holder.bind("<Button-1>", lambda _e: str(btn.cget("state")) != "disabled" and command())
+
+        def paint(color):
+            if str(btn.cget("state")) == "disabled":
+                return
+            holder.itemconfigure(shape, fill=color)
+            btn.configure(bg=color)
+
+        for widget in (holder, btn):
+            widget.bind("<Enter>", lambda _e: paint(hover))
+            widget.bind("<Leave>", lambda _e: paint(fill))
+        btn.ally_shape = (holder, shape, fill, edge, border)
         return btn
 
     def _pause_tick(self, offer_id: int) -> None:
@@ -459,25 +655,50 @@ class Overlay:
             return
         left = pause_left(self._pause_until.get(offer_id, 0), time.time())
         try:
-            btn.configure(text=no_label(self._no_text, left), state="disabled" if left else "normal",
-                          disabledforeground="#6B6B6B")
+            btn.configure(text=no_label(self._no_text, left) + ("s" if left else ""),
+                          state="disabled" if left else "normal",
+                          bg=DISABLED_BG if left else QUIET_BG, disabledforeground=DISABLED_FG)
+            holder, shape, fill, edge, border = btn.ally_shape
+            if left:
+                holder.itemconfigure(shape, fill=DISABLED_BG, outline=DISABLED_EDGE, dash=(4, 3))
+            else:
+                holder.itemconfigure(shape, fill=fill, outline=edge, dash="")
+            btn.configure(cursor="arrow" if left else "hand2")
         except Exception:
             return
         if left and self._root is not None:
             self._root.after(1000, self._pause_tick, offer_id)
 
-    def _extra_row(self, inner, bg, offer_id: int, extra) -> None:
-        """An optional third choice that does not answer the question, e.g. 'Tell Priya'. It confirms in place."""
+    def _extra_row(self, inner, offer_id: int, extra) -> None:
+        """An optional choice that does not answer the question, e.g. 'Tell Priya'. It lives in a quiet
+        footer as a text action and confirms in place."""
         tk, px = self._tk, self._px
-        row = tk.Frame(inner, bg=bg)
-        row.pack(pady=(px(16), 0))
+        tk.Frame(inner, bg=DIVIDER, height=1).pack(fill="x", pady=(px(24), 0))
+        row = tk.Frame(inner, bg=CARD_BG)
+        row.pack(fill="x", pady=(px(8), 0))
         done = self._extra_done.get(offer_id)
         if done:
-            tk.Label(row, text=done, font=(FONT_FAMILY, -px(22)), fg="#2E5E1E", bg=bg).pack()
+            icon = self._glyph(row, "check", GOOD_FG, 20)
+            if icon is not None:
+                icon.pack(side="left", padx=(px(4), px(8)))
+            tk.Label(row, text=done, font=(SEMIBOLD, -px(BUTTON_PX)), fg=TITLE_FG, bg=CARD_BG,
+                     wraplength=px(CARD_WIDTH - 2 * CARD_PAD - 32), justify="left", anchor="w").pack(
+                side="left", fill="x", pady=px(10))
             return
         label, callback = extra
-
-        self._button(row, label, lambda: self._start_extra(offer_id, label, callback), primary=False)
+        start = lambda: self._start_extra(offer_id, label, callback)
+        icon = self._glyph(row, "phone", LINK_PRIMARY, 20)
+        if icon is not None:
+            icon.pack(side="left", padx=(px(4), px(8)))
+            icon.configure(cursor="hand2")
+            icon.bind("<Button-1>", lambda _e: start())
+        link = tk.Button(row, text=label, font=(SEMIBOLD, -px(BUTTON_PX)), fg=LINK_PRIMARY, bg=CARD_BG,
+                         activeforeground=PRIMARY_HOVER, activebackground=CARD_BG, relief="flat",
+                         borderwidth=0, highlightthickness=0, cursor="hand2", padx=0, pady=px(10),
+                         command=start)
+        link.pack(side="left")
+        link.bind("<Enter>", lambda _e: link.configure(font=(SEMIBOLD, -px(BUTTON_PX), "underline")))
+        link.bind("<Leave>", lambda _e: link.configure(font=(SEMIBOLD, -px(BUTTON_PX))))
 
     def _start_extra(self, offer_id: int, label: str, callback) -> None:
         current = self._panel.current_offer
@@ -514,16 +735,25 @@ class Overlay:
         self._render()
         return "break"
 
-    def _park_offer_below_card(self) -> None:
-        """Non-risk questions stay immediately below a visible card."""
+    def _park_offer_above_card(self) -> None:
+        """A question that isn't about the visible card stacks just above it, clear of the bear."""
         if self._offer_win is None or self._card_win is None:
             return
         try:
-            self._place(self._offer_win, self._offer_x, self._card_bottom + 12)
+            self._offer_win.update_idletasks()
+            height = _int(self._offer_win.winfo_reqheight(), 0)
+            left, top = self._card_box
+            self._place(self._offer_win, left, top - self._px(STACK_GAP) - height)
             if not _raise_without_focus(self._offer_win):
                 self._offer_win.lift()
         except Exception:
             pass
+
+    def _dismiss_toast(self, card) -> None:
+        """'Done' notes go away by themselves; anything newer stays."""
+        if self._panel.current_card is card and self._panel.current_offer is None:
+            self._panel.ok()
+            self._render()
 
     def _card_action(self, label: str) -> None:
         self._panel.ok()
@@ -549,6 +779,7 @@ class Overlay:
             except Exception:
                 pass
             self._offer_win = None
+            self._offer_has_bear = False
 
     def _destroy_all(self) -> None:
         self._clear_highlight()
