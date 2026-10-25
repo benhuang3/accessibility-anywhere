@@ -140,6 +140,23 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 01:31 PT — Hayden (via Claude Code) — branch `hayden/voice-calibration` (from `main` `77dd943`), commit `bc5b13f`
+
+**Fixed:** the eye-tracker setup's spoken prompts no longer get cut off mid-word. 865 tests pass.
+- **Queued prompts:** setup prompts queue behind the sentence already playing
+  (`speaker.say(text, interrupt=False)`).
+- **Quiet during setup:** while a calibration or check is on screen, and for 5 s after, the "position
+  changed" re-tune line is held, and the senses report no lean or squint. The setup asks people to
+  lean in and sit back, so no offer talks over it.
+- **Pacing:** each head-position round starts only after its prompt has had 2.5 s to be said.
+- **Results spoken:** calibration and quick calibrate now say their result. `agent.handle_text`
+  skips the reply once a tool has spoken, so voice requests never heard it.
+
+**Others:**
+- **Ben H and Ben W:** `GazeManager.busy()` says when the setup is on screen, if voice or offers should
+  hold too.
+- **Ben W:** there are no changes to `speech.py`. It already queues with `interrupt=False`.
+
 ### Oct 25, 00:11 PT — Hayden (via Claude Code) — branch `hayden/start-fixes` (from `main` `35b7608`), commit `d1dbe07`
 
 **Fixed Ben H's open issues 7 and 8 (23:45 entry).** 858 tests pass. Merged into `main` (fast-forward); it touches
