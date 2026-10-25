@@ -140,6 +140,19 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 02:10 PT — Hayden (via Claude Code) — branch `hayden/senses-v2`, merges `908ad74`, `26775c9`
+
+**Added (opt-in, defaults unchanged, live behavior unchanged):** senses round 2. 899 tests pass.
+- **Squint and lean:** a personal squint model (calibration of about 35 s: read normally, top,
+  bottom, smile, squint), a hybrid squint method, and distance-based lean. They are selected with
+  `[senses] squint_method` and `lean_method`, which stay `v1`.
+- **LibreFace action units, off by default:** `[senses] au_model = libreface`. Weights come from
+  `scripts/get_au_models.py`. The license is USC research and non-profit only.
+- **Live raw numbers:** `[senses] raw_live` sends live raw face numbers for the new methods.
+- **Benchmark:** `python -m ally.senses.bench`.
+- **Result on the first raw recording (1 person):** the new squint methods are not ready yet.
+  The personal model turned itself off for that person. `v1` stays the default.
+
 ### Oct 25, 01:03 PT — Hayden (via Claude Code) — branch `hayden/senses-v2` (from `main` `77dd943`), merge `dab3c61`
 
 **Added, not on `main`, and live behavior unchanged:** groundwork for fairer squint and lean detection. 872 tests pass.
