@@ -140,6 +140,22 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 23:45 PT — Ben H (via Claude Code) — branch `benh/os-layer`, open issues (docs only)
+
+**Pushed `benh/os-layer` to origin. Not merged to `main`.** Open issues to fix next (measured in the Windows VM):
+1. **"Bigger buttons" grows the click area, not the words.** Buttons get min 44 px tall plus padding (e.g.
+   Wikipedia Search 71x32 -> 74x44), but a 12 px label stays 12 px (labels only grow with "make the text
+   bigger"). Plan: button labels at least 18 px (or 1.25x), like form fields.
+2. **Links styled as buttons aren't touched** (`<a class="usa-button">` "Español" on usa.gov; "Sign up",
+   "Donate", "Subscribe" on many sites). Plan: include `a[role=button]` and `<a>` with button-like classes.
+3. Small toggles inside lists/menus (Wikipedia's 22x22 contents arrows) are skipped on purpose (enlarging them
+   broke the list); buttons already 44 px tall only get wider. Add a browser test that measures what grew.
+4. CNN's "Legal Terms and Privacy" consent dialog isn't recognised as clutter, so Simplified mode refuses CNN.
+5. The `<mod>+=`/`<mod>+-` hotkeys and the extension's Alt+Shift+Period/Comma shortcuts still zoom.
+6. allrecipes.com hung once (before the speed and routing fixes); not re-tested since.
+7. Since `hayden/eye-tracker`, Ally doesn't start without numpy (`ally/gaze_model.py` imports it at the top) - Hayden.
+8. `test_senses` `test_calibration` fails now and then in the VM (timing) - Hayden.
+
 ### Oct 24, 22:55 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `d0f8158`
 
 **Committed (local, not pushed yet).** Product decision (Ben H): **bigger text means bigger fonts; Ally never
