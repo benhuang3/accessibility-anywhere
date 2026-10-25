@@ -23,23 +23,23 @@ class GazeModelTests(unittest.TestCase):
 
     def test_v3_ray_intersects_known_screen_point(self):
         hit = gm.ray_screen_point((0, 0, 40), (0.1, 0.05, -1), (344, 193), (1920, 1080), -1)
-        self.assertAlmostEqual(hit[0], 982.8837, delta=0.1)
-        self.assertAlmostEqual(hit[1], 11.4715, delta=0.1)
+        self.assertAlmostEqual(hit[0], 1188.8372, delta=0.1)
+        self.assertAlmostEqual(hit[1], 114.7150, delta=0.1)
 
     def test_v3_geometric_gaze_is_stable_across_head_pose(self):
         target = np.array([0.08, 0.09])
         vectors = []
         v1 = []
-        for yaw, tx, tz in ((0, 0, 40), (math.radians(12), 4, 45)):
+        for yaw, tx, tz in ((0, 0, -40), (math.radians(12), 4, -45)):
             c, s = math.cos(yaw), math.sin(yaw)
             rot = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
             trans = np.array([tx, 0, tz])
             lm = self.landmarks()
             for side, ids in ((-1, gm.RIGHT_EYE), (1, gm.LEFT_EYE)):
                 eye = trans + rot @ np.array([side * 3.2, 0, 0])
-                desired = np.array([(target[0] - .5) * 344, target[1] * 193, -1]) - eye
+                desired = np.array([(target[0] - .5) * 34.4, target[1] * 19.3, 0]) - eye
                 local = rot.T @ desired
-                h, v = local[0] / -local[2] / 2.5, local[1] / -local[2] / 2.5
+                h, v = local[0] / local[2] / 2.5, local[1] / local[2] / 2.5
                 lm[ids['iris'], 0] = .5 + h * .2
                 lm[ids['iris'], 1] = .5 + v * .2
             mat = np.eye(4)
@@ -48,7 +48,7 @@ class GazeModelTests(unittest.TestCase):
             v1.append(gm.features(lm, {}, mat, 640, 480)[0])
             vectors.append(v3[:2])
         self.assertLess(np.linalg.norm(np.asarray(vectors[0]) - vectors[1]), .02)
-        self.assertGreater(np.linalg.norm(np.asarray(v1[0][:2]) - v1[1][:2]), .02)
+        self.assertGreater(np.linalg.norm(np.asarray(v1[0][4:6]) - v1[1][4:6]), math.radians(10))
 
     def test_v3_fit_recovers_known_screen_mapping(self):
         samples = []

@@ -21,29 +21,28 @@ MODEL_VERSION = 1
 DEFAULT_FEATURE_SET = 'v1'
 
 def ray_screen_point(origin, direction, screen_mm=(344.0, 193.0), screen_px=(1920, 1080),
-                     plane_z=-1.0):
-    """Intersect a camera-coordinate gaze ray with the screen plane below the camera."""
+                     plane_z=0.0):
+    """Intersect a camera-coordinate gaze ray with the screen plane at the camera."""
     origin, direction = np.asarray(origin, float), np.asarray(direction, float)
     if abs(direction[2]) < 1e-9:
         raise ValueError('gaze ray is parallel to screen plane')
     scale = (plane_z - origin[2]) / direction[2]
     hit = origin + scale * direction
-    width, height = screen_mm
+    width, height = (float(v) / 10 for v in screen_mm)
     px_w, px_h = screen_px
     return np.array([(hit[0] / width + .5) * px_w, hit[1] / height * px_h])
 
 def _v3(pts, matrix, rh, rv, lh, lv, width, height, screen_mm):
-    """Project averaged eye rays from the transformed eye centres onto the screen."""
+    """Project eye-centred rays through the head pose onto the physical screen plane."""
     if matrix is None:
         return [0.5 + (lh - rh) / 2, 0.5 + (rv + lv) / 2,
                 (rh + lh) / 2, (rv + lv) / 2, 0, 0, 0, 0, 0, 0]
     m = np.asarray(matrix, dtype=float).reshape(4, 4)
     rot, trans = m[:3, :3], m[:3, 3]
-    # Iris displacement as a fraction of eye width approximates the eye's local angle.
     rays = []
     for side, h, v in ((-1, rh, rv), (1, lh, lv)):
         eye = trans + rot @ np.array([side * 3.2, 0.0, 0.0])
-        local = np.array([h * 2.5, v * 2.5, -1.0])
+        local = np.array([h * 2.5, v * 2.5, 1.0])
         rays.append(ray_screen_point(eye, rot @ local, screen_mm, (1, 1)))
     gaze = np.mean(rays, axis=0).tolist()
     fwd = rot @ np.array([0.0, 0.0, 1.0])
@@ -109,7 +108,9 @@ def expand(f, feature_set='v1'):
     """Expand raw features with the polynomial and interaction terms used by regression."""
     f = np.atleast_2d(np.asarray(f, dtype=float))
     if feature_set == 'v3':
-        return f
+        # The geometric intersection already includes eye direction and head pose;
+        # only fit its two screen-plane coordinates to the person's calibration.
+        return f[:, :2]
     if feature_set == 'v1':
         h, v, lh, lv = f[:, :4].T
         return np.column_stack([f, h * h, v * v, h * v, lh * lh, lv * lv, lh * lv])

@@ -54,10 +54,11 @@ def evaluate(path):
     frames = [r for r in rows if r.get('rec') == 'frame']
     targets = [r for r in rows if r.get('rec') == 'target']
     results = []
-    for fs in ('v1', 'v2'):
+    screen_mm = meta.get('screen_mm', (344.0, 193.0))
+    for fs in ('v1', 'v2', 'v3'):
         feats = []
         for fr in frames:
-            z = gm.features_for_model({'features': fs}, fr['lm'], fr.get('bs'), fr.get('mat'), fr['w'], fr['h'])
+            z = gm.features_for_model({'features': fs, 'screen_mm': screen_mm}, fr['lm'], fr.get('bs'), fr.get('mat'), fr['w'], fr['h'])
             if z:
                 feats.append((fr['t'], z[0], z[1]))
         raw_calibration = [(f, (target['x'], target['y']), op)
@@ -85,6 +86,7 @@ def evaluate(path):
         if len({tuple(point) for _, point in train}) < 6:
             continue
         model = gm.fit(train, screen, fs, cutoff, train_weights)
+        model['screen_mm'] = list(screen_mm)
         corrector = gm.Corrector(model)
         for click in sorted((r for r in rows if r.get('rec') == 'click'), key=lambda c: c['t']):
             nearest = _frame_before_click(feats, click['t'])
@@ -122,6 +124,7 @@ def evaluate(path):
         for phase in ('validation', 'drift'):
             summary = summaries[phase]
             results.append({'file': str(path), 'features': fs, 'phase': phase, **summary,
+                            'drift_without_retune_error_px': summaries['drift']['error_px'] if phase == 'drift' else None,
                             'retuned_error_px': retuned['error_px'] if phase == 'drift' else None,
                             'retuned_region_hits': retuned['region_hits'] if phase == 'drift' else None,
                             'retuned_region_total': retuned['region_total'] if phase == 'drift' else None,
@@ -146,11 +149,21 @@ def report(paths, out=None):
         files.extend(sorted(p.rglob('*.jsonl')) if p.is_dir() else [p])
     rows = [r for p in files for r in evaluate(p)]
     headers = ['file', 'features', 'phase', 'error_px', 'region_hits', 'region_total',
+               'drift_without_retune_error_px',
                'retuned_error_px', 'retuned_region_hits', 'retuned_region_total',
                'click_error_px', 'click_region_hits', 'click_region_total']
-    print('| ' + ' | '.join(headers) + ' |\n|' + '|'.join(['---'] * len(headers)) + '|')
-    for row in rows:
-        print('| ' + ' | '.join(str(row.get(k, '')) for k in headers) + ' |')
+    indexed = {(row['file'], row['features'], row['phase']): row for row in rows}
+    summary_headers = ['session', 'features', 'validation', 'drift without re-tune', 'drift with re-tune']
+    print('| ' + ' | '.join(summary_headers) + ' |\n|' + '|'.join(['---'] * len(summary_headers)) + '|')
+    for path in files:
+        for fs in ('v1', 'v2', 'v3'):
+            validation = indexed.get((str(path), fs, 'validation'), {})
+            drift = indexed.get((str(path), fs, 'drift'), {})
+            def metric(row, error_key='error_px'):
+                error = row.get(error_key)
+                return '' if error is None else f"{error:.1f} ({row.get('region_hits', 0)}/{row.get('region_total', 0)})"
+            print('| ' + ' | '.join((path.name, fs, metric(validation), metric(drift),
+                                     metric(drift, 'retuned_error_px'))) + ' |')
     output = Path(out) if out else Path.cwd() / 'gaze_eval.csv'
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open('w', newline='', encoding='utf-8') as f:
@@ -160,7 +173,7 @@ def report(paths, out=None):
     print(f'\nCSV: {output}')
     phases = [('validation', 'validation', ''), ('drift', 'drift', ''),
               ('drift', 'drift after retune', 'retuned_')]
-    for fs in ('v1', 'v2'):
+    for fs in ('v1', 'v2', 'v3'):
         for phase, label, prefix in phases:
             sessions = {row['file'] for row in rows if row['features'] == fs and row['phase'] == phase and _meets(row, prefix)}
             print(f'{fs} meets the bar on {len(sessions)} session(s) for {label}.')
