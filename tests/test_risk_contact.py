@@ -52,7 +52,7 @@ class TrustedContactTests(unittest.TestCase):
         got = []
         bus.subscribe("risk_contact", got.append)
         self.assertEqual(run(), "I've sent Priya a message.")
-        self.assertEqual(got, [{"name": "Priya", "kind": "remote_access", "ok": True}])
+        self.assertEqual(got, [{"name": "Priya", "kind": "remote_access", "ok": True, "call_opened": False}])
         self.assertNotIn("chase", sent[0].lower())          # never the address
         self.assertNotRegex(sent[0], r"https?://|\d{3}")
 
@@ -102,6 +102,51 @@ class CatalogueCloseTests(unittest.TestCase):
         self.assertEqual(actions.close_tool("Ammyy Admin", snap, killed.append), 1)
         self.assertEqual(killed, ["AA_v3.exe"])
         self.assertEqual(actions.close_tool("NVDA (Non-Visual Desktop Access)", snap, killed.append), 0)
+
+
+class VideoCallTests(unittest.TestCase):
+    MEET = "https://meet.google.com/abc-defg-hij"
+
+    def test_call_button_opens_the_call_here_and_sends_the_join_link(self):
+        sent, opened = [], []
+        offer, _, _ = asked_offer(JOINED, contact=("Priya", lambda text, url="": sent.append((text, url)) or True, self.MEET),
+                                  call=lambda action, args: opened.append((action, args)) or args["url"])
+        label, run = offer.extra_action
+        self.assertEqual(label, "Call Priya")
+        self.assertEqual(run(), "Calling Priya now. I've sent them the link.")
+        self.assertEqual(opened, [("openUrl", {"url": self.MEET, "newTab": True})])
+        self.assertEqual(sent[0][1], self.MEET)
+        self.assertIn("join the video call", sent[0][0])
+
+    def test_only_known_video_services_over_https_count(self):
+        for good in (self.MEET, "https://us02web.zoom.us/j/123", "https://whereby.com/priya"):
+            self.assertTrue(contact.valid_call_url(good), good)
+        for bad in ("http://meet.google.com/x", "https://meet.google.com.evil.example/x", "javascript:alert(1)",
+                    "https://evil.example/meet.google.com", "", None, "https://" + "a" * 400):
+            self.assertFalse(contact.valid_call_url(bad), bad)
+
+    def test_a_bad_call_link_falls_back_to_tell(self):
+        offer, _, _ = asked_offer(JOINED, contact=("Priya", lambda text, url="": True, "https://evil.example/x"))
+        self.assertEqual(offer.extra_action[0], "Tell Priya")
+
+    def test_the_push_carries_a_join_button_only_for_a_valid_link(self):
+        class Resp:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        seen = []
+        with patch("urllib.request.urlopen", lambda req, timeout: seen.append(req) or Resp()):
+            send = contact.ntfy_sender("ally-priya-7f3k29qx")
+            send("x", self.MEET)
+            send("x", "https://evil.example/")
+        self.assertEqual(seen[0].get_header("Click"), self.MEET)
+        self.assertIn("Join the call", seen[0].get_header("Actions"))
+        self.assertIsNone(seen[1].get_header("Click"))
 
 
 if __name__ == "__main__":

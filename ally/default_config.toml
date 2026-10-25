@@ -184,6 +184,9 @@ hourly_calls = 20              # and per hour (also at most one look per page pe
 # The alert says what kind of risk it was, never the web address or anything on the page.
 trusted_contact = ""           # e.g. "Priya"
 contact_topic = ""             # e.g. "ally-priya-7f3k29qx"
+# Optional: their standing video-call link (Google Meet, Zoom, Whereby, Teams). Then the button says "Call Priya":
+# Ally opens the call here and their phone alert has a "Join the call" button.
+contact_call_url = ""          # e.g. "https://meet.google.com/abc-defg-hij"
 
 # Applied when Ally starts and on every page you open in Chrome.
 [profile]

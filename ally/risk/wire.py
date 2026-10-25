@@ -175,7 +175,8 @@ class RiskWire:
                     offer.timeout = 20.0 + PAUSE_SECONDS
                 if self.contact and risk.severity == "high":
                     name = self.contact[0]
-                    offer.extra_action = (f"Tell {name}", lambda r=risk: self._tell(r))
+                    verb = "Call" if self._call_url() else "Tell"
+                    offer.extra_action = (f"{verb} {name}", lambda r=risk: self._tell(r))
                 if self.ask(offer) == "yes" and not self._stop.is_set():
                     ok = actions.perform(action_id, risk, self.call,
                                          snapshot=self.snapshot_fn, kill=self.kill, tab_id=tab_id)
@@ -193,15 +194,36 @@ class RiskWire:
             with self._lock:
                 self._inflight.discard(key)
 
+    def _call_url(self) -> str:
+        url = self.contact[2] if self.contact and len(self.contact) > 2 else ""
+        return url if contact.valid_call_url(url) else ""
+
     def _tell(self, risk) -> str:
-        """Runs on the overlay thread when the person taps 'Tell <name>'. Returns the line shown in the panel."""
-        name, send = self.contact
+        """Runs on the overlay thread when the person taps 'Call/Tell <name>'. Returns the line shown in the panel.
+        With a call link: open the video call here and send the helper a push whose button joins it."""
+        name, send = self.contact[0], self.contact[1]
+        call_url = self._call_url()
+        opened = False
+        if call_url:
+            try:
+                if self.call is not None:
+                    self.call("openUrl", {"url": call_url, "newTab": True})
+                else:
+                    import webbrowser
+
+                    webbrowser.open(call_url)
+                opened = True
+            except Exception:
+                log.debug("could not open the video call", exc_info=True)
         ok = False
         try:
-            ok = bool(send(contact.message_for(risk.kind)))
+            text = contact.message_for(risk.kind) + (" Tap to join the video call." if call_url else "")
+            ok = bool(send(text, call_url) if call_url else send(text))
         except Exception:
             log.debug("trusted contact send failed", exc_info=True)
-        self.bus.publish("risk_contact", {"name": name, "kind": risk.kind, "ok": ok})
+        self.bus.publish("risk_contact", {"name": name, "kind": risk.kind, "ok": ok, "call_opened": opened})
+        if call_url and opened:
+            return f"Calling {name} now. I've sent them the link." if ok else f"I opened the call. {name} didn't get the alert yet."
         return f"I've sent {name} a message." if ok else f"I couldn't reach {name}. Please give them a call."
 
     def _joined(self):
@@ -427,7 +449,8 @@ def _make_contact(agent):
         return None
     name = str(cfg.get("trusted_contact", "")).strip()[:30]
     send = contact.ntfy_sender(cfg.get("contact_topic", ""))
-    return (name, send) if name and send else None
+    call_url = str(cfg.get("contact_call_url", "")).strip()
+    return (name, send, call_url if contact.valid_call_url(call_url) else "") if name and send else None
 
 
 def attach(agent) -> RiskWire:

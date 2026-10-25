@@ -5,6 +5,7 @@ private topic. The message never contains the web address, page text or anything
 """
 
 import re
+import urllib.parse
 import urllib.request
 
 _TOPIC = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
@@ -22,6 +23,21 @@ def message_for(kind: str) -> str:
             "A quick call from you would help.")
 
 
+# Video-call links Ally may open on the person's screen: a standing room the helper created in advance.
+CALL_HOSTS = ("meet.google.com", "zoom.us", "whereby.com", "teams.microsoft.com", "teams.live.com", "meet.jit.si")
+
+
+def valid_call_url(url) -> bool:
+    if not isinstance(url, str) or len(url) > 300:
+        return False
+    try:
+        parts = urllib.parse.urlsplit(url.strip())
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "https" and any(host == h or host.endswith("." + h) for h in CALL_HOSTS)
+
+
 def valid_topic(topic) -> bool:
     return isinstance(topic, str) and bool(_TOPIC.match(topic))
 
@@ -32,9 +48,11 @@ def ntfy_sender(topic: str, server: str = "https://ntfy.sh", timeout: float = 4.
         return None
     url = f"{server.rstrip('/')}/{topic}"
 
-    def send(text: str) -> bool:
-        req = urllib.request.Request(url, data=text.encode("utf-8"), method="POST",
-                                     headers={"Title": "Ally safety alert", "Priority": "high", "Tags": "warning"})
+    def send(text: str, join_url: str = "") -> bool:
+        headers = {"Title": "Ally safety alert", "Priority": "high", "Tags": "warning"}
+        if valid_call_url(join_url):  # tapping the alert (or its button) joins the video call
+            headers.update({"Click": join_url, "Actions": f"view, Join the call, {join_url}, clear=true"})
+        req = urllib.request.Request(url, data=text.encode("utf-8"), method="POST", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return 200 <= resp.status < 300
