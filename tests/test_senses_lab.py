@@ -19,9 +19,9 @@ from pathlib import Path
 
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
-from ally.gaze_helper import (CARD_SCALES, INDICATOR_EX_STYLE, INDICATOR_TEXT, NUM_FACES, SECOND_FACE,
-                              card_origin, choose_face, classify_command, face_width, note_once, parse_card,
-                              signal_line)
+from ally.gaze_helper import (AU_COUNT, CARD_SCALES, DEFAULT_AU_FPS, INDICATOR_EX_STYLE, INDICATOR_TEXT,
+                              NUM_FACES, SECOND_FACE, au_due, au_mode, au_rate, card_origin, choose_face,
+                              classify_command, face_width, note_once, parse_card, signal_line)
 from ally.senses import evaluate, matrix
 
 
@@ -284,6 +284,55 @@ class RecordTests(unittest.TestCase):
         self.assertNotIn("frame", clean)
         self.assertNotIn("png", clean)
         self.assertNotIn("base64", json.dumps(clean))
+
+    def test_au_is_on_the_line_only_when_it_is_passed(self):
+        summary = _face()
+        points = [(0.123456, 0.2, -0.33333)] * 478
+        shapes = {"eyeSquintLeft": 0.2}
+        grid = [1.0, 0.0, 0.0, 0.0] * 4
+        scores = [i / 100 for i in range(AU_COUNT)]
+        plain = signal_line(summary, points, shapes, grid, 640, 480, raw=False, au=scores)
+        self.assertEqual(set(plain), {"f", "au"})
+        self.assertEqual(len(plain["au"]), AU_COUNT)
+        self.assertEqual(plain["au"][1], 0.01)
+        self.assertEqual(plain["au"][3], round(0.03, 4))
+        raw = signal_line(summary, points, shapes, grid, 640, 480, raw=True, au=scores)
+        self.assertEqual(set(raw), {"f", "lm", "bs", "mat", "w", "h", "au"})
+        self.assertEqual(raw["au"], [round(i / 100, 4) for i in range(AU_COUNT)])
+        off = signal_line(summary, points, shapes, grid, 640, 480, raw=False)
+        self.assertEqual(set(off), {"f"})
+        self.assertNotIn("au", signal_line(summary, points, shapes, grid, 640, 480, raw=True))
+        self.assertNotIn("au", signal_line(summary, points, shapes, grid, 640, 480, au=[1, 2, 3]))
+        self.assertNotIn("au", signal_line(summary, points, shapes, grid, 640, 480, au=["x"] * AU_COUNT))
+        text = json.dumps(plain)
+        self.assertNotIn("jpeg", text)
+        self.assertNotIn("frame", text)
+        self.assertEqual(au_mode(None), "off")
+        self.assertEqual(au_mode("LibreFace"), "libreface")
+        self.assertEqual(au_mode("torch"), "off")
+        self.assertEqual(au_rate(None), DEFAULT_AU_FPS)
+        self.assertEqual(au_rate(True), DEFAULT_AU_FPS)
+        self.assertEqual(au_rate(0), 1)
+        self.assertEqual(au_rate(100), 30)
+        self.assertFalse(au_due(10.0, 10.1, DEFAULT_AU_FPS))
+        self.assertTrue(au_due(10.0, 10.25, DEFAULT_AU_FPS))
+
+    def test_raw_live_adds_the_raw_numbers(self):
+        summary = _face()
+        points = [(0.123456, 0.2, -0.33333)] * 478
+        shapes = {"eyeSquintLeft": 0.25, "jpeg": "hidden"}
+        grid = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        body = signal_line(summary, points, shapes, grid, 640, 480, raw=False, raw_live=True)
+        self.assertEqual(set(body), {"f", "lm", "bs", "mat", "w", "h"})
+        self.assertEqual(len(body["lm"]), 478)
+        self.assertEqual(body["lm"][0], [0.1235, 0.2, -0.3333])
+        self.assertEqual((body["w"], body["h"]), (640, 480))
+        self.assertNotIn("jpeg", body["bs"])
+        text = json.dumps(body)
+        self.assertNotIn("frame", text)
+        self.assertNotIn("base64", text)
+        plain = signal_line(summary, points, shapes, grid, 640, 480, raw=False, raw_live=False)
+        self.assertEqual(set(plain), {"f"})
 
     def test_new_parts_keep_old_names_and_expect_values(self):
         parts = matrix.protocol(0)
