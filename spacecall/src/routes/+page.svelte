@@ -9,7 +9,8 @@
     connectionSlow, audioNeedsTap, mediaError, callStats
   } from '$lib/callRuntime';
   import { remoteScreen } from '$lib/screenshare';
-  import { screenFreshness, swapMainView, type MainView } from '$lib/screenPolicy';
+  import SharedScreen from '$lib/SharedScreen.svelte';
+  import { screenFreshness } from '$lib/screenPolicy';
   import { parseRoomHash, kindLabels, type RoomLink } from '$lib/room';
 
   let link: RoomLink | null = null;
@@ -24,8 +25,9 @@
   let debug = false;
   let sharingBusy = false;
   let sharingAvailable = true;
-  let mainView: MainView = 'screen';
-  let screenZoomed = false;
+  let faceExpanded = false;
+  let selfHidden = false;
+  let elderName = 'Family';
   let now = Date.now();
 
   $: helperName = $incidentStore?.helperName ?? link?.name ?? 'your helper';
@@ -115,13 +117,10 @@
     }
   }
 
-  function swapTiles() {
-    mainView = swapMainView(mainView);
-    screenZoomed = false;
-  }
-
   onMount(() => {
-    sharingAvailable = new URLSearchParams(window.location.hash.slice(1)).get('screen') !== 'off';
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    sharingAvailable = params.get('screen') !== 'off';
+    elderName = params.get('elderName')?.trim().slice(0, 64) || 'Family';
     const freshnessTimer = setInterval(() => { now = Date.now(); }, 1000);
     const updateDebug = () => { debug = new URLSearchParams(window.location.hash.slice(1)).get('debug') === '1'; };
     updateDebug();
@@ -157,9 +156,55 @@
   <meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-<main class:helper={isHelper} class:ended={callEnded}>
+
+{#snippet selfView()}
+  {#if $localVideoStream && !selfHidden}
+      <aside class="self-view glass" aria-label="Your camera">
+        <video autoplay playsinline muted bind:this={localEl}></video>
+        <span>You</span>
+        {#if isHelper}<button class="hide-self" onclick={() => { selfHidden = true; }} aria-label="Hide your camera preview">Hide</button>{/if}
+      </aside>
+    {/if}
+  {#if isHelper && selfHidden && $localVideoStream}<button class="secondary show-self" onclick={() => { selfHidden = false; }}>Show my camera</button>{/if}
+{/snippet}
+
+{#snippet callNotices()}
+  <div class="notices" aria-live="polite">
+      {#if permissionPending}
+        <p class="glass notice">Allow camera and microphone so you can see and hear {isHelper ? 'each other' : helperName}.</p>
+      {/if}
+      {#if $audioNeedsTap}
+        <button class="glass audio-unlock" onclick={() => void resumeCallAudio()}>Tap to hear {isHelper ? 'your family member' : helperName}</button>
+      {/if}
+      {#if message || $connectionError || $mediaError}
+        <p class="glass notice" role="alert">{message || $connectionError || $mediaError}</p>
+      {/if}
+      {#if $connectionSlow}<p class="glass slow">Connection is slow</p>{/if}
+    </div>
+{/snippet}
+
+{#snippet callControls()}
+  <nav class="glass controls" aria-label="Call controls">
+      <button class="secondary" onclick={toggleMute} aria-pressed={$muted} disabled={!$localVideoStream}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8"/>{#if $muted}<path d="m3 3 18 18"/>{/if}</svg>
+        {$muted ? 'Unmute' : 'Mute'}
+      </button>
+      {#if isHelper}
+        <button class="secondary flip" onclick={switchCamera} disabled={cameraBusy || !$localVideoStream}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h4l2-3h4l2 3h4v13H4zM9 11l-2 2 2 2m6-4 2 2-2 2M7 13h10"/></svg>
+          Flip camera
+        </button>
+      {/if}
+      <button class="end-call" onclick={endCall}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 16v-4c5-5 13-5 18 0v4h-5v-4M8 12v4H3"/></svg>
+        End call
+      </button>
+    </nav>
+{/snippet}
+
+<main class:helper={isHelper} class:helper-call={isHelper && joined && !callEnded} class:elder-call={link && !isHelper && !callEnded} class:ended={callEnded}>
   <div class="backdrop" aria-hidden="true"></div>
-  {#if $remoteVideoUrl && !callEnded && (!isHelper || mainView === 'face')}
+  {#if $remoteVideoUrl && !callEnded && !isHelper}
     <img class="remote-video" src={$remoteVideoUrl} alt={isHelper ? 'Live video of your family member' : `Live video of ${helperName}`} />
   {/if}
 
@@ -207,31 +252,36 @@
     </section>
   {:else}
     {#if isHelper}
-      <section class="helper-media" aria-label="Your family member's screen and camera">
-        {#if mainView === 'screen'}
-          <div class="screen-scroll" class:zoomed={screenZoomed}>
-            {#if $remoteScreen && sharingOn}
-              <button class="screen-image" onclick={() => { screenZoomed = !screenZoomed; }} aria-label={screenZoomed ? 'Fit screen to width' : 'Zoom in on shared screen'} aria-pressed={screenZoomed}>
-                <img src={$remoteScreen.url} alt="Your family member's shared screen" />
-              </button>
-            {:else}
-              <p class="glass screen-placeholder">{sharingOn ? 'Waiting for the screen' : 'Screen sharing is off'}</p>
-            {/if}
-          </div>
-          {#if $remoteVideoUrl}
-            <button class="glass peer-tile" onclick={swapTiles} aria-label="Make camera the main view">
-              <img src={$remoteVideoUrl} alt="Your family member's camera" />
-              <span>Show face</span>
+      <section class="helper-workspace" aria-label="Your family member's screen and camera">
+        <SharedScreen screen={$remoteScreen} sharing={sharingOn} hint={screenHint} />
+        <aside class="helper-rail" aria-label="Family and call controls">
+          <div class="helper-faces">
+            <button class="glass family-tile" onclick={() => { faceExpanded = !faceExpanded; }}
+              aria-label={`Enlarge ${elderName}'s camera`} aria-expanded={faceExpanded} disabled={!$remoteVideoUrl}>
+              {#if $remoteVideoUrl}<img src={$remoteVideoUrl} alt={`Live video of ${elderName}`} />
+              {:else}<span class="face-placeholder" aria-hidden="true">{elderName.charAt(0).toUpperCase()}</span>{/if}
+              <span class="tile-label">{elderName}</span>
             </button>
-          {/if}
-        {:else}
-          <button class="glass peer-tile" onclick={swapTiles} aria-label="Make shared screen the main view">
-            {#if $remoteScreen && sharingOn}<img src={$remoteScreen.url} alt="Shared screen preview" />{/if}
-            <span>Show screen</span>
-          </button>
-        {/if}
-        <p class="glass freshness" role="status">{sharingOn ? screenHint : 'Screen sharing is off'}</p>
+            {@render selfView()}
+          </div>
+          <div class="rail-actions">
+            {@render callNotices()}
+            {@render callControls()}
+          </div>
+        </aside>
       </section>
+      {#if faceExpanded && $remoteVideoUrl}
+        <div class="face-expanded" role="presentation">
+          <button class="glass face-close" onclick={() => { faceExpanded = false; }} aria-label="Return to shared screen">
+            <img src={$remoteVideoUrl} alt={`Live video of ${elderName}`} />
+            <span>Back to screen</span>
+          </button>
+        </div>
+      {/if}
+    {:else}
+      {@render selfView()}
+      {@render callNotices()}
+      {@render callControls()}
     {/if}
     {#if !$remoteVideoUrl && !isHelper}
       <section class="waiting" aria-label="Waiting for video">
@@ -240,40 +290,7 @@
         <p>{isHelper ? 'Your family member will appear here.' : `${helperName} will appear here.`}</p>
       </section>
     {/if}
-    {#if $localVideoStream}
-      <aside class="self-view glass" aria-label="Your camera">
-        <video autoplay playsinline muted bind:this={localEl}></video>
-        <span>You</span>
-      </aside>
-    {/if}
-    <div class="notices" aria-live="polite">
-      {#if permissionPending}
-        <p class="glass notice">Allow camera and microphone so you can see and hear {isHelper ? 'each other' : helperName}.</p>
-      {/if}
-      {#if $audioNeedsTap}
-        <button class="glass audio-unlock" onclick={() => void resumeCallAudio()}>Tap to hear {isHelper ? 'your family member' : helperName}</button>
-      {/if}
-      {#if message || $connectionError || $mediaError}
-        <p class="glass notice" role="alert">{message || $connectionError || $mediaError}</p>
-      {/if}
-      {#if $connectionSlow}<p class="glass slow">Connection is slow</p>{/if}
-    </div>
-    <nav class="glass controls" aria-label="Call controls">
-      <button class="secondary" onclick={toggleMute} aria-pressed={$muted} disabled={!$localVideoStream}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8"/>{#if $muted}<path d="m3 3 18 18"/>{/if}</svg>
-        {$muted ? 'Unmute' : 'Mute'}
-      </button>
-      {#if isHelper}
-        <button class="secondary flip" onclick={switchCamera} disabled={cameraBusy || !$localVideoStream}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h4l2-3h4l2 3h4v13H4zM9 11l-2 2 2 2m6-4 2 2-2 2M7 13h10"/></svg>
-          Flip camera
-        </button>
-      {/if}
-      <button class="end-call" onclick={endCall}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 16v-4c5-5 13-5 18 0v4h-5v-4M8 12v4H3"/></svg>
-        End call
-      </button>
-    </nav>
+
   {/if}
 
   {#if debug}

@@ -37,7 +37,6 @@ main { position: relative; min-height: 100svh; isolation: isolate; display: flex
 footer { z-index: 2; padding-top: 4px; }
 footer a { color: #f0f5f1; font-size: 22px; text-decoration: none; background: #132824e8; padding: 6px 14px; border-radius: 18px; display: block; }
 footer a:hover { text-decoration: underline; }
-.helper .remote-video { object-fit: cover; }
 .call-debug { position: fixed; left: 8px; top: 8px; z-index: 5; max-width: calc(100vw - 16px); padding: 8px 10px; border-radius: 8px; background: #10201fee; color: #fff; font: 12px/1.4 ui-monospace, monospace; pointer-events: none; }
 .call-debug p { overflow-wrap: anywhere; }
 @media (max-width: 650px) {
@@ -51,8 +50,6 @@ footer a:hover { text-decoration: underline; }
   .controls { width: 100%; padding: 12px; gap: 10px; border-radius: 26px; flex-wrap: wrap; }
   .controls button { flex: 1; padding: 12px; gap: 8px; }
   .controls .end-call { min-width: 0; flex-basis: 100%; min-height: 80px; }
-  .helper .controls button { flex-direction: column; font-size: 22px; }
-  .helper .controls .end-call { flex-direction: row; }
   .notices { width: 100%; }
 }
 @media (prefers-color-scheme: light) {
@@ -65,21 +62,65 @@ footer a:hover { text-decoration: underline; }
 .sharing-banner { width: min(1160px, 100%); padding: 18px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; z-index: 2; }
 .sharing-banner p { font-weight: 650; font-size: 26px; }
 .sharing-banner button { min-height: 80px; }
-.helper-media { position: relative; width: min(1280px, 100%); min-height: 35svh; flex: 1; padding-top: 96px; }
-.screen-scroll { width: 100%; max-height: 60svh; overflow: auto; border-radius: 14px; background: #10201f; touch-action: pan-x pan-y pinch-zoom; }
-.screen-image { display: block; width: 100%; padding: 0; min-height: 0; border: 0; border-radius: 0; background: transparent; touch-action: pan-x pan-y pinch-zoom; }
-.screen-image img { display: block; width: 100%; height: auto; }
-.zoomed .screen-image { width: 220%; }
-.peer-tile { position: absolute; right: 0; top: 0; width: 128px; height: 88px; padding: 0; overflow: hidden; z-index: 1; }
-.peer-tile img { width: 100%; height: 100%; object-fit: contain; }
-.peer-tile span { position: absolute; bottom: 0; left: 0; width: 100%; background: #10201fee; color: #fff; font-size: 16px; }
-.screen-placeholder { padding: 40px 20px; text-align: center; }
-.freshness { display: inline-block; margin-top: 8px; padding: 6px 14px; font-size: 18px; }
-.helper .self-view { top: auto; bottom: 280px; width: 100px; opacity: .9; }
 @media (max-width: 650px) {
   .sharing-banner { padding: 16px; }
   .sharing-banner button { width: 100%; }
-  .helper .self-view { position: relative; align-self: flex-start; right: auto; bottom: auto; width: 100px; }
 }
 
-main:not(.helper) .self-view { top: 310px; }
+/* Reserve a middle row for the PC video, clear of the banner and controls. */
+.elder-call { height: 100dvh; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto auto; justify-items: center; }
+.elder-call .topbar { grid-row: 1; }
+.elder-call .sharing-banner { grid-row: 2; }
+.elder-call .remote-video, .elder-call .waiting { grid-row: 3; position: relative; inset: auto; width: 100%; height: 100%; min-height: 0; padding: 0; }
+.elder-call .notices { grid-row: 4; }
+.elder-call .controls { grid-row: 5; margin: 0; }
+.elder-call footer { grid-row: 6; }
+.elder-call .self-view { top: 280px; }
+
+.helper-call { width: 100%; height: 100dvh; min-height: 0; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); gap: 12px; }
+.helper-call .topbar { flex: none; width: auto; max-width: 100%; margin: 0 auto; padding: 8px 18px; border-radius: 30px; text-align: center; font-size: 16px; }
+.helper-call .brand, .helper-call footer { display: none; }
+.helper-workspace { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 12px; width: 100%; min-height: 0; min-width: 0; flex: 1; }
+.shared-screen { position: relative; min-width: 0; min-height: 0; overflow: hidden; border-radius: 16px; background: #0b1716; }
+.screen-viewport { width: 100%; height: 100%; display: flex; overflow: hidden; }
+.screen-viewport.zoomed { overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.screen-image { flex: none; display: block; margin: auto; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; touch-action: manipulation; }
+.screen-image img { display: block; width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-select: none; }
+.screen-placeholder { margin: auto; padding: 20px; text-align: center; font-size: 18px; }
+.fit-screen { position: absolute; top: 10px; right: 10px; padding: 8px 14px; min-height: 44px; font-size: 16px; border-radius: 16px; }
+.freshness { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); padding: 4px 10px; border-radius: 14px; font-size: 14px; pointer-events: none; }
+.helper-rail { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: end; gap: 12px; min-width: 0; min-height: 0; }
+.helper-faces { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
+.family-tile { position: relative; flex: none; display: block; width: 120px; height: 120px; min-height: 0; padding: 0; border-radius: 22px; overflow: hidden; }
+.family-tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.tile-label { position: absolute; bottom: 0; left: 0; width: 100%; padding: 4px 8px; background: #10201fee; color: #fff; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.face-placeholder { display: grid; place-items: center; height: 100%; font-size: 40px; }
+.helper-call .self-view { position: relative; inset: auto; flex: none; width: 88px; aspect-ratio: 16 / 10; border-radius: 12px; }
+.helper-call .self-view span { left: 4px; bottom: 2px; padding: 0 4px; font-size: 12px; }
+.hide-self { position: absolute; right: 0; top: 0; min-height: 28px; padding: 2px 6px; border-radius: 0 10px 0 8px; font-size: 12px; color: white; background: #10201fee; }
+.show-self { min-height: 44px; padding: 4px 8px; font-size: 13px; border-radius: 12px; }
+.rail-actions { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.helper-call .notices { margin: 0; gap: 6px; width: 100%; }
+.helper-call .notices:empty { display: none; }
+.helper-call .notice, .helper-call .slow, .helper-call .audio-unlock { padding: 8px; border-radius: 14px; font-size: 14px; min-height: 0; }
+.helper-call .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; padding: 8px; gap: 8px; border-radius: 20px; margin: 0; }
+.helper-call .controls button { min-width: 0; min-height: 64px; padding: 8px 4px; font-size: 15px; gap: 4px; flex-direction: column; border-radius: 14px; }
+.helper-call .controls svg { width: 22px; height: 22px; }
+.helper-call .controls .end-call { grid-column: 1 / -1; min-height: 52px; flex-direction: row; }
+.face-expanded { position: fixed; inset: 0; z-index: 4; display: grid; place-items: center; background: #071614e8; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+.face-close { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px; max-width: 100%; max-height: 100%; min-height: 0; }
+.face-close img { display: block; max-width: 100%; min-height: 0; object-fit: contain; }
+.face-close span { flex: none; }
+
+@media (orientation: landscape) {
+  .helper-call .helper-workspace { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 3fr) minmax(156px, 1fr); }
+  .helper-call .topbar { position: absolute; z-index: 2; top: max(18px, env(safe-area-inset-top)); left: max(18px, env(safe-area-inset-left)); max-width: calc(75% - 36px); padding: 6px 14px; pointer-events: none; }
+  .helper-call .helper-rail { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  .helper-call .family-tile { width: clamp(64px, 26dvh, 120px); height: clamp(64px, 26dvh, 120px); border-radius: 16px; }
+  .helper-call .self-view { width: 72px; }
+  .helper-call .rail-actions { flex: 1; min-height: 0; overflow-y: auto; justify-content: safe flex-end; }
+  .helper-call .controls { flex: none; gap: 6px; padding: 6px; }
+  .helper-call .controls button { min-height: 48px; font-size: 13px; padding: 4px; }
+  .helper-call .controls .end-call { min-height: 44px; }
+  .helper-call .controls svg { width: 18px; height: 18px; }
+}

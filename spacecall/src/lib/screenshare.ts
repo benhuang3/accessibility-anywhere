@@ -4,9 +4,12 @@ import { LatestFrameReceiver } from './mediaPolicy';
 import { decodeJpeg } from './jpeg';
 import { recordScreenFrame } from './callRuntime';
 
-export const remoteScreen = writable<{ url: string; updatedAt: number } | null>(null);
-const receiver = new LatestFrameReceiver<ScreenFrame, { url: string; updatedAt: number }>(async row => ({
-  url: await decodeJpeg(row.jpeg), updatedAt: Number(row.serverAt.microsSinceUnixEpoch) / 1000
+export type SharedScreen = { url: string; updatedAt: number; width: number; height: number };
+export const remoteScreen = writable<SharedScreen | null>(null);
+// Screen frames paint as soon as decoding finishes, without a timer or fps cap.
+const receiver = new LatestFrameReceiver<ScreenFrame, SharedScreen>(async row => ({
+  url: await decodeJpeg(row.jpeg), updatedAt: Number(row.serverAt.microsSinceUnixEpoch) / 1000,
+  width: row.width, height: row.height
 }), frame => {
   const old = get(remoteScreen);
   remoteScreen.set(frame);

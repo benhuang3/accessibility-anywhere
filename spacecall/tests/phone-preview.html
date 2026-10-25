@@ -1,0 +1,67 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Phone layout checks</title>
+<style>
+body { background: #eee; color: #111; font: 16px system-ui; margin: 12px; }
+iframe { border: 2px solid #777; display: block; margin: 12px 0; }
+pre { white-space: pre-wrap; }
+</style>
+<h1>Local mock call — layout checks</h1>
+<pre id="results">Checking portrait, landscape, compact phones and PC…</pre>
+<script type="module">
+const results = document.querySelector('#results');
+const messages = [];
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const overlap = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+for (const [name, width, height, role] of [['Portrait',390,740,'helper'], ['Landscape',844,390,'helper'], ['Compact portrait',320,568,'helper'], ['Compact landscape',568,320,'helper'], ['PC',1440,900,'elder']]) {
+  const heading = document.createElement('h2'); heading.textContent = name; document.body.append(heading);
+  const frame = document.createElement('iframe'); frame.width = width; frame.height = height;
+  frame.src = '/#room=0123456789abcdef0123456789abcdef&role=' + role + '&name=Priya&elderName=Mom';
+  document.body.append(frame);
+  try {
+    for (let tick = 0; tick < 100; tick++) {
+      const join = frame.contentDocument.querySelector('.join');
+      if (join && !join.disabled) join.click();
+      if (frame.contentDocument.querySelector(role === 'helper' ? '.screen-image' : '.remote-video')) break;
+      await wait(100);
+    }
+    await wait(300);
+    const doc = frame.contentDocument;
+    check(doc.documentElement.scrollWidth <= width, name + ' horizontal overflow');
+    check(doc.documentElement.scrollHeight <= height, name + ' vertical overflow');
+    const controls = doc.querySelector('.controls').getBoundingClientRect();
+    check(controls.right <= width && controls.bottom <= height, name + ' controls clipped');
+    if (role === 'helper') {
+      const panel = doc.querySelector('.shared-screen').getBoundingClientRect();
+      const face = doc.querySelector('.family-tile').getBoundingClientRect();
+      check(!overlap(panel, face), name + ' face overlaps screen');
+      const image = doc.querySelector('.screen-image');
+      const fitted = image.getBoundingClientRect();
+      check(fitted.width > 0 && fitted.height > 0 && fitted.width <= panel.width + 1 && fitted.height <= panel.height + 1, name + ' screen cropped');
+      check(Math.abs(fitted.width / fitted.height - 1.6) < 0.01, name + ' aspect ratio changed');
+      image.dispatchEvent(new MouseEvent('click', { detail: 1, clientX: 100, clientY: 100 }));
+      image.dispatchEvent(new MouseEvent('click', { detail: 1, clientX: 100, clientY: 100 }));
+      await wait(30);
+      check(!!doc.querySelector('.fit-screen'), name + ' double tap did not zoom');
+      check(Math.abs(image.getBoundingClientRect().width - fitted.width * 2) < 1, name + ' zoom is not 2x');
+      doc.querySelector('.fit-screen').click(); await wait(30);
+      check(!doc.querySelector('.fit-screen'), name + ' fit button did not reset');
+      check(Math.abs(image.getBoundingClientRect().width - fitted.width) < 1, name + ' fit dimensions not restored');
+      doc.querySelector('.family-tile').click(); await wait(30);
+      check(!!doc.querySelector('.face-expanded'), name + ' face cannot enlarge');
+      doc.querySelector('.face-close').click(); await wait(30);
+      doc.querySelector('.hide-self').click(); await wait(30);
+      check(!doc.querySelector('.self-view'), name + ' self preview did not hide');
+      doc.querySelector('.show-self').click(); await wait(30);
+      check(!!doc.querySelector('.self-view'), name + ' self preview did not return');
+    } else {
+      const video = doc.querySelector('.remote-video').getBoundingClientRect();
+      check(!overlap(video, controls), 'PC controls cover helper face');
+      check(!overlap(video, doc.querySelector('.sharing-banner').getBoundingClientRect()), 'PC banner covers helper face');
+    }
+    messages.push('PASS ' + name);
+  } catch (error) { messages.push('FAIL ' + name + ': ' + error.message); }
+  results.textContent = messages.join('\n');
+}
+</script>

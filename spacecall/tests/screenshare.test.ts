@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ConnectionId, Timestamp, createModuleTestHarness, TestAuth } from '../server/src/testSupport.ts';
 import * as module from '../server/src/index.ts';
-import { screenFreshness, swapMainView } from '../src/lib/screenPolicy.ts';
+import { screenFreshness } from '../src/lib/screenPolicy.ts';
 import AudioRow from '../src/module_bindings/audio_frame_event_table.ts';
 import VideoRow from '../src/module_bindings/video_frame_event_table.ts';
 import ScreenRow from '../src/module_bindings/screen_frame_event_table.ts';
@@ -92,13 +92,13 @@ test('40ms and legacy 50ms audio are timestamped; other packet lengths reject', 
   }
 });
 
-test('freshness exposes stale frames; swapping the face and screen is reversible', () => {
+test('freshness stays quiet until a frame is more than two seconds old', () => {
   assert.equal(screenFreshness(null, 5000), 'Waiting for the screen');
-  assert.equal(screenFreshness(4000, 5000), 'Screen updated 1 s ago');
+  assert.equal(screenFreshness(4000, 5000), '');
+  assert.equal(screenFreshness(3000, 5000), '');
+  assert.equal(screenFreshness(2999, 5000), 'Screen updated 2 s ago');
   assert.equal(screenFreshness(1000, 65000), 'Screen updated 64 s ago');
-  assert.equal(screenFreshness(6000, 5000), 'Screen updated 0 s ago');
-  assert.equal(swapMainView('screen'), 'face');
-  assert.equal(swapMainView(swapMainView('screen')), 'screen');
+  assert.equal(screenFreshness(6000, 5000), '');
 });
 
 test('local binding field types and binary order match the changed server rows', () => {

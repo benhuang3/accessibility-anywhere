@@ -15,7 +15,7 @@ export const audioNeedsTap = writable(false);
 export const mediaError = writable('');
 const emptyStats = {
   videoUp: 0, videoDown: 0, audioUp: 0, audioDown: 0, kbpsUp: 0, kbpsDown: 0,
-  screenDown: 0, screenKbps: 0, callBytesPerSecond: 0, cameraTarget: 12,
+  screenDown: 0, screenKbps: 0, callBytesPerSecond: 0, cameraTarget: 15,
   playbackMs: 0, pending: 0, delayMs: null as number | null
 };
 export const callStats = writable({ ...emptyStats });
@@ -59,7 +59,7 @@ export async function startCallRuntime(conn: DbConnection, roomId: string) {
     }
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 270 }, frameRate: { ideal: 15, max: 15 } }
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24, max: 24 } }
     });
     if (ticket !== generation) { stream.getTracks().forEach(track => track.stop()); return; }
     await context.audioWorklet.addModule(workletUrl);
@@ -87,7 +87,7 @@ export async function startCallRuntime(conn: DbConnection, roomId: string) {
         const old = get(remoteVideoUrl);
         remoteVideoUrl.set(url);
         if (old) URL.revokeObjectURL(old);
-      }, url => URL.revokeObjectURL(url)),
+      }, url => URL.revokeObjectURL(url), paint => { requestAnimationFrame(paint); }),
       facing: 'user', sources: new Set(), delayMs: null
     };
     runtime = rt;
@@ -185,7 +185,7 @@ function captureAudio(rt: Runtime) {
 
 function captureVideo(rt: Runtime) {
   // A deadline timer keeps capture cadence independent of reducer acknowledgments.
-  // Only encoding is single-flight; reducer acknowledgments can overlap three deep.
+  // Only encoding is single-flight; reducer acknowledgments can overlap four deep.
   let canvas: HTMLCanvasElement | OffscreenCanvas = document.createElement('canvas');
   try {
     if (typeof OffscreenCanvas !== 'undefined' && typeof OffscreenCanvas.prototype.convertToBlob === 'function') {
@@ -261,7 +261,7 @@ export async function flipCamera() {
   rt.stream.getVideoTracks().forEach(track => { track.stop(); rt.stream.removeTrack(track); });
   try {
     const camera = await navigator.mediaDevices.getUserMedia({
-      audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 480 }, height: { ideal: 270 }, frameRate: { ideal: 15, max: 15 } }
+      audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24, max: 24 } }
     });
     if (rt.stopped) { camera.getTracks().forEach(track => track.stop()); return; }
     camera.getVideoTracks().forEach(track => rt.stream.addTrack(track));
