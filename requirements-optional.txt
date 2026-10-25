@@ -2,12 +2,12 @@
 # Each package below turns on an extra feature. Install all of them with:
 #   python -m pip install -r requirements-optional.txt
 
-pynput>=1.7.6      # global hotkeys (Mac: needs Accessibility + Input Monitoring permission; Linux: X11)
+pynput>=1.7.6      # global hotkeys (Linux: X11)
 mss>=9.0           # fast screenshots for "describe my screen"
 pillow>=10.0       # shrinks screenshots so Claude answers faster
 sounddevice>=0.4.6 # microphone for voice input and always-on listening
 numpy>=1.26        # used with sounddevice and the eye tracker
-certifi            # fixes HTTPS certificate errors on some Mac Python installs
+certifi            # fixes HTTPS certificate errors on some Python installs
 
 # Hands-free voice ("Ally, ..."), transcribed on this computer. The speech model downloads on
 # first use (base.en ~145 MB; tiny.en ~75 MB).

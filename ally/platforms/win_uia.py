@@ -6,7 +6,7 @@ window titles use the plain Win32 user32 calls (SetWindowTextW / GetWindowTextW)
 when an app exposes no UIA ValuePattern.
 
 Everything that touches comtypes or user32 is imported lazily and guarded by a Windows check, so
-`import ally.platforms.win_uia` succeeds on macOS/Linux and available() returns (False, reason).
+`import ally.platforms.win_uia` succeeds on other systems and available() returns (False, reason).
 The pure helpers rect_to_bounds() and role_for() carry the logic that can be unit-tested anywhere.
 
 Threads: every tool call runs on a fresh thread, and a COM object must be used from a thread that

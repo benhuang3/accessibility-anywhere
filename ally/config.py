@@ -27,7 +27,7 @@ REPLACE_TABLES = {"hotkeys", "commands"}
 NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 STYLE_RE = re.compile(r"^[a-z0-9_]{1,40}$")
 STEP_KINDS = ("tool", "say", "shell", "open", "keys", "wait", "ask", "notify")
-OS_KEYS = {"mac", "windows", "linux"}
+OS_KEYS = {"windows", "linux"}
 
 NUM = (int, float)
 SPEC = {
@@ -165,7 +165,7 @@ def _check_os_value(value, where: str, errors: list) -> None:
         return
     if isinstance(value, dict) and value and set(value) <= OS_KEYS and all(isinstance(v, str) for v in value.values()):
         return
-    errors.append(f"{where} must be text, or {{ mac = \"...\", windows = \"...\", linux = \"...\" }}")
+    errors.append(f"{where} must be text, or {{ windows = \"...\", linux = \"...\" }}")
 
 
 def validate(cfg: dict, known_tools: set[str] | None = None) -> tuple[list[str], list[str]]:

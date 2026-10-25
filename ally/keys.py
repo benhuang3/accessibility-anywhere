@@ -1,7 +1,6 @@
 """Hotkey strings, e.g. "<ctrl>+<alt>+r" (same format as pynput's GlobalHotKeys).
 
-"<mod>" is Ally shorthand: Ctrl+Alt on Windows/Linux, Ctrl+Cmd on macOS (Option changes the
-typed character on a Mac, which breaks hotkey matching, so Ally avoids it there).
+"<mod>" is Ally shorthand for Ctrl+Alt.
 """
 
 from __future__ import annotations
@@ -25,12 +24,12 @@ STANDALONE_OK = {f"f{i}" for i in range(13, 21)} | {
 
 
 def system_name() -> str:
-    return platform.system()  # "Darwin", "Windows", "Linux"
+    return platform.system()  # "Windows", "Linux"
 
 
 def expand_mod(combo: str, system: str | None = None) -> str:
     system = system or system_name()
-    return combo.replace("<mod>", "<ctrl>+<cmd>" if system == "Darwin" else "<ctrl>+<alt>")
+    return combo.replace("<mod>", "<ctrl>+<alt>")
 
 
 def split_combo(keys: str) -> list[str]:
@@ -80,7 +79,7 @@ def parse_combo(combo: str, system: str | None = None) -> list[str]:
 def describe(combo: str, system: str | None = None) -> str:
     """Human-friendly label, e.g. '<ctrl>+<alt>+r' -> 'Ctrl+Alt+R'."""
     system = system or system_name()
-    names = {"cmd": "Cmd" if system == "Darwin" else "Win", "alt": "Option" if system == "Darwin" else "Alt",
+    names = {"cmd": "Win", "alt": "Alt",
              "ctrl": "Ctrl", "shift": "Shift", "esc": "Esc", "space": "Space", "enter": "Enter"}
     try:
         parts = split_combo(expand_mod(combo, system))

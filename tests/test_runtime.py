@@ -1,5 +1,4 @@
 import os
-import plistlib
 import shlex
 import subprocess
 import sys
@@ -80,11 +79,6 @@ class SupervisorTests(unittest.TestCase):
 class AutostartTests(unittest.TestCase):
     def test_files(self):
         paths = Paths(temp_home())
-        plist = plistlib.loads(autostart.mac_plist(paths))
-        self.assertEqual(plist["Label"], "com.ally.agent")
-        self.assertEqual(plist["ProgramArguments"][-1], "start")
-        self.assertEqual(plist["KeepAlive"], {"SuccessfulExit": False})
-        self.assertEqual(plist["EnvironmentVariables"]["ALLY_HOME"], str(paths.home))
         desktop = autostart.linux_desktop(paths)
         self.assertIn("[Desktop Entry]", desktop)
         self.assertIn(autostart._desktop_quote(str(CODE_ROOT / "run.py")) + ' "start"', desktop)
@@ -232,8 +226,8 @@ class PlatformTests(unittest.TestCase):
             linux.run, linux.which = old_run, old_which
 
     def test_pick_os(self):
-        v = {"mac": "open -a Calculator", "windows": "calc"}
-        self.assertEqual(pick_os(v, "macos"), "open -a Calculator")
+        v = {"windows": "calc"}
+        self.assertEqual(pick_os(v, "windows"), "calc")
         self.assertIsNone(pick_os(v, "linux"))
         self.assertEqual(pick_os("same", "windows"), "same")
 

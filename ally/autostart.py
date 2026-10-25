@@ -1,6 +1,5 @@
 """Start Ally automatically when you log in.
 
-macOS:   ~/Library/LaunchAgents/com.ally.agent.plist (launchd; restarts it if it crashes)
 Windows: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run, value "Ally" (pythonw, no window)
 Linux:   ~/.config/autostart/ally-agent.desktop (XDG autostart, runs in your desktop session)
 """
@@ -9,7 +8,6 @@ from __future__ import annotations
 
 import os
 import platform
-import plistlib
 import subprocess
 import sys
 from pathlib import Path
@@ -28,24 +26,6 @@ def _python(windowless: bool = False) -> str:
         if w.exists():
             return str(w)
     return str(exe)
-
-
-def mac_plist_path() -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
-
-
-def mac_plist(paths: Paths) -> bytes:
-    return plistlib.dumps({
-        "Label": LABEL,
-        "ProgramArguments": [_python(), str(CODE_ROOT / "run.py"), "start"],
-        "WorkingDirectory": str(CODE_ROOT),
-        "RunAtLoad": True,
-        "KeepAlive": {"SuccessfulExit": False},
-        "ProcessType": "Interactive",
-        "StandardOutPath": str(paths.log_dir / "launchd.log"),
-        "StandardErrorPath": str(paths.log_dir / "launchd.log"),
-        "EnvironmentVariables": {"ALLY_HOME": str(paths.home), "PATH": os.environ.get("PATH", "/usr/bin:/bin")},
-    })
 
 
 def windows_command(paths: Paths) -> str:
@@ -79,17 +59,6 @@ def install(home=None, start_now: bool = True) -> str:
     paths = Paths(home)
     paths.ensure()
     system = platform.system()
-    if system == "Darwin":
-        p = mac_plist_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(mac_plist(paths))
-        msg = f"Installed {p}. Ally will start when you log in."
-        if start_now:
-            uid = os.getuid()
-            subprocess.run(["launchctl", "bootout", f"gui/{uid}", str(p)], capture_output=True)
-            r = subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(p)], capture_output=True, text=True)
-            msg += " Started it now." if r.returncode == 0 else f" (launchctl: {r.stderr.strip()[:200]})"
-        return msg
     if system == "Windows":
         import winreg  # type: ignore
 
@@ -109,13 +78,6 @@ def install(home=None, start_now: bool = True) -> str:
 
 def uninstall() -> str:
     system = platform.system()
-    if system == "Darwin":
-        p = mac_plist_path()
-        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(p)], capture_output=True)
-        if p.exists():
-            p.unlink()
-            return f"Removed {p}."
-        return "Ally wasn't set to start at login."
     if system == "Windows":
         import winreg  # type: ignore
 
@@ -134,8 +96,6 @@ def uninstall() -> str:
 
 def installed() -> bool:
     system = platform.system()
-    if system == "Darwin":
-        return mac_plist_path().exists()
     if system == "Windows":
         try:
             import winreg  # type: ignore

@@ -67,9 +67,9 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(any("nope" in w for w in warnings))
 
     def test_os_specific_shell(self):
-        cfg, errors, _ = check('[commands.calc]\nsteps = [{ shell = { mac = "open -a Calculator", windows = "calc" } }]\n')
+        cfg, errors, _ = check('[commands.calc]\nsteps = [{ shell = { windows = "calc", linux = "gnome-calculator" } }]\n')
         self.assertEqual(errors, [])
-        _, errors, _ = check('[commands.calc]\nsteps = [{ shell = { amiga = "calc" } }]\n')
+        _, errors, _ = check('[commands.calc]\nsteps = [{ shell = { mac = "open -a Calculator" } }]\n')
         self.assertTrue(errors)
 
     def test_profile_style_must_exist(self):
@@ -112,7 +112,6 @@ class KeyTests(unittest.TestCase):
             keys.split_combo("<ctrl>+")
 
     def test_mod_expansion(self):
-        self.assertEqual(keys.expand_mod("<mod>+r", "Darwin"), "<ctrl>+<cmd>+r")
         self.assertEqual(keys.expand_mod("<mod>+r", "Windows"), "<ctrl>+<alt>+r")
 
     def test_parse_combo(self):
@@ -124,7 +123,6 @@ class KeyTests(unittest.TestCase):
 
     def test_describe(self):
         self.assertEqual(keys.describe("<mod>+r", "Windows"), "Ctrl+Alt+R")
-        self.assertEqual(keys.describe("<mod>+r", "Darwin"), "Ctrl+Cmd+R")
 
 
 if __name__ == "__main__":

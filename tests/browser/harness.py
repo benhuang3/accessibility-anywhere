@@ -1,6 +1,6 @@
 """Browser test harness: Playwright Chromium with Ally's extension loaded and a local fixture server.
 
-Standard library + playwright only. Works on macOS and Windows. Never uses port 8765.
+Standard library + playwright only. Windows (Linux works too). Never uses port 8765.
 
     with FixtureServer() as server, AllyBrowser(server) as ally:
         page = ally.open("combo_general.html")

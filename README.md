@@ -43,7 +43,6 @@ magnifier, color filters, and anything else you teach it.
 
 | System | What to do |
 |---|---|
-| **macOS** | Give the app that runs Ally (Terminal, iTerm or Python) **Accessibility** and **Input Monitoring** permission in System Settings > Privacy & Security (needed for hotkeys and key presses), plus **Screen Recording** for "describe my screen". For the screen magnifier, turn on "Use keyboard shortcuts to zoom" in System Settings > Accessibility > Zoom. |
 | **Windows** | Use 64-bit Python and run commands with `python`, e.g. `python run.py doctor`. The screen magnifier and color filters use the Windows Magnification API directly; if the Windows Magnifier app is open, Ally closes it and takes over. Speech uses the built-in Windows voices ("Microsoft David Desktop", "Microsoft Zira Desktop"; set `speech.voice`) and stays loaded, so only the first sentence after start waits a few seconds. Hotkeys ignore key presses sent by other programs, so test them by pressing them yourself. "Read the selection" (Ctrl+Alt+R) copies once you let go of Ctrl+Alt and then puts your clipboard text back. |
 | **Linux** | Screen magnifier, color filters and text size need GNOME. Install `espeak-ng` or `speech-dispatcher` for speech and `xclip` (X11) or `wl-clipboard` (Wayland) for reading selected text. On Wayland, Ally's own hotkey listener only sees X11 apps, so run `python3 run.py gnome-shortcuts` (turns your `[hotkeys]` into GNOME shortcuts) and set `hotkeys_enabled = false` under `[agent]`. |
 
@@ -157,7 +156,7 @@ too unsure, Ally uses the mouse pointer and says so.
 - A webcam is far less precise than a dedicated eye tracker. Areas of the screen are the useful part.
   Light on your face helps. `python run.py doctor` reports how old the calibration is, the check, the
   feature set, the camera index, and whether `mobileone_s0_gaze.onnx` and onnxruntime are ready.
-- Exact centering and following the eyes are Windows features. On macOS and Linux, Ally moves the
+- Exact centering and following the eyes are Windows features. On Linux, Ally moves the
   pointer to where you look and zooms there, since those magnifiers follow the pointer. The control
   name under the gaze point is Windows-only; other systems get the screen area.
 
@@ -194,7 +193,7 @@ box}, source, detail, ts}`, that goes to the event log, to `agent.on_struggle(di
   numbers per frame (like a squint score). Frames stay in memory there and are thrown away;
   `tests/test_senses.py` fails if camera code imports networking or writes images or video.
 
-**Default hotkeys** (`<mod>` = Ctrl+Alt on Windows/Linux, Ctrl+Cmd on Mac):
+**Default hotkeys** (`<mod>` = Ctrl+Alt):
 
 | Keys | Action |
 |---|---|
@@ -257,7 +256,7 @@ steps = [
 
 Step types: `tool` (+ `args`), `say`, `ask` (a request for Claude, which can use tools), `open` (URL or
 file), `keys` (e.g. `"<ctrl>+c"`), `wait` (seconds), `notify`, and `shell`. `shell`, `open` and `keys`
-can be different per system: `{ mac = "...", windows = "...", linux = "..." }`.
+can be different per system: `{ windows = "...", linux = "..." }`.
 Each command is also a tool Claude can choose by itself (set `allow_ai = false` to prevent that).
 
 ### 3. Add a tool (Python)
@@ -307,7 +306,7 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 |---|---|
 | Agent crashes | The supervisor (`run.py start`) restarts it: 1 s, 2 s, 4 s ... up to 30 s apart |
 | Agent freezes | `/health` checked every 5 s; 3 misses in a row and it's restarted |
-| Computer restarts | `run.py install` starts Ally at login (launchd on Mac, Run key on Windows, autostart on Linux) |
+| Computer restarts | `run.py install` starts Ally at login (Run key on Windows, autostart on Linux) |
 | No internet / no key / API down | Offline rules handle common requests; commands and hotkeys keep working |
 | Chrome closed or agent restarted | The extension reconnects by itself (backoff, plus a 30 s alarm that wakes it) |
 | Bad config edit | Last good settings stay active; the error is shown |
@@ -332,7 +331,7 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
    |                                     |                                                   |
    |                        tool registry: built-in tools + plugins/*.py + [commands]        |
    |                          |                         |                       |            |
-   |                  OS adapter (Mac/Win/Linux)   speech (OS voice /     Chrome bridge       |
+   |                  OS adapter (Win/Linux)       speech (OS voice /     Chrome bridge       |
    |                  magnifier, colors, keys,     Cartesia)              (WebSocket)         |
    |                  selection, screenshots                                   |             |
    +---------------------------------------------------------------------------|-------------+
@@ -350,7 +349,7 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 | `ally/config.py`, `ally/default_config.toml` | Settings, validation, hot reload |
 | `ally/macros.py` | `[commands]` from the config |
 | `ally/tools/` | Built-in tools |
-| `ally/platforms/` | macOS, Windows and Linux adapters |
+| `ally/platforms/` | Windows and Linux adapters |
 | `ally/server.py`, `ally/websocket.py`, `ally/bridge.py` | Dashboard, API, extension link |
 | `ally/hotkeys.py`, `ally/hotkey_helper.py` | Global hotkeys in a separate process |
 | `ally/speech.py`, `ally/voice.py` | Talking, push-to-talk and offline speech-to-text |
@@ -369,8 +368,7 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 - Chrome: `tabs.setZoom`, `fontSettings.setMinimumFontSize`, `scripting.insertCSS/removeCSS/executeScript`,
   `tts`, `alarms` (30 s minimum), and a WebSocket that keeps the service worker alive (Chrome 116+).
 - Windows: `MagSetFullscreenTransform` (1.0-4096.0, offsets in unmagnified pixels) and
-  `MagSetFullscreenColorEffect` (Microsoft's grayscale matrix). macOS: Apple's Zoom shortcuts
-  (Option-Command-8 / = / -) and Control-Option-Command-8 for invert. GNOME: `org.gnome.desktop.a11y.*` keys.
+  `MagSetFullscreenColorEffect` (Microsoft's grayscale matrix). GNOME: `org.gnome.desktop.a11y.*` keys.
 - Cartesia: `POST /tts/bytes` (model `sonic-3.6`, fallback `sonic-3`; `generation_config` speed 0.6-1.5, volume,
   emotion), `GET /voices`, and `POST /stt` (model `ink-whisper`) with header `Cartesia-Version: 2026-08-14`.
 
@@ -396,10 +394,9 @@ your own Ally first.
 | Symptom | Fix |
 |---|---|
 | "Chrome isn't connected" | Load the extension (step 6). Check the extension's port in its popup matches `agent.port`. |
-| Hotkeys do nothing | `python3 run.py doctor`. Mac: permissions above. Linux Wayland: `python3 run.py gnome-shortcuts`. |
+| Hotkeys do nothing | `python3 run.py doctor`. Linux Wayland: `python3 run.py gnome-shortcuts`. |
 | Ctrl+Alt hotkeys type symbols | On some European keyboards Ctrl+Alt = AltGr. Pick other keys in `[hotkeys]`. |
 | "offline mode" | Put `ANTHROPIC_API_KEY` in `.env`, check internet, then `python3 run.py doctor`. |
-| Mac: certificate errors | `pip install certifi`, or run "Install Certificates.command" in your Python folder. |
 | Port 8765 in use | Change `agent.port` in config.toml and in the extension popup (Settings). |
 | Ally uses the robot voice | `python3 run.py doctor` shows why (no key, no voice, or Cartesia unreachable). `GET /api/voice` shows `fallback_reason`. |
 | Spoken answers are ignored | `python3 run.py doctor` > "Spoken questions". Needs `sounddevice` and Cartesia or faster-whisper; the buttons always work. |

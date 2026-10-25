@@ -205,7 +205,7 @@ def run_checks(home=None, online: bool = True) -> list[tuple[str, str, str]]:
         except ClaudeError as e:
             hint = ""
             if "CERTIFICATE_VERIFY_FAILED" in str(e):
-                hint = " Fix: pip install certifi (or run 'Install Certificates.command' for python.org Python on Mac)."
+                hint = " Fix: pip install certifi"
             out.append(("fail" if e.status in (401, 403) else "warn", "Claude API", f"{e}{hint}"[:400]))
 
     out.extend(voice_checks(cm.data, online))
