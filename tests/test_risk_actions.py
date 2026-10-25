@@ -144,7 +144,7 @@ class WarningActionTests(unittest.TestCase):
         def ask(offer):
             entered.set()
             release.wait(2)
-            return "no"
+            return "timeout"
         ask_mock = Mock(side_effect=ask)
         wire = self.wire(ask=ask_mock)
         try:
@@ -185,7 +185,7 @@ class WarningActionTests(unittest.TestCase):
         wire.stop()
 
     def test_lifecycle(self):
-        ask = Mock(return_value="no")
+        ask = Mock(return_value="timeout")
         banner = Mock()
         wire = self.wire(ask=ask, broadcast=banner)
         wire.start()

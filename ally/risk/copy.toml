@@ -10,6 +10,17 @@
 #   explain     explain, change nothing  stay        do nothing
 # Use {tool} / {host} / {usual_site} only where the matching field is always supplied (see copy.py).
 
+[confirm_close]
+title = "Are you sure?"
+body = "Scammers often say it's safe to continue."
+spoken = "Let's pause. Scammers often say it's safe to continue."
+[[confirm_close.actions]]
+id = "close_page"
+label = "Close it"
+[[confirm_close.actions]]
+id = "stay"
+label = "Keep it open"
+
 [scam_popup]
 title = "This message may not be real."
 body = "A page says your computer is infected and asks you to call a number. Real Windows warnings never ask you to call. Your computer may be fine."

@@ -41,7 +41,9 @@ def no_label(base: str, seconds_left: int) -> str:
     return f"Continue in {seconds_left}" if seconds_left > 0 else base
 
 
-def button_labels(prompt: str) -> tuple[str, str]:
+def button_labels(prompt: str, options: Sequence[str] = ("yes", "no")) -> tuple[str, str]:
+    if len(options) == 2 and tuple(options) != ("yes", "no"):
+        return sanitize_text(options[0]), sanitize_text(options[1])
     if sanitize_text(prompt).startswith("Want me to close"):
         return "Yes, close it", "No, keep it"
     return "Yes", "No"

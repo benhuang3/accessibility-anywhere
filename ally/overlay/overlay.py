@@ -391,8 +391,8 @@ class Overlay:
         row.pack(pady=(px(24), 0))
         first_btn = None
         if offer is not None:
-            labels = button_labels(offer.prompt)
             real = self._offers.get(offer.id, offer)  # the panel state holds a copy; options live on the Offer
+            labels = button_labels(offer.prompt, getattr(real, "options", ("yes", "no")))
             pause = int(getattr(real, "pause_seconds", 0) or 0)
             if pause:
                 self._pause_until.setdefault(offer.id, time.time() + pause)

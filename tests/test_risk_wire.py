@@ -124,7 +124,10 @@ class WireTests(unittest.TestCase):
         self.wire.on_page(SCAM)
         self.wire.on_page(SCAM)
         self.assertEqual(len(self.seen), 1)
-        self.now = 1800
+        self.now = 119
+        self.wire.on_page(SCAM)
+        self.assertEqual(len(self.seen), 1)
+        self.now = 120
         self.wire.on_page(SCAM)
         self.assertEqual(len(self.seen), 2)
 

@@ -7,11 +7,15 @@ import time
 
 from ally.contracts import EventBus, Offer, Risk
 from . import actions, behavior, contact, domains, fields, joined, process, soft, text
+from .copy import render
 from .guardian import Evidence
 
 log = logging.getLogger("ally")
 _ORDER = ("scam_popup", "remote_access", "untrusted_site", "payment_field")
 PAUSE_SECONDS = 30
+HOLD_SECONDS = 120
+TIMEOUT_SNOOZE_SECONDS = 120
+DECLINE_SNOOZE_SECONDS = 1800
 
 
 def _evidence(value: str) -> str:
@@ -82,25 +86,35 @@ def scan_page(page: dict) -> list[Risk]:
 
 
 class Deduper:
-    def __init__(self, window_s=1800.0, clock=time.time):
+    def __init__(self, window_s=HOLD_SECONDS, clock=time.time):
         self.window_s = window_s
         self.clock = clock
         self._seen = {}
         self._lock = threading.Lock()
 
+    @staticmethod
+    def key(risk):
+        if isinstance(risk, tuple):
+            return risk
+        return (domains.host_of(risk.url) if risk.url else risk.app, risk.kind)
+
     def fresh(self, risk) -> bool:
         with self._lock:
             now = self.clock()
-            self._seen = {k: at for k, at in self._seen.items() if now - at < self.window_s}
-            key = (domains.host_of(risk.url) if risk.url else risk.app, risk.kind)
+            self._seen = {k: until for k, until in self._seen.items() if now < until}
+            key = self.key(risk)
             if key in self._seen:
                 return False
-            self._seen[key] = now
+            self._seen[key] = now + self.window_s
             return True
 
-    def forget(self, risk) -> None:
+    def snooze(self, key, seconds) -> None:
         with self._lock:
-            self._seen.pop((domains.host_of(risk.url) if risk.url else risk.app, risk.kind), None)
+            self._seen[self.key(key)] = self.clock() + seconds
+
+    def forget(self, key) -> None:
+        with self._lock:
+            self._seen.pop(self.key(key), None)
 
     def clear(self) -> None:
         with self._lock:
@@ -128,6 +142,7 @@ class RiskWire:
         self.broadcast = broadcast
         self.kill = kill
         self._inflight = set()
+        self._generation = 0
         self._unsubscribe = None
         self._unsubscribe_reset = None
         self.snapshot_fn = snapshot_fn
@@ -158,17 +173,22 @@ class RiskWire:
         proposal = actions.ask_for(risk)
         if self.ask is None or proposal is None:
             return
-        key = (domains.host_of(risk.url), risk.kind)
+        key = Deduper.key(risk)
         with self._lock:
             if self._stop.is_set() or key in self._inflight:
                 return
             self._inflight.add(key)
+            generation = self._generation
+            self.deduper.snooze(key, HOLD_SECONDS)
             tab_id = self._tab_ids.pop(key, None)
         prompt, action_id = proposal
 
         def ask_and_act():
+            answer, snooze_seconds = "timeout", TIMEOUT_SNOOZE_SECONDS
             try:
                 with self._lock:
+                    if generation != self._generation or self._stop.is_set():
+                        return
                     box = self._marks.pop(key, None)
                 offer = Offer(prompt, context="risk", reason=risk, timeout=20.0, highlight=box)
                 if risk.source == "risk.joined":
@@ -181,22 +201,49 @@ class RiskWire:
                         if alert is not None:
                             alert["offer"] = offer
                         self._contact_action(offer, risk, alert)
-                if self.ask(offer) == "yes" and not self._stop.is_set():
+                answer = self.ask(offer)
+                with self._lock:
+                    current = generation == self._generation and not self._stop.is_set()
+                if answer == "no" and current:
+                    wording = render("confirm_close")
+                    confirmation = Offer(wording.title + " " + wording.body,
+                                         options=tuple(a.label for a in wording.actions),
+                                         context="risk", reason=risk, timeout=20.0)
+                    answer = self.ask(confirmation)
+                    if answer == "no":
+                        snooze_seconds = DECLINE_SNOOZE_SECONDS
+                if answer not in ("yes", "no"):
+                    answer = "timeout"
+                with self._lock:
+                    current = generation == self._generation and not self._stop.is_set()
+                if answer == "yes" and current:
                     ok = actions.perform(action_id, risk, self.call,
                                          snapshot=self.snapshot_fn, kill=self.kill, tab_id=tab_id)
                     self.bus.publish("risk_action", {"action": action_id, "ok": ok,
                                                      "kind": risk.kind})
+                    snooze_seconds = 0
             except Exception:
+                answer, snooze_seconds = "timeout", TIMEOUT_SNOOZE_SECONDS
                 log.debug("risk offer failed", exc_info=True)
             finally:
                 with self._lock:
-                    self._inflight.discard(key)
+                    current = generation == self._generation
+                    if current:
+                        if snooze_seconds:
+                            self.deduper.snooze(key, snooze_seconds)
+                        else:
+                            self.deduper.forget(key)
+                        self._inflight.discard(key)
+                if current:
+                    self.bus.publish("risk_decision", {"key": key, "answer": answer,
+                                                       "snooze_seconds": snooze_seconds})
 
         try:
             threading.Thread(target=ask_and_act, name="risk-ask", daemon=True).start()
         except Exception:
             with self._lock:
                 self._inflight.discard(key)
+                self.deduper.snooze(key, TIMEOUT_SNOOZE_SECONDS)
 
     def _call_url(self) -> str:
         url = self.contact[2] if self.contact and len(self.contact) > 2 else ""
@@ -306,7 +353,8 @@ class RiskWire:
                 self.last_page["last_scam_text_at"] = self.clock()
             combined = self._joined()
             candidates = ([combined] if combined else []) + risks
-            chosen = next((r for r in candidates if self.deduper.fresh(r)), None)
+            chosen = next((r for r in candidates
+                           if Deduper.key(r) not in self._inflight and self.deduper.fresh(r)), None)
             tools = joined.running_tools(self._snapshot)
         extra, provisional = (), False
         if chosen is None and self.guardian is not None and not text.is_allowlisted(page["url"]):
@@ -317,8 +365,9 @@ class RiskWire:
             if soft.soft_gate(extra):
                 candidate = Risk("scam_popup", "medium", "This page has several warning signs.", page["url"],
                                  source="risk.soft")
-                if self.deduper.fresh(candidate):
-                    chosen, provisional = candidate, True
+                with self._lock:
+                    if Deduper.key(candidate) not in self._inflight and self.deduper.fresh(candidate):
+                        chosen, provisional = candidate, True
         if chosen and self.guardian is not None:
             before = chosen
             chosen = self._second_opinion(chosen, page, risks, beh, tools, extra, provisional)
@@ -326,7 +375,7 @@ class RiskWire:
                 self.deduper.forget(before)
         if chosen:
             with self._lock:
-                self._tab_ids[(domains.host_of(chosen.url), chosen.kind)] = page["tab_id"]
+                self._tab_ids[Deduper.key(chosen)] = page["tab_id"]
             self.bus.publish("risk", chosen)
 
     def _second_opinion(self, chosen, page, risks, beh, tools, extra=(), provisional=False):
@@ -413,7 +462,8 @@ class RiskWire:
                     risks.append(combined)
             risks.extend(Risk("remote_access", e.severity, _evidence(e.evidence),
                               app=e.tool, source="risk.process") for e in events)
-            fresh = [r for r in risks if self.deduper.fresh(r)]
+            fresh = [r for r in risks
+                     if Deduper.key(r) not in self._inflight and self.deduper.fresh(r)]
         for risk in fresh:
             self.bus.publish("risk", risk)
 
@@ -429,6 +479,8 @@ class RiskWire:
     def reset(self):
         """Clear rehearsal/page memory without replenishing the AI spend budget."""
         with self._lock:
+            self._generation += 1
+            self._inflight.clear()
             self.deduper.clear()
             self._marks.clear()
             self._tab_ids.clear()

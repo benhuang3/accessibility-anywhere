@@ -26,6 +26,12 @@ run for real), **PROPOSED** (nobody has agreed yet). If this document and the co
 
 ## 2. What the user sees
 
+Cooldowns now follow the final answer per host (or app) and risk kind. Yes runs the action and allows an immediate warning on return.
+No opens a fresh 20-second question: "Are you sure? Scammers often say it's safe to continue." **Close it** runs the same action and
+clears the key; **Keep it open** snoozes it for 30 minutes. Either question timing out snoozes it for two minutes. Pending questions
+suppress duplicates. Only the first question has the joined-risk pause and contact button; automatic alerts are unchanged.
+`risk_decision` reports `key`, final `answer` (`yes`, `no`, `timeout`), and `snooze_seconds`. Reset clears cooldowns.
+
 1. A risky page appears. Within a few seconds a panel slides in at the top of the screen (no animation): "Ally safety check", a bold
    title ("This looks like a scam."), two sentences saying what Ally sees and what is safe to do, the question, and two large buttons
    **Yes, close it** / **No, keep it**. Ally also speaks the warning and the question. The current `NullVoice` cannot hear an answer.

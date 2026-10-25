@@ -24,7 +24,7 @@ def asked_offer(risk, **kwargs):
     def ask(offer):
         offers.append(offer)
         done.set()
-        return "no"
+        return "timeout"
 
     wire = RiskWire(bus, snapshot_fn=lambda: [], ask=ask, **kwargs)
     wire.start()
@@ -270,7 +270,7 @@ class AutoAlertTests(unittest.TestCase):
         def ask(offer):
             offers.append(offer)
             asked.set()
-            return "no"
+            return "timeout"
 
         wire = self.make_wire(send=send, ask=ask)
         try:
@@ -293,7 +293,7 @@ class AutoAlertTests(unittest.TestCase):
                 def ask(offer):
                     offers.append(offer)
                     asked.set()
-                    return "no"
+                    return "timeout"
 
                 wire = self.make_wire(url=self.MEET, ask=ask,
                                       call=lambda *args: opened.append(args) or {"opened": True})
@@ -314,7 +314,7 @@ class AutoAlertTests(unittest.TestCase):
         def ask(offer):
             offers.append(offer)
             asked.set()
-            return "no"
+            return "timeout"
 
         wire = self.make_wire(ask=ask)
         self.warn(wire)
@@ -335,7 +335,7 @@ class AutoAlertTests(unittest.TestCase):
         def ask(offer):
             offers.append(offer)
             asked.set()
-            return "no"
+            return "timeout"
 
         def call(*args):
             opened.set()
@@ -373,7 +373,7 @@ class AutoAlertTests(unittest.TestCase):
         def ask(offer):
             offers.append(offer)
             asked.set()
-            return "no"
+            return "timeout"
 
         wire = self.make_wire(send=send, ask=ask)
         self.warn(wire)
