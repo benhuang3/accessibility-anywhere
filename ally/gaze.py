@@ -63,6 +63,23 @@ def download_face_model(path: Path, timeout: float = 60) -> None:
     tmp.replace(path)
 
 
+def choice_center(screen, n: int, index: int) -> tuple[float, float]:
+    """Centre of the card area `choice_index` uses, in screen pixels."""
+    w = max(int(screen[0]), 1)
+    h = max(int(screen[1]), 1)
+    n = int(n)
+    index = int(index)
+    if n <= 2:
+        col = 0 if index <= 0 else 1
+        return (col + 0.5) * w / 2.0, h / 2.0
+    if n == 3:
+        col = min(2, max(0, index))
+        return (col + 0.5) * w / 3.0, h / 2.0
+    col = index % 2
+    row = 0 if index < 2 else 1
+    return (col + 0.5) * w / 2.0, (row + 0.5) * h / 2.0
+
+
 def choice_index(x: float, y: float, screen, n: int) -> int:
     """Which large area a point is in. 2: left/right. 3: columns. 4: quadrants, top-left first."""
     w = max(int(screen[0]), 1)
@@ -79,10 +96,10 @@ def choice_index(x: float, y: float, screen, n: int) -> int:
     return row * 2 + col
 
 
-def ongoing_choice(points, screen, n: int, now: float, hold: float = 0.8, gap: float = 0.4):
-    """Area index the latest points have stayed in for `hold` seconds, or None.
+def dwell_choice(points, screen, n: int, now: float, hold: float = 0.8, gap: float = 0.4):
+    """(area index, start, end) when the latest points have stayed in one card for `hold` seconds.
 
-    Region-sized areas, so this still works when the tracker is only okay.
+    Region-sized areas, so this still works when the tracker is only okay. None when they have not.
     """
     now = float(now)
     rows = [p for p in points if now - (float(hold) + 0.6) <= p[0] <= now]
@@ -99,7 +116,13 @@ def ongoing_choice(points, screen, n: int, now: float, hold: float = 0.8, gap: f
         start = prev[0]
     if rows[-1][0] - start + 0.1 < float(hold):
         return None
-    return idx
+    return idx, float(start), float(rows[-1][0])
+
+
+def ongoing_choice(points, screen, n: int, now: float, hold: float = 0.8, gap: float = 0.4):
+    """Area index the latest points have stayed in for `hold` seconds, or None."""
+    found = dwell_choice(points, screen, n, now, hold, gap)
+    return None if found is None else found[0]
 
 
 def cursor_pos() -> tuple[int, int] | None:
@@ -689,8 +712,12 @@ class GazeManager:
         deadline = clock() + float(timeout)
         try:
             while clock() < deadline and not (stop is not None and stop()):
-                idx = ongoing_choice(list(self.points), self.screen, len(options), clock(), hold)
-                if idx is not None:
+                found = dwell_choice(list(self.points), self.screen, len(options), clock(), hold)
+                if found is not None:
+                    idx, t0, t1 = found
+                    cx, cy = choice_center(self.screen, len(options), idx)
+                    # The helper still has the feature frames from this dwell. One line teaches it.
+                    self.send(f"choice {t0:.3f} {t1:.3f} {cx:.1f} {cy:.1f}")
                     return options[idx]
                 sleep(0.05)
             return None

@@ -15,7 +15,7 @@ Recordings store numbers only (landmarks, blendshapes, the face matrix, dot time
 
 ## Set up
 
-With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This takes about a minute and a half. `[gaze] calibration_poses = 1` is the older single sitting, about a minute.
+With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This takes about 45 seconds. `[gaze] calibration_poses = 1` is the 9 dots only, about 30 seconds.
 
 ## What you can say
 
@@ -32,6 +32,7 @@ With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This tak
   page. Say "follow my eyes slower" or "follow my eyes faster". That is saved as `[gaze] pan_speed`.
 - A yes or no by looking: Ally shows the choices as large cards. Two choices use the left and right
   halves of the screen. Look at one for about a second. Up to four choices. If you don't settle, Ally says none.
+  That look also teaches the tracker: the features from the dwell, and the centre of the chosen card.
 - "Check my eye tracker": only the 5 check dots, about 10 seconds. Ally re-tunes the saved model
   from those dots (a shift, not a new fit) and says how far off it was before and after.
 - "Set up my eyes" runs the full setup again.
@@ -46,7 +47,10 @@ once: "Your position changed. Say check my eye tracker to re-tune it." It waits 
 saying that again.
 
 Clicks can improve the estimate after setup (`click_learning`, on by default). The click is two
-numbers used on this computer. It is not saved as a picture and it is not sent anywhere. Set
+numbers used on this computer. It is not saved as a picture and it is not sent anywhere. What the
+tracker has learned from those clicks is written next to the calibration (feature numbers, screen
+points, and times only), at most once a minute and when the camera helper exits, and read back
+when Ally starts. A new setup throws that away and starts fresh. Set
 `click_learning = false` to turn that off.
 
 `features` defaults to `v5`. v5 is the v4 head model (where the head is, plus an eye angle learned at
@@ -78,7 +82,7 @@ The screen waits until the setup looks right, then holds for about 3 seconds. Yo
 - "turn on a light in front of you"
 - "Center your head and look at the screen."
 
-Then 13 dots: the 3x3 grid, plus 4 between the center and the corners. These are pose `normal`. A ring shrinks onto each dot for 0.8 seconds. The next 1.5 seconds are kept, skipping blinks. A dot with fewer than 10 good frames is shown once more at the end. The same happens, once, when the head turns more than about 3 degrees during a dot, or sits that far from the pose at the first dot of that round. That repeat says: keep your head still, look with your eyes only.
+Then 9 dots: the 3x3 grid, center first. These are pose `normal`. A ring shrinks onto each dot for 0.8 seconds. The next 1.5 seconds are kept, skipping blinks. A dot with fewer than 10 good frames is shown once more at the end. The same happens, once, when the head turns more than about 3 degrees during a dot, or sits that far from the pose at the first dot of that round. That repeat says: keep your head still, look with your eyes only.
 
 With `calibration_poses = 3` (the default), two short rounds follow. Ally says "Sit back a little", waits until that position holds still, and collects 5 dots tagged pose `back`. Then "Lean in a little", and 5 dots tagged pose `close`. Each round judges a turned head against its own first dot. `calibration_poses = 1` skips those rounds.
 

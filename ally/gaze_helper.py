@@ -3,7 +3,7 @@
     {"ready": true, "calibrated": false}         camera and face model work
     {"t": 1730000000.1, "x": 812, "y": 403, "r": 140}  where the user looks, and how unsure that frame is (pixels)
     {"t": ..., "face": true} / {"face": false}   face seen but not calibrated / no face (a few per second)
-    {"calibrated": true, "error_px": 140, "dots": 13, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
+    {"calibrated": true, "error_px": 140, "dots": 9, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
                                            calibration done ({"calibrated": false, "why": "..."} if not)
     {"t": ..., "f": {"squint_l": 0.21, ...}}     face numbers for struggle sensing (with "signals": true)
     {"camera_off": true}                         the camera-on window was clicked; the camera then closes
@@ -13,8 +13,12 @@ Settings "gaze" (default true) turns gaze points on; "signals" sends face number
 "signals_fps". Frames never leave this process and are never written to disk.
 
 Commands on stdin: "calibrate" or "calibrate 1" / "calibrate 3" (head positions); "check" runs only the 5 check dots; "stop" cancels a calibration in
-progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not saved
-and is not sent anywhere); "choose {json}" shows 2 to 4 large cards and "choose off" closes them;
+progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not
+sent anywhere). What that learning has learned is saved next to the calibration, as numbers only,
+at most once a minute and on exit, and restored on start. A new calibration starts fresh.
+"choose {json}" shows 2 to 4 large cards and "choose off" closes them;
+"choice <t0> <t1> <x> <y>" learns from a look that settled on a card (features from that dwell,
+the card centre as the target);
 "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
 "card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds) and
 "card off" closes it. The card also closes itself after seconds. "dot on" / "dot off" show or hide
@@ -46,7 +50,7 @@ HUD_SCALE = 0.9
 HUD_THICK = 2
 HUD_STEP = 36
 HUD_FOOTER = "Nothing is saved."
-# 3x3 grid, inset from the edges, then the four midpoints between the center and the corners.
+# 3x3 grid, inset from the edges. The setup uses these 9 dots, center first.
 GRID_X = (0.08, 0.50, 0.92)
 GRID_Y = (0.10, 0.50, 0.90)
 READY_SECONDS = 3.0
@@ -62,8 +66,9 @@ HEAD_RETRY_LINE = "Keep your head still, look with your eyes only."
 SIT_BACK = "Sit back a little"
 LEAN_IN = "Lean in a little"
 POSE_NORMAL, POSE_BACK, POSE_CLOSE = "normal", "back", "close"
-MINUTE = "About a minute."
-MINUTE_HALF = "About a minute and a half."
+# 9 dots are about 30 seconds. With the two head-position rounds, the same recording is about 45.
+ABOUT_30 = "About 30 seconds."
+ABOUT_45 = "About 45 seconds."
 RESULT_SECONDS = 4.0
 MIN_OPEN = 0.12  # eye openness below this is a blink: skip the frame
 JUMP = 0.08  # change in iris position (eye widths) that means the eye jumped: skip that frame
@@ -144,10 +149,6 @@ def open_camera(index: int):
     return None
 
 
-def _mid(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
-    return (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
-
-
 def _third(pos: float) -> int:
     if pos < 1.0 / 3.0:
         return 0
@@ -162,14 +163,10 @@ def grid_points() -> list[tuple[float, float]]:
 
 
 def calibration_points() -> list[tuple[float, float]]:
-    """13 dots: the 3x3 grid, center first, then the four dots between the center and the corners."""
+    """9 dots: the 3x3 grid, center first. The corner midpoints are not part of the setup."""
     grid = grid_points()
     center = (GRID_X[1], GRID_Y[1])
-    corners = (
-        (GRID_X[0], GRID_Y[0]), (GRID_X[2], GRID_Y[0]),
-        (GRID_X[0], GRID_Y[2]), (GRID_X[2], GRID_Y[2]),
-    )
-    return [center] + [p for p in grid if p != center] + [_mid(c, center) for c in corners]
+    return [center] + [p for p in grid if p != center]
 
 
 def cell_index(nx: float, ny: float) -> int:
@@ -222,7 +219,7 @@ def _pose_summary(poses: list[tuple[float, float]]) -> tuple[float, tuple[float,
 
 
 def pose_count(value) -> int:
-    """3 runs the extra sit-back and lean-in rounds. 1 is the original 13 dots only."""
+    """3 runs the extra sit-back and lean-in rounds. 1 is the 9 grid dots only."""
     try:
         n = int(value)
     except (TypeError, ValueError):
@@ -231,8 +228,11 @@ def pose_count(value) -> int:
 
 
 def setup_duration(poses: int = 3) -> str:
-    """The time shown and spoken before the dots. The extra rounds add about half a minute."""
-    return MINUTE if pose_count(poses) <= 1 else MINUTE_HALF
+    """The time shown and spoken before the dots.
+
+    Nine grid dots take about 30 seconds. The two head-position rounds make it about 45.
+    """
+    return ABOUT_30 if pose_count(poses) <= 1 else ABOUT_45
 
 
 def intro_lines(instruction: str = "", poses: int = 3) -> list[str]:
@@ -320,11 +320,11 @@ def eye_jumped(prev, vector, limit: float = JUMP) -> bool:
 
 CLICK_LAG = 0.1  # people look at a spot, then click; the look is a little earlier than the click
 CLICK_SLACK = 0.25  # ignore a click when no frame is this close to that moment
-FEATURE_MEMORY = 1.0  # seconds of recent feature vectors kept for click correction
+FEATURE_MEMORY = 3.0  # recent feature vectors: a click needs the look just before it, a choice needs the dwell
 
 
 class RecentFeatures:
-    """About one second of feature vectors, so a click can use the look just before it."""
+    """A few seconds of feature vectors, so a click or a look-to-answer can use that look."""
 
     def __init__(self, seconds: float = FEATURE_MEMORY):
         self.seconds = float(seconds)
@@ -351,12 +351,56 @@ def nearest_click_frame(frames, click_time, lag: float = CLICK_LAG, slack: float
     return best
 
 
+def add_sample(corrector, features, target, t, source: str = "click") -> bool:
+    """One learning sample. `source` is sent only when this Corrector.add accepts it."""
+    if corrector is None or not hasattr(corrector, "add"):
+        return False
+    kwargs = {}
+    try:
+        import inspect
+        if "source" in inspect.signature(corrector.add).parameters:
+            kwargs["source"] = source
+    except (TypeError, ValueError):
+        kwargs = {}
+    try:
+        return bool(corrector.add(features, target, float(t), **kwargs))
+    except TypeError:
+        if not kwargs:
+            return False
+        return bool(corrector.add(features, target, float(t)))
+
+
 def apply_click(corrector, frames, t, x, y) -> bool:
     """Teach the corrector from the frame nearest 0.1 s before this click. False if none qualifies."""
     frame = nearest_click_frame(frames, t)
     if frame is None or corrector is None:
         return False
-    return bool(corrector.add(frame[1], (float(x), float(y)), float(t)))
+    return add_sample(corrector, frame[1], (float(x), float(y)), float(t), "click")
+
+
+def apply_choice(corrector, frames, t0, t1, x, y) -> bool:
+    """One choice sample: features from the middle of the dwell, target at the card centre."""
+    if corrector is None:
+        return False
+    try:
+        start, end = float(t0), float(t1)
+    except (TypeError, ValueError):
+        return False
+    if end < start:
+        start, end = end, start
+    picked = []
+    for frame in frames or []:
+        try:
+            stamp = float(frame[0])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if start - 0.05 <= stamp <= end + 0.05:
+            picked.append(frame)
+    if not picked:
+        return False
+    mid = (start + end) / 2.0
+    best = min(picked, key=lambda frame: abs(float(frame[0]) - mid))
+    return add_sample(corrector, best[1], (float(x), float(y)), float(best[0]), "choice")
 
 
 _FEATURE_SETS = ("v1", "v2", "v3", "v4", "v5")
@@ -628,14 +672,227 @@ def retune_check(model: dict, samples: list) -> dict:
             "validation": tuned.get("validation"), "grade": result_grade(after)}
 
 
+LEARNING_EVERY = 60.0  # what click learning has learned is written at most this often
+# A list this long whose items are also long is a picture, not feature samples.
+_BITMAP = 64
+_IMAGE_KEYS = frozenset({
+    "image", "images", "jpeg", "jpg", "png", "pixels", "pixel", "video", "picture", "bitmap",
+})
+
+
+def learning_path(calib_path) -> Path:
+    """File next to the calibration. The calibration file itself stays the fitted model."""
+    path = Path(calib_path)
+    return path.with_name(path.stem + ".learning.json")
+
+
+def _model_stamp(model) -> str | None:
+    """Identity of a calibration. A new fit has a new stamp, so old learning does not apply."""
+    if not isinstance(model, dict):
+        return None
+    created = model.get("created")
+    if isinstance(created, bool) or not isinstance(created, (int, float)):
+        return None
+    return format(float(created), ".6f")
+
+
+def _plain_learning(value, depth: int = 0) -> bool:
+    """True for feature numbers, screen points, times, and short labels. Not a picture."""
+    if depth > 8:
+        return False
+    if value is None or isinstance(value, bool):
+        return True
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, str):
+        return len(value) <= 80 and "\x00" not in value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return False
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str) or len(key) > 40 or key.lower() in _IMAGE_KEYS:
+                return False
+            if not _plain_learning(item, depth + 1):
+                return False
+        return True
+    if isinstance(value, (list, tuple)):
+        if len(value) > 5000:
+            return False
+        if len(value) > _BITMAP:
+            for item in value:
+                if isinstance(item, (list, tuple)) and len(item) > _BITMAP:
+                    return False
+        return all(_plain_learning(item, depth + 1) for item in value)
+    return False
+
+
+def _jsonable(value):
+    """Plain JSON values. Numeric array types become lists, without importing them."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, tuple):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    as_list = getattr(value, "tolist", None)
+    if callable(as_list):
+        try:
+            return _jsonable(as_list())
+        except Exception:
+            pass
+    as_item = getattr(value, "item", None)
+    if callable(as_item):
+        try:
+            return _jsonable(as_item())
+        except Exception:
+            pass
+    return value
+
+
+def learning_document(corrector, model) -> dict | None:
+    """The corrector's own state, or None when it cannot be stored safely."""
+    if corrector is None or not hasattr(corrector, "to_dict"):
+        return None
+    stamp = _model_stamp(model)
+    if stamp is None:
+        return None
+    try:
+        data = _jsonable(corrector.to_dict())
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not _plain_learning(data):
+        return None
+    return {"created": stamp, "corrector": data}
+
+
+def save_learning(path, corrector, model) -> bool:
+    """Write what learning has learned. False when there is nothing safe to store."""
+    doc = learning_document(corrector, model)
+    if doc is None:
+        return False
+    try:
+        text = json.dumps(doc, allow_nan=False)
+    except (TypeError, ValueError):
+        return False
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / (path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def load_learning(path, model) -> dict | None:
+    """Saved corrector state for this calibration, or None when it is missing or stale."""
+    stamp = _model_stamp(model)
+    if stamp is None:
+        return None
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or not _plain_learning(doc):
+        return None
+    if doc.get("created") != stamp:
+        return None
+    data = doc.get("corrector")
+    return data if isinstance(data, dict) else None
+
+
+def restore_corrector(model, data, click_learning: bool, factory=None):
+    """A corrector for this model. Restores `data` when Corrector.from_dict exists.
+
+    Without that API, or when `data` is empty, this is a fresh corrector. Click learning
+    off returns None.
+    """
+    if factory is None:
+        from ally import gaze_model
+        factory = gaze_model.Corrector
+    if not click_learning or not model:
+        return None
+    if data and hasattr(factory, "from_dict"):
+        try:
+            restored = factory.from_dict(model, data)
+        except Exception:
+            restored = None
+        if restored is not None:
+            return restored
+    try:
+        return factory(model)
+    except Exception:
+        return None
+
+
+class LearningStore:
+    """Writes the corrector at most once a minute, and whenever save() is called on exit."""
+
+    def __init__(self, path, interval: float = LEARNING_EVERY):
+        self.path = Path(path)
+        self.interval = float(interval)
+        self.dirty = False
+        self.saved_at: float | None = None
+
+    def mark(self) -> None:
+        self.dirty = True
+
+    def due(self, now: float) -> bool:
+        if not self.dirty:
+            return False
+        if self.saved_at is None:
+            return True
+        return float(now) - self.saved_at >= self.interval
+
+    def save(self, corrector, model, now: float | None = None) -> bool:
+        """Write now. Used on exit, so it does not wait for the minute."""
+        if not self.dirty or corrector is None or not hasattr(corrector, "to_dict"):
+            return False
+        try:
+            ok = save_learning(self.path, corrector, model)
+        except OSError:
+            ok = False
+        self.saved_at = time.monotonic() if now is None else float(now)
+        if ok:
+            self.dirty = False
+        return ok
+
+    def maybe_save(self, corrector, model, now: float) -> bool:
+        if not self.due(now):
+            return False
+        return self.save(corrector, model, now)
+
+    def clear(self) -> None:
+        """A new calibration starts with nothing learned."""
+        self.dirty = False
+        self.saved_at = None
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+
+
 def adopt_model(path, screen, camera: int, click_learning: bool):
-    """The model a check just saved, and a fresh click corrector. (None, None) if it cannot be used."""
+    """The model a check just saved, and its click corrector. (None, None) if it cannot be used.
+
+    Learning saved beside the calibration is restored when it belongs to this model.
+    """
     from ally import gaze_model
 
     loaded = kept_model(gaze_model.load(path, screen), camera)
     if not loaded:
         return None, None
-    corrector = gaze_model.Corrector(loaded) if click_learning else None
+    data = load_learning(learning_path(path), loaded)
+    corrector = restore_corrector(loaded, data, click_learning, gaze_model.Corrector)
     return loaded, corrector
 
 
@@ -691,7 +948,7 @@ class _Dot:
 
 
 class Setup:
-    """Readiness, 13 calibration dots, one retry, then 5 check dots. No camera and no window."""
+    """Readiness, 9 calibration dots, one retry, then 5 check dots. No camera and no window."""
 
     def __init__(self, screen: tuple[int, int], rng: random.Random | None = None,
                  ready_seconds: float = READY_SECONDS, min_good: int = MIN_GOOD, on_target=None,
@@ -1080,7 +1337,7 @@ class Setup:
 
 
 class Calibration:
-    """Full-screen setup: readiness, 13 dots, optional sit-back and lean-in rounds, then 5 check dots."""
+    """Full-screen setup: readiness, 9 dots, optional sit-back and lean-in rounds, then 5 check dots."""
 
     def __init__(self, size: tuple[int, int], on_target=None, rng: random.Random | None = None,
                  ready_seconds: float = READY_SECONDS, poses: int = 3):
@@ -1548,6 +1805,14 @@ def classify_command(cmd: str) -> tuple[str, object]:
         if cmd.startswith("choose"):
             spec = parse_choose(cmd[6:].strip())
             return ("choose", spec) if spec else ("ignore", None)
+        if cmd.startswith("choice "):
+            parts = cmd.split()
+            if len(parts) != 5:
+                return "ignore", None
+            try:
+                return "choice", (float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4]))
+            except ValueError:
+                return "ignore", None
         if cmd.startswith("click "):
             parts = cmd.split()
             if len(parts) != 4:
@@ -1943,7 +2208,8 @@ def main(argv: list[str]) -> int:
     calib_path = Path(cfg.get("calibration", "gaze_calibration.json"))
     camera = int(cfg.get("camera", 0))
     model = kept_model(gaze_model.load(calib_path, size), camera)
-    corrector = gaze_model.Corrector(model) if model is not None and click_learning else None
+    learning = LearningStore(learning_path(calib_path))
+    corrector = restore_corrector(model, load_learning(learning.path, model), click_learning)
     recent = RecentFeatures()
     try:
         landmarker = vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(
@@ -2026,7 +2292,12 @@ def main(argv: list[str]) -> int:
                     corrector = new_corrector
                     recent = RecentFeatures()
             elif kind == "click" and corrector is not None and calib is None:
-                apply_click(corrector, recent.frames, payload[0], payload[1], payload[2])
+                if apply_click(corrector, recent.frames, payload[0], payload[1], payload[2]):
+                    learning.mark()
+            elif kind == "choice" and corrector is not None and calib is None:
+                t0, t1, x, y = payload
+                if apply_choice(corrector, recent.frames, t0, t1, x, y):
+                    learning.mark()
             elif kind == "hud_off":
                 if hud:
                     try:
@@ -2079,6 +2350,7 @@ def main(argv: list[str]) -> int:
                     cv2.destroyAllWindows()
                 except Exception:
                     pass
+                learning.save(corrector, model)
                 return 1
             time.sleep(0.05)
             continue
@@ -2182,7 +2454,8 @@ def main(argv: list[str]) -> int:
                     try:
                         gaze_model.save(checked, calib_path)
                         model = checked
-                        corrector = gaze_model.Corrector(model) if click_learning else None
+                        learning.clear()  # a new calibration starts with nothing learned
+                        corrector = restore_corrector(model, None, click_learning)
                         recent = RecentFeatures()
                     except OSError as e:
                         result = {"calibrated": False, "why": f"couldn't save the calibration ({e})"}
@@ -2229,6 +2502,7 @@ def main(argv: list[str]) -> int:
             emit({"t": round(now, 3), "x": px, "y": py, "r": radius})
             dot.set_view(*view)
             dot.update(px, py, radius, face=True, calibrated=True)
+        learning.maybe_save(corrector, model, time.monotonic())
         spare = period - (time.monotonic() - tick)
         if spare > 0:
             time.sleep(spare)
@@ -2243,6 +2517,7 @@ def main(argv: list[str]) -> int:
         cv2.destroyAllWindows()
     except Exception:
         pass
+    learning.save(corrector, model)
     return 0
 
 

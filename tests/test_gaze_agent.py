@@ -14,8 +14,10 @@ from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
 from ally import gaze_element
 from ally.doctor import describe_calibration
-from ally.gaze import RETUNE_OFFER, GazeManager, choice_index, ongoing_choice
-from ally.gaze_helper import RecentFeatures, adopt_model, apply_click, classify_command, nearest_click_frame
+from ally.gaze import RETUNE_OFFER, GazeManager, choice_center, choice_index, ongoing_choice
+from ally.gaze_helper import (FEATURE_MEMORY, LearningStore, RecentFeatures, adopt_model, apply_choice,
+                              apply_click, classify_command, learning_path, load_learning,
+                              nearest_click_frame, restore_corrector, save_learning)
 from ally.registry import ToolError
 from ally.senses import clickable
 from ally.senses.manager import Senses
@@ -197,9 +199,12 @@ class ClickTests(unittest.TestCase):
         recent = RecentFeatures()
         for t in (0.0, 0.50, 0.85, 1.00, 1.20):
             recent.add(t, [t])
-        self.assertTrue(all(frame[0] >= 0.2 for frame in recent.frames))
+        # The buffer covers a dwell (a few seconds), so these close frames all stay.
+        self.assertGreaterEqual(FEATURE_MEMORY, 2.0)
+        self.assertEqual([frame[0] for frame in recent.frames], [0.0, 0.50, 0.85, 1.00, 1.20])
+        recent.add(0.0 + FEATURE_MEMORY + 0.1, ["later"])
         self.assertNotIn(0.0, [frame[0] for frame in recent.frames])
-        picked = nearest_click_frame(recent.frames, 1.0)
+        picked = nearest_click_frame([(0.0, ["old"]), (0.85, ["look"]), (1.0, ["click"])], 1.0)
         self.assertEqual(picked[0], 0.85)
 
         class Recorder:
@@ -215,6 +220,189 @@ class ClickTests(unittest.TestCase):
         self.assertTrue(apply_click(recorder, frames, 2.0, 8, 9))
         self.assertEqual(recorder.got, (["look"], (8.0, 9.0), 2.0))
         self.assertIsNone(nearest_click_frame([(0.0, ["old"])], 2.0))
+
+    def test_a_settled_look_sends_a_choice_sample(self):
+        screen = (1920, 1080)
+        self.assertEqual(choice_center(screen, 2, 0), (480.0, 540.0))
+        self.assertEqual(choice_center(screen, 2, 1), (1440.0, 540.0))
+        self.assertEqual(choice_center(screen, 4, 3), (1440.0, 810.0))
+        gaze, _agent = manager()
+        stdin = _Stdin()
+        gaze.proc = types.SimpleNamespace(poll=lambda: None, stdin=stdin)
+        for i in range(10):
+            gaze.points.append((10.0 + i * 0.1, 100, 400, 40))
+        clock = {"now": 10.9}
+
+        def sleep(_dt):
+            clock["now"] += 1.0
+
+        self.assertEqual(gaze.choose(["Yes", "No"], timeout=2, clock=lambda: clock["now"], sleep=sleep), "Yes")
+        line = [item for item in stdin.buf.splitlines() if item.startswith("choice ")]
+        self.assertEqual(line, ["choice 10.000 10.900 480.0 540.0"])
+        kind, payload = classify_command(line[0])
+        self.assertEqual(kind, "choice")
+        self.assertEqual(payload, (10.0, 10.9, 480.0, 540.0))
+
+        class _Choice:
+            def __init__(self):
+                self.got = None
+
+            def add(self, features, target, t, source="click"):
+                self.got = (list(features), tuple(target), t, source)
+                return True
+
+        corrector = _Choice()
+        frames = [(10.0, ["start"]), (10.45, ["middle"]), (10.9, ["end"]), (12.0, ["later"])]
+        self.assertTrue(apply_choice(corrector, frames, *payload))
+        self.assertEqual(corrector.got, (["middle"], (480.0, 540.0), 10.45, "choice"))
+        self.assertFalse(apply_choice(corrector, [(1.0, ["old"])], *payload))
+
+        class _NoSource:
+            def __init__(self):
+                self.got = None
+
+            def add(self, features, target, t):
+                self.got = (list(features), tuple(target), t)
+                return True
+
+        plain = _NoSource()
+        self.assertTrue(apply_choice(plain, frames, *payload))
+        self.assertEqual(plain.got[0], ["middle"])
+        self.assertEqual(plain.got[1], (480.0, 540.0))
+
+
+class _Learned:
+    """Stand-in for Corrector when to_dict and from_dict are not on the branch yet."""
+
+    def __init__(self, model, samples=None):
+        self.model = model
+        self.samples = list(samples or [])
+
+    def to_dict(self):
+        return {"samples": [dict(sample) for sample in self.samples]}
+
+    @classmethod
+    def from_dict(cls, model, data):
+        return cls(model, (data or {}).get("samples"))
+
+
+class _BareCorrector:
+    def __init__(self, model):
+        self.model = model
+
+
+class LearningTests(unittest.TestCase):
+    def _model(self):
+        return {"created": 20.5, "dots": 9, "offset": [0.0, 0.0]}
+
+    def _sample(self):
+        return {"features": [0.1, -0.2, 0.3], "target": [80.0, 120.0], "t": 4.5, "source": "click"}
+
+    def test_save_and_restore_round_trip(self):
+        from ally import gaze_model
+
+        model = self._model()
+        sample = self._sample()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = learning_path(Path(tmp) / "gaze_calibration.json")
+            learned = _Learned(model, [sample])
+            self.assertTrue(save_learning(path, learned, model))
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("png", text)
+            self.assertNotIn("image", text.lower())
+            loaded = load_learning(path, model)
+            self.assertEqual(loaded["samples"], [sample])
+            restored = restore_corrector(model, loaded, True, _Learned)
+            self.assertEqual(restored.samples, [sample])
+            # A new calibration has a new stamp, so the old file does not come back.
+            self.assertIsNone(load_learning(path, {"created": 99.0, "dots": 9}))
+            self.assertIsNone(restore_corrector(model, loaded, False, _Learned))
+            store = LearningStore(path)
+            store.clear()
+            self.assertFalse(path.exists())
+            fresh = restore_corrector(model, None, True, _Learned)
+            self.assertEqual(fresh.samples, [])
+
+            if hasattr(gaze_model.Corrector, "to_dict") and hasattr(gaze_model.Corrector, "from_dict"):
+                real = gaze_model.Corrector(model)
+                self.assertTrue(hasattr(real, "to_dict"))
+            else:
+                bare = restore_corrector(model, loaded, True, _BareCorrector)
+                self.assertIsInstance(bare, _BareCorrector)
+                self.assertFalse(hasattr(gaze_model.Corrector, "to_dict"))
+                self.assertFalse(hasattr(gaze_model.Corrector, "from_dict"))
+
+    def test_helper_does_not_import_the_network_or_write_pictures(self):
+        text = (ROOT / "ally" / "gaze_helper.py").read_text(encoding="utf-8")
+        for word in ("urllib", "socket", "requests", "imwrite", "VideoWriter", "imencode"):
+            self.assertNotIn(word, text)
+
+    def test_pictures_are_not_written(self):
+        model = self._model()
+
+        class _Pictured:
+            def to_dict(self):
+                return {"rows": [[0] * 80 for _ in range(80)]}
+
+        class _Named:
+            def to_dict(self):
+                return {"png": [1, 2, 3]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "gaze.learning.json"
+            self.assertFalse(save_learning(path, _Pictured(), model))
+            self.assertFalse(save_learning(path, _Named(), model))
+            self.assertFalse(path.exists())
+
+    def test_saves_at_most_once_a_minute_and_on_exit(self):
+        model = self._model()
+        learned = _Learned(model, [self._sample()])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "gaze.learning.json"
+            store = LearningStore(path, interval=60)
+            store.mark()
+            self.assertTrue(store.maybe_save(learned, model, 1000))
+            learned.samples.append({"features": [1.0], "target": [2.0, 3.0], "t": 9.0, "source": "click"})
+            store.mark()
+            self.assertFalse(store.maybe_save(learned, model, 1030))
+            self.assertNotIn("9.0", path.read_text(encoding="utf-8"))
+            self.assertTrue(store.save(learned, model, 1030))
+            self.assertIn("9.0", path.read_text(encoding="utf-8"))
+            self.assertFalse(store.save(learned, model, 1031))
+
+    def test_adopt_model_restores_the_sidecar(self):
+        import numpy as np
+
+        from ally import gaze_model
+
+        gaze, _agent = manager()
+        screen = gaze.screen
+        rnd = np.random.default_rng(3)
+        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.1, 0.5, 0.9) for fx in (0.08, 0.5, 0.92)]
+        trained = []
+        for tx, ty in dots:
+            for _ in range(8):
+                u, v = tx / screen[0] - 0.5, ty / screen[1] - 0.5
+                feat = [0.3 * u, 0.2 * v, 0.8 * u, 0.6 * v, 0, 0, 0, 0, 0.4]
+                feat = (np.array(feat) + rnd.normal(0, 0.001, 9)).tolist()
+                trained.append((feat, (tx, ty)))
+        model = gaze_model.fit(trained, screen)
+        model["camera"] = 0
+        gaze_model.save(model, gaze.calibration_path)
+        sample = self._sample()
+        self.assertTrue(save_learning(learning_path(gaze.calibration_path), _Learned(model, [sample]), model))
+
+        def from_dict(loaded, data):
+            made = gaze_model.Corrector(loaded)
+            made.restored = data
+            return made
+
+        with mock.patch.object(gaze_model.Corrector, "from_dict", from_dict, create=True):
+            loaded, corrector = adopt_model(gaze.calibration_path, screen, 0, True)
+        self.assertEqual(loaded["created"], model["created"])
+        self.assertEqual(corrector.restored["samples"], [sample])
+        _loaded, quiet = adopt_model(gaze.calibration_path, screen, 0, False)
+        self.assertIsNone(quiet)
 
 
 class ToolTests(unittest.TestCase):

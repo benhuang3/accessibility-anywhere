@@ -170,10 +170,11 @@ def magnify_where_i_look(ctx, level: Annotated[float, "Magnification, e.g. 2 = 2
 
 @tool(timeout=210)
 def calibrate_eye_tracker(ctx):
-    """Set up the eye tracker: dots at the usual position, then a little farther and a little closer, then a check.
+    """Set up the eye tracker: 9 dots, then sit back a little and lean in a little, then a check.
 
     Use when the user asks to calibrate or set up eye tracking, or when "what I'm looking at"
-    doesn't land where they look. With calibration_poses = 1 it is the original single sitting.
+    doesn't land where they look. With calibration_poses = 1 it is the 9 dots only.
+    About 45 seconds with the head-position rounds, about 30 seconds without them.
     """
     p = ctx.os
     level = p.view()[0]

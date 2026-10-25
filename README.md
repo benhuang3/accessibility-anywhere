@@ -104,10 +104,10 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
 
 ### Eye tracking
 
-1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About a minute and a half: Ally checks
-   that it can see your face, shows 13 dots, then asks you to sit back a little and lean in a little
+1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About 45 seconds: Ally checks
+   that it can see your face, shows 9 dots, then asks you to sit back a little and lean in a little
    (5 dots each, so head movement is part of the setup), then 5 check dots it did not train on.
-   Esc cancels. `[gaze] calibration_poses = 1` is the old single sitting, about a minute. Do this
+   Esc cancels. `[gaze] calibration_poses = 1` is the 9 dots only, about 30 seconds. Do this
    again if you move your laptop or chair a lot.
 2. Say **"Ally, what am I looking at"** for the area of the screen. On Windows, Ally also names the
    button, link, or text under that spot. **"this"**, **"that"**, and **"here"** use the same tool.
@@ -126,7 +126,8 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
    it does not get in the way), and **"hide the eye dot"** to remove it. `[gaze] show_dot` remembers
    that, and it is off until you ask.
 4. A yes or no can be answered by looking. Ally shows the choices as large cards (two choices: the
-   left half and the right half). Look at one for a moment.
+   left half and the right half). Look at one for a moment. That look teaches the tracker, using the
+   centre of the card you chose.
 5. Say **"Ally, check my eye tracker"** for the 5 check dots only (about 12 seconds), without a full setup.
 
 The check uses plain words:
@@ -144,7 +145,9 @@ too unsure, Ally uses the mouse pointer and says so.
   one download, `python scripts/get_gaze_models.py`, which puts `mobileone_s0_gaze.onnx` in `state/models`.
   The face model downloads once (3.7 MB). Video is processed on your computer and never saved; only the
   calibration (a few numbers) is kept, in `state/`. Mouse clicks can quietly improve the estimate
-  (`gaze.click_learning`, on by default). The click stays on this computer.
+  (`gaze.click_learning`, on by default). What they teach is saved next to the calibration and
+  restored when Ally starts. A new setup starts fresh. The file is feature numbers, screen points,
+  and times, not pictures. The click stays on this computer.
 - `[gaze] features` defaults to `v5`: the v4 head model plus MobileGaze yaw and pitch from `mobileone_s0`.
   If that file or onnxruntime is missing, setup and tracking use v4 and say so. A new setup uses whichever
   you set. `max_radius_px` (default 250) is when Ally stops trusting the eyes and uses the pointer.
