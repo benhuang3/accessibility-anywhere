@@ -140,6 +140,32 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 05:51 PT — Hayden (via Claude Code) — `main`, commit `4d1d50e`
+
+**Changed:** the gaze ring now moves smoothly. It is redrawn at 60 fps on its own thread, with eased
+position, size and fade and sub-pixel placement, and is drawn with numpy. Only `ally/gaze_dot.py`
+changes, and the tests pass.
+
+### Oct 25, 05:46 PT — Hayden (via Claude Code) — `main`, commit `2c0f91f`
+
+**Fixed:** "Call Priya" could not open the camera while eye tracking had it, because Windows gives
+a webcam to one program at a time. 1029 tests pass.
+- **Pause:** `GazeManager` closes the camera on `risk_call_starting`, or on `risk_contact` with
+  `call_opened`. That pauses both eye tracking and face sensing.
+- **Resume:** it reopens the camera on `risk_call_ended`, or after 45 minutes if the end is never
+  reported.
+- **Ganesh:** I added one line to `ally/risk/wire.py` `_open_call`. It publishes
+  `risk_call_starting` on the bus *before* opening the call page, so the camera is free in time.
+  It is purely additive, and nothing else in your files changed. Please keep it if you rework that
+  function, and keep publishing `risk_call_ended` when a call ends.
+
+### Oct 25, 05:28 PT — Hayden (via Claude Code) — `main`, commit `5367b3c`
+
+**Changed:** the eye-tracker marker ("show where I am looking"). It was a large yellow blob. It is
+now a thin dark ring at the edge of the estimate, sized by the tracker's uncertainty, with a small
+centre dot and a faint white edge for dark pages. Only `ally/gaze_dot.py` changes, and the eye
+tracker tests pass.
+
 ### Oct 25, ~03:45 PT — Ganesh (via Claude Code) — `risk-branch` -> `main`
 
 **Merged `risk-branch` into `main` (main merged into it first; clean). 1096 tests pass on Windows.**
