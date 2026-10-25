@@ -793,5 +793,34 @@ class ShortListenTests(unittest.TestCase):
         t.join(3)
 
 
+class StreamingWavTests(unittest.TestCase):
+    """Cartesia's WAV header says 0xFFFFFFFF for the sizes: Windows refused it and Ally waited ~25 h."""
+
+    @staticmethod
+    def streaming_wav(samples: int = 2400, rate: int = 24000) -> bytes:
+        import struct
+        pcm = b"\x00\x01" * samples
+        fmt = struct.pack("<HHIIHH", 1, 1, rate, rate * 2, 2, 16)
+        info = b"LIST" + struct.pack("<I", 4) + b"INFO"
+        return (b"RIFF" + struct.pack("<I", 0xFFFFFFFF) + b"WAVE" + b"fmt " + struct.pack("<I", 16) + fmt
+                + info + b"data" + struct.pack("<I", 0xFFFFFFFF) + pcm)
+
+    def test_sizes_are_made_real(self):
+        import struct
+        raw = self.streaming_wav()
+        self.assertGreater(speech.wav_seconds(raw), 3600)  # what Ally used to believe
+        fixed = speech.fix_wav_sizes(raw)
+        self.assertEqual(struct.unpack("<I", fixed[4:8])[0], len(fixed) - 8)
+        self.assertAlmostEqual(speech.wav_seconds(fixed), 0.1, places=3)
+        self.assertEqual(fixed[-4800:], raw[-4800:])  # the sound itself is untouched
+        self.assertEqual(speech.fix_wav_sizes(fixed), fixed)
+        self.assertEqual(speech.fix_wav_sizes(b"not a wav"), b"not a wav")
+
+    def test_cached_prompts_saved_before_the_fix_are_repaired(self):
+        cache = speech.PromptCache(tempfile.mkdtemp())
+        (cache.folder / "old.wav").write_bytes(self.streaming_wav())
+        self.assertAlmostEqual(speech.wav_seconds(cache.get("old")), 0.1, places=3)
+
+
 if __name__ == "__main__":
     unittest.main()
