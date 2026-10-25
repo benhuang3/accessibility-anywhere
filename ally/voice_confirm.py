@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -64,7 +65,12 @@ PROMPTS = {
     "buttons": "You can tap Yes or No.",  # after a re-ask that already said sorry
     "read_start": "Sure. Here it is.",
     "undone": "Okay, I put it back.",
+    "think": "Take a moment to think first.",  # "no" during a forced pause
+    "failed": "Sorry, that didn't work.",
+    "choice_buttons": "You can also tap your choice on the screen.",
 }
+SPEAK_GUESS_SECONDS = 3.0  # about how long a re-ask takes to say
+CARTESIA_MIN_SPEED = 0.6  # Cartesia's slowest speed (speech.tts_body clamps to it)
 
 # Risk kinds from the Risk contract -> (what is happening, the protective question or None).
 # "Yes" always means "take the protective action". Never reads page text out loud: a scam page's
@@ -136,7 +142,7 @@ class Intent:
 
     @property
     def decisive(self) -> bool:
-        return self.kind in ("YES", "NO", "UNDO")
+        return self.kind in ("YES", "NO", "UNDO", "STOP_ASKING")
 
 
 _PHRASES = {
@@ -161,6 +167,9 @@ _PHRASES = {
            "i don't want", "i don't want that", "don't want", "not interested", "no no"],
     "UNDO": ["undo", "undo that", "undo it", "put it back", "go back", "change it back", "revert", "too big",
              "too much", "turn it off", "back to normal", "make it smaller"],
+    # Its own answer (value "no") so the Brain can back off for longer than after a plain no.
+    "STOP_ASKING": ["stop asking", "stop asking me", "quit asking", "don't ask me again", "don't ask again",
+                    "leave me alone", "no more questions", "stop bothering me", "stop offering"],
     # "Make it stop": no to an offer, but yes to a risk question, where yes is the protective action.
     "STOP_IT": ["stop it", "stop them", "stop that", "stop this", "make it stop", "get rid of it",
                 "get me out", "get me out of here", "block it", "block them", "kick them out", "shut it down"],
@@ -230,6 +239,11 @@ def classify(text: str, question: str = "", protective: bool = False) -> Intent:
     rest = [w for w in leftover.split() if w not in _FILLERS]
     has = set(cats)
     m = tuple(matched)
+    if "STOP_ASKING" in has:
+        has.discard("STOP_ASKING")
+        if not has & {"YES", "BACKCHANNEL", "STOP_IT", "HEDGE"}:  # "please stop asking" still counts
+            return Intent("STOP_ASKING", 0.9, text, m)
+        return Intent("AMBIGUOUS", 0.3, text, m)  # "yes, stop asking": which one?
     if "STOP_IT" in has:
         has.discard("STOP_IT")
         has.add("YES" if protective else "NO")
@@ -263,6 +277,38 @@ def classify(text: str, question: str = "", protective: bool = False) -> Intent:
     if not rest and not cats:
         return Intent("EMPTY", 0.0, text)
     return Intent("AMBIGUOUS", 0.2, text, m)
+
+
+_NEGATORS = {"no", "not", "don't", "dont", "never", "nope", "nah"}
+
+
+def _option_words(option: str) -> set[str]:
+    return {w for w in normalize(option).split() if w not in _FILLERS and len(w) > 2}
+
+
+def classify_options(text: str, options: tuple, protective: bool = False) -> Intent:
+    """An answer to a question with labelled choices ("Close it" / "Keep it open"). Saying a choice's
+    words picks it: the first choice is YES, the second NO. A bare yes or no doesn't say which one,
+    and neither does a negated choice ("don't close it"), so both are AMBIGUOUS."""
+    first, second = _option_words(options[0]), _option_words(options[1])
+    words = set(normalize(text).split())
+    hit1, hit2 = bool(words & first), bool(words & second)
+    base = classify(text, "", protective)
+    if hit1 != hit2 and not (words & _NEGATORS):
+        return Intent("YES" if hit1 else "NO", 0.85, text, base.matched)
+    if base.kind in ("EMPTY", "REPEAT", "SLOWER") or (base.kind == "STOP_ASKING" and not (hit1 or hit2)):
+        return base
+    return Intent("AMBIGUOUS", 0.3, text, base.matched)
+
+
+def option_question(prompt: str, options: tuple) -> str:
+    """Speak labelled choices as one question whose words are the answers: "Are you sure? Scammers
+    often say it's safe." + ("Close it", "Keep it open") -> "Scammers often say it's safe. Should I
+    close it, or keep it open?". Questions in the prompt are dropped: a "yes" to them means nothing."""
+    sentences = re.split(r"(?<=[.!?])\s+", strip_ssml(prompt or "").strip())
+    statement = " ".join(s for s in sentences if s and not s.endswith("?"))
+    ask = f"Should I {_lower_first(options[0].strip())}, or {_lower_first(options[1].strip())}?"
+    return (statement + pause(300) + ask) if statement else ask
 
 
 # A bare opener often starts a reversal ("Yeah... no", "Sure... actually, no"), so it never ends an
@@ -310,8 +356,12 @@ class Answer:
 class _Pending:
     """The question being asked right now. The first answer wins."""
 
-    def __init__(self, prompt: str, kind: str, cancel: Callable[[], bool] | None):
+    def __init__(self, prompt: str, kind: str, cancel: Callable[[], bool] | None, options: tuple | None = None,
+                 deadline: float = 0.0, no_after: float = 0.0):
         self.prompt, self.kind, self._cancel = prompt, kind, cancel
+        self.options = options      # labelled choices: options[0] is yes, options[1] is no
+        self.deadline = deadline    # wall-clock time the question's Offer gives up (0 = none)
+        self.no_after = no_after    # wall-clock time before which "no" isn't accepted (a forced pause)
         self.event = threading.Event()
         self.result: Answer | None = None
         self._lock = threading.Lock()
@@ -569,8 +619,14 @@ class VoiceConfirm:
         raise ToolError(str(err) if err else "No speech-to-text is set up "
                         "(set CARTESIA_API_KEY or pip install faster-whisper).")
 
-    def _listen(self, pending: _Pending, window: float):
+    def _forward(self, utt) -> None:
+        listener = self.listener
+        if listener is not None and hasattr(listener, "handle"):
+            threading.Thread(target=listener.handle, args=(utt,), name="voice-forward", daemon=True).start()
+
+    def _listen(self, pending: _Pending, window: float, keep: set | None = None):
         """Wait for one answer. Returns (Intent, timing dict); the Intent is None for silence.
+        keep: only these intent kinds count; anything else heard goes on to the listener.
 
         window is how long the answer has to *start*; an answer already under way is heard out
         (up to [confirm] max_answer_seconds more). A short pause after a clear one-to-three-word
@@ -586,7 +642,8 @@ class VoiceConfirm:
         noise = False
         timing: dict = {"source": source}
         self.mode = "listening"
-        self._event("Listening for yes or no...")
+        self._event("Listening for yes or no..." if keep is None
+                    else f"Listening for {', '.join(sorted(k.lower() for k in keep))}...")
         try:
             while True:
                 if pending.done():
@@ -617,8 +674,14 @@ class VoiceConfirm:
                     self.last_error = str(e)
                     timing.update(no_stt=True, error=str(e))
                     return Intent("AMBIGUOUS", 0.0, ""), timing
-                intent = classify(text, pending.prompt, protective=pending.kind == "risk")
+                protective = pending.kind == "risk"
+                intent = (classify_options(text, pending.options, protective) if pending.options
+                          else classify(text, pending.prompt, protective))
                 eager = bool(getattr(utt, "eager", False))
+                if keep is not None and intent.kind not in keep:
+                    if not eager:  # the full utterance follows an eager piece: forward it once
+                        self._forward(utt)  # not for this short listen: a normal request ("Ally, ...")
+                    continue
                 if eager and not eager_ok(text, intent):
                     continue  # not clear enough to cut the answer short: wait for the end
                 timing.update(speech_end=utt.t1, stt_ms=round((time.perf_counter() - t_stt) * 1000),
@@ -647,16 +710,21 @@ class VoiceConfirm:
         return self.ask(prompt, timeout=timeout, **kw).value
 
     def ask(self, prompt: str, *, timeout: float | None = None, rephrased: str | None = None,
-            style: str | dict = "offer", kind: str = "offer", cancel: Callable[[], bool] | None = None) -> Answer:
+            style: str | dict = "offer", kind: str = "offer", cancel: Callable[[], bool] | None = None,
+            options: tuple | None = None, deadline: float = 0.0, no_after: float = 0.0) -> Answer:
         """Speak a yes/no question and wait for the answer (voice, or answer() from a button).
 
         timeout: seconds to wait for an answer to start, after each time the question is spoken
         (default [confirm] listen_seconds). cancel(): return True to stop early (e.g. the Offer was
         resolved by a button). rephrased: the wording for the re-ask (default: rephrase(prompt)).
+        options: labelled choices (first = yes); the answer must name one. deadline: wall-clock time
+        after which nobody is listening any more, so a re-ask that can't finish isn't started.
+        no_after: before this wall-clock time "no" isn't accepted yet (a forced pause to think).
         A newer question replaces an older one (the older one returns timeout, intent SUPERSEDED).
         """
         prompt = (prompt or "").strip()
-        pending = _Pending(prompt, kind, cancel)
+        options = tuple(options) if options and len(options) == 2 else None
+        pending = _Pending(prompt, kind, cancel, options, float(deadline or 0), float(no_after or 0))
         with self._lock:
             old, self._pending = self._pending, pending
         if old is not None:
@@ -671,6 +739,8 @@ class VoiceConfirm:
             else:
                 with self._ask_lock:  # the previous question (if any) has been told to stop
                     if not pending.done():
+                        if options and not rephrased:
+                            rephrased = f"You can say {_lower_first(options[0])}, or {_lower_first(options[1])}."
                         self._ask_loop(pending, prompt, rephrased, style, timeout, latency)
         except Exception as e:  # never let a voice problem break the Brain's flow
             log.exception("yes/no question failed")
@@ -703,11 +773,17 @@ class VoiceConfirm:
         replays = 1  # "what?" / "slower" -> one replay, slower
         base = self.style(style)
         text, st, slow = prompt, dict(base), 1.0
+        again = rephrased or rephrase(prompt)
         last: Intent | None = None
         attempts = 0
+        out_of_time = False
         while not pending.done():
             attempts += 1
             latency["attempts"] = attempts
+            needed = SPEAK_GUESS_SECONDS + min(window, 3.0)
+            if attempts > 1 and pending.deadline and time.time() + needed > pending.deadline:
+                out_of_time = True  # nobody would hear the end of another try
+                break
             if slow != 1.0:
                 st["speed"] = round(float(base.get("speed", 1.0)) * slow, 3)
                 st.pop("cache", None)  # slowed-down re-asks are one-offs
@@ -719,7 +795,8 @@ class VoiceConfirm:
                 latency["tts_engine"] = self.speaker.last_engine
             if pending.done() or pending.event.wait(delay):
                 return
-            intent, timing = self._listen(pending, window)
+            win = window if not pending.deadline else max(1.0, min(window, pending.deadline - time.time()))
+            intent, timing = self._listen(pending, win)
             if pending.done():
                 return
             latency["mic"] = timing.get("source", "")
@@ -729,13 +806,13 @@ class VoiceConfirm:
                 latency["stt_engine"] = timing.get("stt_engine")
                 latency["eager"] = timing.get("eager", False)
             if timing.get("no_mic"):
-                self._event("No microphone: answer with the Yes or No button.")
-                pending.event.wait(window)  # the buttons still get the listen window
+                self._event("No microphone: answer with the on-screen buttons.")
+                pending.event.wait(win)  # the buttons still get the listen window
                 return self._settle(pending, Answer(TIMEOUT, intent="NO_MIC", attempts=attempts,
                                                     error=self.last_error))
             if timing.get("no_stt"):
                 self.say(PROMPTS["missed_final"], "sorry", wait=True)
-                pending.event.wait(window)
+                pending.event.wait(win)
                 return self._settle(pending, Answer(TIMEOUT, intent="NO_STT", attempts=attempts,
                                                     error=timing.get("error", "")))
             if intent is None:
@@ -743,6 +820,9 @@ class VoiceConfirm:
                 return self._settle(pending, Answer(TIMEOUT, intent="NOISE" if timing.get("noise") else "SILENCE",
                                                     attempts=attempts))
             last = intent
+            if intent.decisive and intent.kind != "YES" and time.time() < pending.no_after:
+                text = PROMPTS["think"] + pause(250) + again  # "no" isn't accepted until the pause is over
+                continue
             if intent.decisive:
                 return self._settle(pending, Answer(YES if intent.kind == "YES" else NO, by="voice",
                                                     intent=intent.kind, transcript=intent.text,
@@ -752,20 +832,26 @@ class VoiceConfirm:
                 if intent.kind == "SLOWER":
                     self.slow_down()
                 slow *= 0.85
-                text = rephrased or rephrase(prompt)
+                text = again
                 continue
             if reasks:
                 reasks -= 1
                 st = dict(self.style("sorry"), speed=base.get("speed", 1.0))
                 st.pop("cache", None)
-                text = PROMPTS["missed"] + pause(250) + (rephrased or rephrase(prompt))
+                text = PROMPTS["missed"] + pause(250) + again
                 continue
             break
         if pending.done():
             return
-        already_sorry = c.get("reask", True) and reasks == 0
-        self.say(PROMPTS["buttons" if already_sorry else "missed_final"], "sorry", wait=True)
-        self._settle(pending, Answer(TIMEOUT, intent="AMBIGUOUS", transcript=last.text if last else "",
+        if not out_of_time:
+            if pending.options:
+                final = PROMPTS["choice_buttons"]
+            else:
+                already_sorry = c.get("reask", True) and reasks == 0
+                final = PROMPTS["buttons" if already_sorry else "missed_final"]
+            self.say(final, "sorry", wait=True)
+        self._settle(pending, Answer(TIMEOUT, intent="AMBIGUOUS" if last else "OUT_OF_TIME",
+                                     transcript=last.text if last else "",
                                      confidence=last.confidence if last else 0.0, attempts=attempts))
 
     def answer(self, value: str, by: str = "button") -> bool:
@@ -777,7 +863,7 @@ class VoiceConfirm:
             raise ToolError('The answer must be "yes" or "no".')
         with self._lock:
             p = self._pending
-        if p is None:
+        if p is None or p.kind == "listen":  # a short listen (undo window) isn't a question
             return False
         ok = p.set(Answer(v, by=by, intent="BUTTON", confidence=1.0))
         if ok and self.speaker.speaking:
@@ -789,6 +875,37 @@ class VoiceConfirm:
         with self._lock:
             p = self._pending
         return bool(p and p.set(Answer(TIMEOUT, by="none", intent="CANCELLED")))
+
+    @property
+    def asking(self) -> bool:
+        """A real question is open (not just a short listen such as the undo window)."""
+        p = self._pending
+        return p is not None and p.kind != "listen"
+
+    def listen_for(self, kinds, seconds: float) -> Intent | None:
+        """Listen briefly, without asking, for one of these intents (e.g. {"UNDO"} after "Done. Say
+        undo..."). Anything else heard goes on to the listener as a normal request. A real question
+        replaces this listen at once; it never replaces one. Returns the Intent, or None."""
+        pending = _Pending("", "listen", None)
+        with self._lock:
+            if self._pending is not None:
+                return None
+            self._pending = pending
+        try:
+            with self._ask_lock:
+                self.speaker.wait(30)  # half-duplex: not while Ally is still talking
+                if pending.done() or not self.cfg.get("enabled", True):
+                    return None
+                intent, _timing = self._listen(pending, float(seconds), keep=set(kinds))
+                return None if pending.done() else intent
+        except Exception:
+            log.exception("short listen failed")
+            return None
+        finally:
+            pending.set(Answer(TIMEOUT, intent="LISTEN_DONE"))
+            with self._lock:
+                if self._pending is pending:
+                    self._pending = None
 
     def _finish(self, ans: Answer, kind: str) -> None:
         c = self.cfg
@@ -812,8 +929,18 @@ class VoiceConfirm:
 
     # ------------------------------------------------------------ habits
     def slow_down(self, step: float = 0.1, floor: float = 0.6) -> float:
-        """'Slower, please': lower the speech rate and keep it (a habit)."""
-        new = round(max(floor, self.speaker.rate() - step), 2)
+        """'Slower, please': lower the speech rate and keep it (a habit).
+
+        Never below what Cartesia can still say slower: questions multiply the rate by [confirm] speed
+        (warnings by warning_speed, a slowed re-ask by 0.85 more) and Cartesia stops at 0.6."""
+        c = self.cfg
+        slowest = min(float(c.get("speed", 0.9)), float(c.get("warning_speed", 0.85))) * 0.85
+        floor = min(1.0, max(floor, math.ceil(CARTESIA_MIN_SPEED / slowest * 100) / 100))
+        current = self.speaker.rate()
+        new = round(max(floor, current - step), 2)
+        if new >= current:
+            self._event("Already speaking as slowly as I can.")
+            return current
         self.speaker.rate_override = new
         if self.state is not None:
             self.state.set("speech_rate", new)
@@ -822,15 +949,34 @@ class VoiceConfirm:
         return new
 
     # ------------------------------------------------------------ offers and risks
-    def confirm_offer(self, offer, background: bool = False):
+    def confirm_offer(self, offer, background: bool = False, lead: str = ""):
         """Ask an Offer's question out loud and resolve it with the spoken answer.
 
         offer: the foundation Offer (or a dict / any object) with .prompt, optional .reprompt and
         .resolve(answer, by). A button that resolves it first wins: we notice and stop. The Offer's
         own timer ends the question the same way; voice keeps no separate offer timeout.
         A yes / no given through answer() (dashboard, CLI, API) resolves the Offer too, with its by.
+
+        Read from the Offer when present: context "risk" (a protective question: calm warning voice,
+        risk answer rules), options other than yes/no (asked as "Should I close it, or keep it
+        open?"; the answer must name one), created + timeout (no re-ask that can't finish) and
+        pause_seconds (no "no" before the pause is over). lead: said first, e.g. the risk warning.
         Returns the Answer, or the running Thread when background=True."""
         prompt = str(_get(offer, "prompt", "") or "")
+        kind = "risk" if _get(offer, "context") == "risk" else "offer"
+        options = tuple(str(o) for o in (_get(offer, "options") or ()))
+        options = options if len(options) == 2 and tuple(o.lower() for o in options) != (YES, NO) else None
+        if options:
+            prompt = option_question(prompt, options)
+        if lead and prompt:
+            prompt = lead.strip() + pause(400) + prompt
+        created = _get(offer, "created")
+        limit = _get(offer, "timeout")
+        deadline = float(created) + float(limit) if isinstance(created, (int, float)) and isinstance(
+            limit, (int, float)) else 0.0
+        held = _get(offer, "pause_seconds")
+        no_after = float(created) + float(held) if isinstance(created, (int, float)) and isinstance(
+            held, (int, float)) and held > 0 else 0.0
 
         def resolved() -> bool:
             if _get(offer, "resolved") is True or _get(offer, "done") is True:
@@ -838,7 +984,9 @@ class VoiceConfirm:
             return any(_get(offer, a) for a in ("answer", "resolved_by", "choice", "result", "resolution"))
 
         def run() -> Answer:
-            ans = self.ask(prompt, rephrased=_get(offer, "reprompt"), kind="offer", cancel=resolved)
+            ans = self.ask(prompt, rephrased=_get(offer, "reprompt"), kind=kind, cancel=resolved,
+                           style="warning" if kind == "risk" else "offer", options=options,
+                           deadline=deadline, no_after=no_after)
             if ans.value in (YES, NO) and ans.by not in ("offer", "none") and not resolved():
                 fn = _get(offer, "resolve")
                 if callable(fn):
@@ -860,12 +1008,18 @@ class VoiceConfirm:
         kind = str(_get(risk, "kind", "") or "")
         return RISK_TEXT.get(kind, RISK_DEFAULT)
 
-    def warn(self, risk, ask: bool | None = None, background: bool = False):
+    def warn(self, risk, ask: bool | None = None, background: bool = False, spoken: str | None = None,
+             question: str | None = None):
         """Spoken risk warning: calm, slower, a pause before the question. Never alarmed.
 
         High and medium severity ask the protective question ("Close it?") and return the Answer;
-        low severity (or ask=False) only says the statement and returns None."""
-        statement, question = self.risk_text(risk)
+        low severity (or ask=False) only says the statement and returns None.
+        spoken / question: the caller's wording (the risk owner's copy). With spoken and no question,
+        nothing is asked unless ask=True. Without them, RISK_TEXT is used."""
+        statement, own_question = self.risk_text(risk)
+        if spoken:
+            statement, own_question = spoken, None
+        question = question or own_question
         severity = str(_get(risk, "severity", "medium") or "medium").lower()
         if ask is None:
             ask = question is not None and severity not in ("low", "info")

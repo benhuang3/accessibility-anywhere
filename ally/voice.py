@@ -164,7 +164,7 @@ class VoiceInput:
 
     def toggle(self) -> str:
         confirm = getattr(self.agent, "confirm", None)
-        if confirm is not None and confirm.busy:
+        if confirm is not None and getattr(confirm, "asking", confirm.busy):
             return "Listening for yes or no."  # a spoken question already owns the microphone
         listener = getattr(self.agent, "listener", None)
         if listener is not None and listener.running:

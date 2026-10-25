@@ -110,6 +110,28 @@ delegated at freeze.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 22:40 PT — Ben H (via Claude Code) — branch `worktree-voice`, voice in the proactive loop
+
+**Changed:** new `ally/voice_bus.py` (`BusVoice`), `ally/voice_confirm.py`, `ally/voice.py` (one line),
+new `tests/test_voice_bus.py`, new `tests/voice_fakes.py` (shared fakes), `tests/test_voice_confirm.py`,
+`tests/voice_phrases.py`. Not wired in yet: `agent.py` still passes `NullVoice`.
+- `BusVoice` is the Coordinator's `voice=`: it asks the Offer out loud and resolves it, says "Done. Say
+  undo to put it back." after an accepted fix (or "Sorry, that didn't work."), then listens 6 s for
+  "undo" (runs `reset_all`; anything else heard goes on to the listener). Lines said during a question
+  wait for it to end.
+- Risk Offers (`context="risk"`, as RiskWire on `risk-branch` makes them): calm, slower voice; the
+  question waits up to 1 s for its warning and says both together.
+- Labelled choices (RiskWire's "Are you sure?" with "Close it" / "Keep it open"): asked as "Should I close
+  it, or keep it open?"; a bare "yes" / "I'm sure" is unclear, never a close.
+- `offer.pause_seconds`: "no" isn't accepted before the pause ends. `created + timeout`: no re-ask that
+  can't finish. "Stop asking me" is its own no (snoozes struggle offers; a plain no for risk).
+- While a helper video call is open (`risk_contact` with `call_opened`) voice asks nothing for 10 min.
+**For Ben H (integration):** in `agent.py`, `voice=BusVoice(self.confirm, self.bus, call_tool,
+snooze=getattr(self.proactive, "snooze", None))`; do it on `benh/os-layer` (its gaze lines sit there).
+Consider `offer_timeout_seconds` ~20 (gaze cards use `offer.timeout` too, so with Hayden).
+**For Ganesh:** please publish a "call ended" event (voice goes quiet for a fixed 10 min until then), and
+check the spoken wording for labelled choices.
+
 ### Oct 24, 22:01 PT — Ben H (via Claude Code) — branch `worktree-voice`, voice fixes
 
 **Changed:** `ally/voice_confirm.py`, `ally/speech.py`, `ally/listener.py`, `tests/test_voice_confirm.py`,
