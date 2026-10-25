@@ -8,6 +8,8 @@
     localVideoStream, remoteVideoUrl, muted, toggleMute, flipCamera,
     connectionSlow, audioNeedsTap, mediaError, callStats
   } from '$lib/callRuntime';
+  import { remoteScreen } from '$lib/screenshare';
+  import { screenFreshness, swapMainView, type MainView } from '$lib/screenPolicy';
   import { parseRoomHash, kindLabels, type RoomLink } from '$lib/room';
 
   let link: RoomLink | null = null;
@@ -20,8 +22,15 @@
   let message = '';
   let cameraBusy = false;
   let debug = false;
+  let sharingBusy = false;
+  let sharingAvailable = true;
+  let mainView: MainView = 'screen';
+  let screenZoomed = false;
+  let now = Date.now();
 
   $: helperName = $incidentStore?.helperName ?? link?.name ?? 'your helper';
+  $: screenHint = screenFreshness($remoteScreen?.updatedAt ?? null, now);
+  $: sharingOn = sharingAvailable && ($incidentStore?.screenSharing ?? true);
   $: isHelper = link?.role === 'helper';
   $: callEnded = ended || $incidentStore?.status === 'ended';
   $: status = callEnded ? 'Call ended'
@@ -44,6 +53,9 @@
   async function openElder(connection: DbConnection, room: RoomLink) {
     await connection.reducers.openIncident({ roomId: room.roomId, kind: room.kind, helperName: room.name });
     if (ended || get(incidentStore)?.status === 'ended') return;
+    if (new URLSearchParams(window.location.hash.slice(1)).get('screen') === 'off') {
+      await connection.reducers.setScreenSharing({ roomId: room.roomId, on: false });
+    }
     await prepareMedia(connection, room);
     if (ended) return;
     await connection.reducers.joinCall({ roomId: room.roomId, role: 'elder' });
@@ -90,7 +102,27 @@
     try { await flipCamera(); } finally { cameraBusy = false; }
   }
 
+  async function toggleScreenSharing() {
+    if (!conn || !link || sharingBusy) return;
+    sharingBusy = true;
+    message = '';
+    try {
+      await conn.reducers.setScreenSharing({ roomId: link.roomId, on: !sharingOn });
+    } catch {
+      message = 'Screen sharing could not change. Please try again or end the call.';
+    } finally {
+      sharingBusy = false;
+    }
+  }
+
+  function swapTiles() {
+    mainView = swapMainView(mainView);
+    screenZoomed = false;
+  }
+
   onMount(() => {
+    sharingAvailable = new URLSearchParams(window.location.hash.slice(1)).get('screen') !== 'off';
+    const freshnessTimer = setInterval(() => { now = Date.now(); }, 1000);
     const updateDebug = () => { debug = new URLSearchParams(window.location.hash.slice(1)).get('debug') === '1'; };
     updateDebug();
     window.addEventListener('hashchange', updateDebug);
@@ -110,6 +142,7 @@
     const leave = () => { ended = true; disconnectStdb(); };
     window.addEventListener('pagehide', leave);
     return () => {
+      clearInterval(freshnessTimer);
       window.removeEventListener('pagehide', leave);
       window.removeEventListener('hashchange', updateDebug);
       leave();
@@ -126,7 +159,7 @@
 
 <main class:helper={isHelper} class:ended={callEnded}>
   <div class="backdrop" aria-hidden="true"></div>
-  {#if $remoteVideoUrl && !callEnded}
+  {#if $remoteVideoUrl && !callEnded && (!isHelper || mainView === 'face')}
     <img class="remote-video" src={$remoteVideoUrl} alt={isHelper ? 'Live video of your family member' : `Live video of ${helperName}`} />
   {/if}
 
@@ -134,6 +167,15 @@
     <div class="brand"><span class="brand-mark" aria-hidden="true">a</span> Ally Call</div>
     <p class="status" role="status" aria-live="polite">{link ? status : 'A familiar face, right here'}</p>
   </header>
+
+  {#if link && !isHelper && !callEnded}
+    <section class="glass sharing-banner" aria-label="Screen sharing">
+      <p role="status">{sharingOn ? `${helperName} can see your screen` : 'Screen sharing is off'}</p>
+      <button class="secondary" onclick={toggleScreenSharing} disabled={!$incidentStore || sharingBusy || !sharingAvailable}>
+        {!sharingAvailable ? 'Start a new call from Ally to share' : sharingOn ? 'Stop sharing' : 'Share my screen again'}
+      </button>
+    </section>
+  {/if}
 
   {#if !link}
     <section class="center-card glass">
@@ -164,7 +206,34 @@
       {#if !$isConnected && !$connectionError}<p class="connection-note">Connecting your call&#8230;</p>{/if}
     </section>
   {:else}
-    {#if !$remoteVideoUrl}
+    {#if isHelper}
+      <section class="helper-media" aria-label="Your family member's screen and camera">
+        {#if mainView === 'screen'}
+          <div class="screen-scroll" class:zoomed={screenZoomed}>
+            {#if $remoteScreen && sharingOn}
+              <button class="screen-image" onclick={() => { screenZoomed = !screenZoomed; }} aria-label={screenZoomed ? 'Fit screen to width' : 'Zoom in on shared screen'} aria-pressed={screenZoomed}>
+                <img src={$remoteScreen.url} alt="Your family member's shared screen" />
+              </button>
+            {:else}
+              <p class="glass screen-placeholder">{sharingOn ? 'Waiting for the screen' : 'Screen sharing is off'}</p>
+            {/if}
+          </div>
+          {#if $remoteVideoUrl}
+            <button class="glass peer-tile" onclick={swapTiles} aria-label="Make camera the main view">
+              <img src={$remoteVideoUrl} alt="Your family member's camera" />
+              <span>Show face</span>
+            </button>
+          {/if}
+        {:else}
+          <button class="glass peer-tile" onclick={swapTiles} aria-label="Make shared screen the main view">
+            {#if $remoteScreen && sharingOn}<img src={$remoteScreen.url} alt="Shared screen preview" />{/if}
+            <span>Show screen</span>
+          </button>
+        {/if}
+        <p class="glass freshness" role="status">{sharingOn ? screenHint : 'Screen sharing is off'}</p>
+      </section>
+    {/if}
+    {#if !$remoteVideoUrl && !isHelper}
       <section class="waiting" aria-label="Waiting for video">
         <span class="portrait" aria-hidden="true">{isHelper ? 'a' : helperName.charAt(0).toUpperCase()}</span>
         <h1>{isHelper ? 'You are close by.' : 'A familiar face is on the way.'}</h1>

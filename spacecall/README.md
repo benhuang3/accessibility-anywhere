@@ -4,6 +4,8 @@ A two-person call between an older adult's PC and a trusted helper's phone. Ally
 
 Adapted from [SpaceChatDB by Lethalchip](https://github.com/Lethalchip/SpaceChatDB), upstream commit **37b110d49b0d13b0449f4f4015d65c2f6b082686** (also in `UPSTREAM_COMMIT`). The call footer keeps the credit visible: **Built on SpaceChatDB**. Upstream's [SpacetimeDB referral link](https://spacetimedb.com/?referral=Lethalchip) is preserved here too.
 
+The helper now sees the shared PC screen first, with a small camera tile that swaps the main view when tapped. Tap the shared screen to zoom; scroll it or use browser pinch zoom. A freshness hint shows the last frame age.
+
 We replaced the Rust module with TypeScript, replaced the chat lobby and user browser with elder/helper call screens, added private incident/presence state, room capabilities, two-hour expiry, recipient security, adaptive JPEG video and mobile audio activation. See [PORTING.md](PORTING.md) for the schema, files, validation results and limitations.
 
 ## Run, publish, build and host
@@ -36,7 +38,7 @@ Use Node.js **24 or newer**. Install the SpacetimeDB **2.13.x CLI** separately b
    spacetime generate --lang typescript --out-dir src/module_bindings --module-path server
    ```
 
-   `spacetime.json` also contains this generate target, so `spacetime generate` is the short equivalent. The only hand-written binding stub is `src/module_bindings/index.ts`, marked **replace with spacetime generate**. Every copied upstream binding was removed. Run the checks again after generation.
+   `spacetime.json` also contains this generate target, so `spacetime generate` is the short equivalent. The checked-in bindings were locally updated to mirror this schema for type-checking. Regenerate the whole directory before deploying this client and run the checks again. The CLI was unavailable in this sandbox; these edits are not a substitute for code generation.
 
 5. Check and build for a GitHub Pages project named `ally-call`:
 
@@ -78,8 +80,66 @@ The elder page opens the incident automatically and requests camera/microphone p
 
 `incident` and `presence` are private. A sender-filtered `call_incident` view reveals only rooms the caller has claimed using a valid capability. Media reducers derive the recipient from that room's two roles; callers cannot supply an arbitrary recipient. Clients subscribe to their exact room and recipient identity.
 
-Event tables cannot currently be read through private-table views. Public audio/video event tables therefore have **server-enforced recipient row-level security**. RLS is experimental in this SDK; deployment must verify that an unrelated identity subscribing to all events receives none. Do not remove the visibility filters to make a publish succeed. See the official [event table limitations](https://spacetimedb.com/docs/tables/event-tables/) and [RLS documentation](https://spacetimedb.com/docs/how-to/rls/).
+Event tables cannot currently be read through private-table views. Public audio/video/screen event tables therefore have **server-enforced recipient row-level security**. RLS is experimental in this SDK; deployment must verify that an unrelated identity subscribing to all events receives none. Do not remove the visibility filters to make a publish succeed. See the official [event table limitations](https://spacetimedb.com/docs/tables/event-tables/) and [RLS documentation](https://spacetimedb.com/docs/how-to/rls/).
 
 Room IDs and media are sent to SpacetimeDB over WSS; the hash only keeps them out of the static host's HTTP request. This is not end-to-end encryption. Event rows leave the live tables after their transaction, but SpacetimeDB records event inserts in its commit log. The two-hour cutoff stops calls; it does not erase provider logs or retained incident/presence records. There is no analytics, local media recording, room browser or stored browser auth token in this client.
 
 Before a real demonstration, generate bindings and test two separate devices, all-event subscriptions from an outsider, expiry, End call, denied permissions, mute, camera switching, interrupted connectivity and iOS Safari audio. Maincloud, real phone media and iOS behavior remain unverified here.
+
+
+## Screen sharing update (2026-10-25)
+
+An explicit **Call Priya** tap in Ally opens the elder page and starts Python screen sharing, only for `call_service = "spacecall"` with `[risk] screen_share = true` (the default). Automatic alerts alone never start sharing. Meet and Tell retain their existing behavior. The elder sees a persistent **Priya can see your screen** banner with **Stop sharing**; after stopping it becomes **Share my screen again**. With `screen_share = false`, the URL includes `screen=off`, the incident is switched off immediately after opening, and the Python sender is not started. To enable sharing later in that case, change the config and start a new call.
+
+**The helper sees everything captured on the screen, including bank pages, private messages and other open apps.** This is the purpose of the call. Capture uses the same `agent.platform.screenshot_png()` function as the risk guardian, and therefore the same platform/monitor coverage. It begins only after the explicit Call tap; it does not require `screen_review` or send images to Anthropic. Stop sharing blocks new screen events on the server and clears the helper's displayed screenshot. An already delivered image cannot be recalled from another person's device.
+
+`ally/risk/screenshare.py` uses stdlib HTTP with five-second timeouts and optional **Pillow** for in-memory resizing/JPEG encoding. Install Pillow in Ally's Python environment for screen sharing; if it is missing or encoding/capture/network fails, the sender stops quietly and the helper keeps a waiting/stale freshness hint. No PNG fallback is uploaded. Frames are captured about once a second, at most 1280 pixels wide, JPEG quality 60, reducing dimensions further until at most 150,000 bytes; the reducer hard cap is 200,000 bytes. No frames, room capabilities or identity tokens are written to disk or logged by this sender. A new call, call-window close, `RiskWire.stop()`, ended room, permanent rejection, or the 30-minute sender deadline stops sharing.
+
+To make **Share my screen again** work, the capture/send loop stops while paused but a lightweight HTTP readiness watcher remains alive for the remainder of the same 30-minute deadline. It captures nothing while paused. The extra capability-only `screen_share_ready(room_id)` reducer rejects paused/ended rooms without returning private incident rows. Initial room creation may take up to 30 seconds; readiness checks wait for it before capturing. Other HTTP failures stop the sender. The browser's sharing flag is consent state, not confirmation that the Python sender is healthy; the helper's freshness hint exposes waiting or stale frames.
+
+HTTP endpoints, checked against the current official docs:
+
+- [`POST /v1/identity`](https://spacetimedb.com/docs/http/identity/) obtains one token per sender.
+- [`POST /v1/database/<db>/call/<reducer>`](https://spacetimedb.com/docs/http/database/#post-v1databasename_or_identitycallreducer) calls `screen_share_ready` with `[room_id]`, then `send_screen_frame` with `[room_id, seq, jpeg_byte_array, width, height]`, using `Authorization: Bearer <token>` and `Content-Type: application/json`. [SATS-JSON arrays](https://spacetimedb.com/docs/sats-json/) encode the JPEG bytes.
+
+The Python integration uses `https://maincloud.spacetimedb.com` / `ally-call`, matching `src/lib/config.ts`. Update both locations together for a different deployment.
+
+### Schema and republishing
+
+**This breaks the published database/client schema.** `incident` and its `call_incident` view gain `screen_sharing: bool`, initially true. Audio/video events gain `server_at: Timestamp`. The new transient `screen_frame_event` has `room_id`, `recipient`, `seq`, `jpeg`, `width`, `height`, `server_at`; it uses the same recipient-only visibility policy as camera/audio, always deriving the helper from that exact room. `presence`, existing reducer arguments, and previous column types are unchanged. `set_screen_sharing(room_id, on)` is elder-only; the Python sender uses the room capability with a separate HTTP identity.
+
+Screen events are not stored snapshot tables, but **event inserts remain in the provider commit log** as explained above. RLS subscription isolation still needs a real published outsider-subscription test; the local harness verifies recipient derivation and event transience.
+
+Audio now sends **640 samples / 40 ms / 1280 bytes** at 16 kHz mono. The server also accepts legacy **800 samples / 50 ms / 1600 bytes**. Other lengths reject. The debug overlay reads `server_at` from received audio/video rows, even when the SDK provides no reducer metadata; it measures server-to-browser age, with clock skew, excluding capture/uplink and playback buffering. It is not end-to-end delay.
+
+Claude should run these exact PowerShell commands from the repository root (the publish command clears the disposable database data):
+
+```powershell
+Set-Location spacecall
+spacetime publish ally-call --server maincloud --module-path server --delete-data always
+spacetime generate --lang typescript --out-dir src/module_bindings --module-path server
+npm.cmd run check
+npm.cmd run check:server
+npm.cmd test
+$env:BASE_PATH='/ally-call'
+npm.cmd run build
+```
+
+The [official CLI reference](https://spacetimedb.com/docs/cli-reference/) documents `--delete-data always`. Publish the module before deploying the new static client, then test a real elder/helper call, stop/resume, bank-page visibility, window close, iOS zoom/audio, and an outsider subscribing to all screen events. No publish, deployment, commit or push was performed here. The pre-existing untracked `server/dist/` was left untouched. If Vite hits the ancestor-directory sandbox restriction after a fresh dependency install, use the local native-loader workaround in [PORTING.md](PORTING.md).
+
+### Local validation
+
+```text
+npm run check: 429 files, 0 errors, 0 warnings
+npm run check:server: exit 0
+npm test: 38 tests, 38 pass, 0 fail
+BASE_PATH=/ally-call npm run build (PowerShell): static site written to build/
+python -m unittest test_risk_screenshare test_risk_spacecall test_risk_contact test_risk_wire test_config:
+  100 tests, OK
+python -m unittest test_config test_registry test_brain test_network test_runtime test_handsfree:
+  50 tests, FAILED (errors=8)
+python -m unittest discover -p "test_*.py":
+  674 tests, FAILED (failures=1, errors=17, skipped=11)
+```
+
+Python screenshot tests used Pillow 13 installed only into a temporary test dependency directory via `PYTHONPATH`; the repo environment was not changed. Broader Python errors involve missing NumPy and dependent hotkey teardown failures, Windows speech, and a sandbox socket privacy test. No failures occurred in the new sender, risk integration or config suites. The production build succeeds with the existing ignored native-loader workaround. Live device rendering/media, real generated bindings, HTTP transport against Maincloud, and subscription-level RLS remain unverified.

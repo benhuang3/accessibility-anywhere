@@ -206,6 +206,7 @@ contact_topic = ""             # e.g. "ally-priya-7f3k29qx"
 # Optional: their standing video-call link (Google Meet, Zoom, Whereby, Teams). Then the button says "Call Priya":
 # Ally opens the call here and their phone alert has a "Join the call" button.
 contact_call_url = ""          # e.g. "https://meet.google.com/abc-defg-hij"
+screen_share = true           # Spacecall only: Call shares the whole screen with your helper
 call_service = "meet"          # meet | spacecall; an unavailable Spacecall link uses contact_call_url
 spacecall_url = ""            # HTTPS base URL, e.g. "https://ganeshkar1.github.io/ally-call/"
 auto_alert = false             # send the trusted contact a push automatically on high warnings

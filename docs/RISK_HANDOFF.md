@@ -245,3 +245,43 @@ Claude Code planned, wrote specs, reviewed every diff and probed with realistic 
 `guardian.py` and the panel state machine; Cursor (Composer 2.5) built the first overlay and the behavior recorder. Every delegated build
 had at least one real bug found in review or live testing (examples: JSON cut off by hidden thinking tokens, a cache checked after the
 budget, the Yes/No bubble hidden behind its card, text at half size on a 200% screen, the panel stealing focus). Specs are in `handoff/specs/`.
+
+## 11. Screen sharing in Ally Call (2026-10-25)
+
+An explicit **Call Priya** tap starts screen sharing for Spacecall only, with `[risk] screen_share = true` (default). Automatic alerts do not start capture. The helper sees the screen first with tap/browser zoom, a swappable face tile and a freshness hint. The elder has a persistent **Priya can see your screen** banner and large **Stop sharing** / **Share my screen again** button. The helper sees everything captured, including bank pages and other apps; this is the purpose of the call. Capture coverage matches the platform screenshot function already used by the guardian. This feature does not send images to Anthropic.
+
+The sender uses stdlib HTTP with optional Pillow for in-memory JPEG encoding (install Pillow in Ally's environment), about 1 fps, max width 1280, quality 60, target 150 KB and server hard cap 200 KB. It writes no frames to disk and logs no capabilities or tokens. A new call replaces it; window close, wire stop, call end, permanent HTTP rejection or 30 minutes stop it. While paused, only a room-readiness watcher runs; it captures/sends no screenshot. This supports the resume button. Before room creation it waits at most 30 seconds. With config off, no sender starts and the elder link includes `screen=off`; enabling capture requires a new call. Missing Pillow/capture/network failure stops quietly; the helper sees a waiting or stale freshness hint. The banner expresses consent state, not sender health.
+
+**Ben H's config files changed by one key:** `ally/config.py` validates `risk.screen_share` as bool; `ally/default_config.toml` defaults it to true for Spacecall (no effect on Meet). Local `config.toml` and `.env` were never read or edited.
+
+**Breaking published schema:** `incident` / `call_incident` gain `screen_sharing`; audio/video events gain `server_at`; the transient, helper-recipient-filtered `screen_frame_event` and send/toggle/readiness reducers are new. Existing reducer argument lists and presence columns are retained. Event inserts remain in the provider commit log; there is no end-to-end encryption or retention deletion guarantee. Republish with disposable data cleared, regenerate bindings, rebuild, then check subscription RLS on Maincloud. The server accepts 640-sample/40 ms and legacy 800-sample/50 ms PCM; the client sends 40 ms. The debug overlay uses row server timestamps, measuring server-to-browser age with clock uncertainty, excluding capture/uplink/playback.
+
+Changed files:
+
+- `ally/risk/screenshare.py`, `ally/risk/wire.py`: sender and call lifecycle.
+- `ally/config.py`, `ally/default_config.toml`: single config key.
+- `tests/test_risk_screenshare.py`: HTTP/capture, rate, size, pause/resume, startup, rejection, stop, privacy, lifecycle and config tests.
+- `spacecall/server/src/index.ts`, `spacecall/server/src/testSupport.ts`: schema/reducers/RLS and a test-only SDK bridge, not imported by the published entry point.
+- `spacecall/src/lib/{app.css,callRuntime.ts,mediaPolicy.ts,stdb.ts,types.ts,screenPolicy.ts,screenshare.ts}`, `spacecall/src/routes/+page.svelte`: UI, subscriptions, cleanup, timestamps and 40 ms audio.
+- `spacecall/src/module_bindings/{index.ts,types.ts,audio_frame_event_table.ts,video_frame_event_table.ts,call_incident_table.ts,screen_frame_event_table.ts,send_screen_frame_reducer.ts,set_screen_sharing_reducer.ts}`: local schema mirrors; regenerate before deployment.
+- `spacecall/package.json`, `spacecall/tests/{media.test.ts,screenshare.test.ts}`: npm test includes all `tests/*.test.ts` plus the existing server tests; packet timing and floating-point playback boundary checks.
+- `spacecall/README.md`, `docs/RISK_HANDOFF.md`: privacy, migration, endpoints, commands and verification.
+
+HTTP endpoints: [`POST /v1/identity`](https://spacetimedb.com/docs/http/identity/) for one token; [`POST /v1/database/<db>/call/<reducer>`](https://spacetimedb.com/docs/http/database/) with JSON args and Bearer auth. Readiness uses `[room_id]`; screen send uses `[room_id, seq, jpeg_byte_array, width, height]`. The Python hook matches client `src/lib/config.ts`: Maincloud / `ally-call`; update both for a different deployment.
+
+Exact commands for Claude, from this repository root (publish clears disposable database data):
+
+```powershell
+Set-Location spacecall
+spacetime publish ally-call --server maincloud --module-path server --delete-data always
+spacetime generate --lang typescript --out-dir src/module_bindings --module-path server
+npm.cmd run check
+npm.cmd run check:server
+npm.cmd test
+$env:BASE_PATH='/ally-call'
+npm.cmd run build
+```
+
+Local checks: client check **0 errors/warnings**; module type-check **exit 0**; npm **38/38 tests**; static production build passed. Focused Python command from the spec: **100 tests OK**, with temporary Pillow. AGENTS command: **50 tests, 8 errors**. Full discovery: **674 tests, 1 failure, 17 errors, 11 skips**, involving missing NumPy and cascading hotkey teardown, Windows speech, and a sandbox socket check. Details: [Spacecall README](../spacecall/README.md#local-validation).
+
+No commit, push, publish or code generation was performed. The CLI was not on PATH. Maincloud HTTP, subscription-level RLS, generated bindings and iPhone media/zoom still need integration checks. The pre-existing untracked `spacecall/server/dist/` was left untouched.

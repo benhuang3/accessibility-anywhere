@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  advanceChip, AudioJitterBuffer, CallHealth, LatestFrameSender, audioStartTime, serverDelayMs,
-  AUDIO_CAP_MS, AUDIO_CHUNK_MS, AUDIO_TARGET_MS
+  advanceChip, AudioJitterBuffer, CallHealth, LatestFrameSender, audioStartTime, audioScheduleDue, serverDelayMs,
+  AUDIO_CAP_MS, AUDIO_CHUNK_MS, AUDIO_TARGET_MS, AUDIO_SAMPLES
 } from '../src/lib/mediaPolicy.ts';
 
 test('chip requires five seconds of trouble and five seconds of recovery', () => {
@@ -172,12 +172,14 @@ test('jitter buffer primes near 120ms and preserves continuous chunk order', () 
 
 test('jitter buffer drops oldest audio past 300ms, retaining the newest chunks', () => {
   const queue = new AudioJitterBuffer<number>();
-  for (let i = 1; i <= 6; i++) assert.equal(queue.enqueue(i, 0), 0);
-  assert.equal(queue.bufferedMs, AUDIO_CAP_MS);
-  assert.equal(queue.enqueue(7, 0), 5);
-  assert.equal(queue.bufferedMs, 100);
-  queue.enqueue(8, 0);
-  assert.deepEqual([queue.take(), queue.take(), queue.take()], [6, 7, 8]);
+  const capacity = Math.floor(AUDIO_CAP_MS / AUDIO_CHUNK_MS);
+  for (let i = 1; i <= capacity; i++) assert.equal(queue.enqueue(i, 0), 0);
+  assert.equal(queue.bufferedMs, capacity * AUDIO_CHUNK_MS);
+  const retained = Math.floor(AUDIO_TARGET_MS / AUDIO_CHUNK_MS);
+  assert.equal(queue.enqueue(capacity + 1, 0), capacity + 1 - retained);
+  assert.equal(queue.bufferedMs, retained * AUDIO_CHUNK_MS);
+  assert.deepEqual(Array.from({ length: retained }, () => queue.take()),
+    Array.from({ length: retained }, (_, i) => capacity + 2 - retained + i));
 });
 
 test('jitter cap includes already scheduled audio and stays bounded through bursts', () => {
@@ -206,17 +208,17 @@ test('regular arrivals and 20ms playback ticks maintain continuous, bounded audi
   let played = 0;
   for (let ms = 0; ms <= 10000; ms += 10) {
     const now = ms / 1000;
-    if (ms % 50 === 0) queue.enqueue(ms, Math.max(0, nextPlay - now) * 1000);
-    if (ms % 20 !== 0 && ms % 50 !== 0) continue;
+    if (ms % AUDIO_CHUNK_MS === 0) queue.enqueue(ms, Math.max(0, nextPlay - now) * 1000);
+    if (ms % 20 !== 0 && ms % AUDIO_CHUNK_MS !== 0) continue;
     if (nextPlay && nextPlay <= now && queue.underrun()) underruns++;
-    if (nextPlay > now + 0.02 || queue.take() === undefined) continue;
+    if (!audioScheduleDue(nextPlay, now) || queue.take() === undefined) continue;
     const start = audioStartTime(nextPlay, now);
     if (played) assert.equal(start, previousEnd, 'adjacent chunks meet exactly');
     nextPlay = previousEnd = start + AUDIO_CHUNK_MS / 1000;
     played++;
     assert.ok(queue.bufferedMs + (nextPlay - now) * 1000 <= AUDIO_CAP_MS);
   }
-  assert.ok(played > 190);
+  assert.ok(played > 240);
   assert.equal(underruns, 0);
 });
 
@@ -261,4 +263,10 @@ test('timestamp estimates convert microseconds and disclose absent metadata or c
   assert.equal(serverDelayMs({ tag: 'Transaction' }, 1300), null);
   assert.equal(serverDelayMs(undefined, 1300), null);
   assert.equal(serverDelayMs({ tag: 'Reducer', value: { timestamp: { microsSinceUnixEpoch: 1400000n } } }, 1300), -100);
+});
+
+test('capture policy is 640 samples / 40ms and row timestamps work without reducer metadata', () => {
+  assert.equal(AUDIO_CHUNK_MS, 40);
+  assert.equal(AUDIO_SAMPLES, 640);
+  assert.equal(serverDelayMs({ serverAt: { microsSinceUnixEpoch: 1234500n } }, 1300), 65.5);
 });

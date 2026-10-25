@@ -11,7 +11,7 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:server": "tsc --noEmit -p server",
-		"test": "node --import ./tests/module-loader.mjs --test ./server/tests/server.test.ts",
+		"test": "node --import ./tests/module-loader.mjs --test ./server/tests/server.test.ts ./tests/*.test.ts",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
 	},
 	"devDependencies": {

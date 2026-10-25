@@ -1,5 +1,6 @@
 export const HEALTH_WINDOW_MS = 5000;
-export const AUDIO_CHUNK_MS = 50; // The published reducer requires 800 PCM16 samples.
+export const AUDIO_CHUNK_MS = 40;
+export const AUDIO_SAMPLES = 16000 * AUDIO_CHUNK_MS / 1000;
 export const AUDIO_TARGET_MS = 120;
 export const AUDIO_CAP_MS = 300;
 export const MAX_AUDIO_PENDING = 6;
@@ -109,15 +110,21 @@ export class LatestFrameSender {
   }
 }
 
+export function audioScheduleDue(nextPlay: number, now: number) {
+  // Floating point chunk boundaries must not defer a whole playback tick.
+  return nextPlay <= now + 0.02 + 1e-6;
+}
+
 export function audioStartTime(nextPlay: number, now: number) {
   return nextPlay > now ? nextPlay : now + 0.02;
 }
 
-type TimestampEvent = { tag: string; value?: { timestamp?: { microsSinceUnixEpoch: bigint } } };
+type TimestampEvent = { serverAt?: { microsSinceUnixEpoch: bigint }; tag?: string; value?: { timestamp?: { microsSinceUnixEpoch: bigint } } };
 
-// Reducer metadata may carry a timestamp even though media rows have none.
+// Prefer the timestamp carried by the media row, including HTTP-origin events.
 // This measures server-to-receiver age, with client/server clock uncertainty.
 export function serverDelayMs(event: TimestampEvent | undefined, now: number): number | null {
-  const micros = event?.tag === 'Reducer' ? event.value?.timestamp?.microsSinceUnixEpoch : undefined;
+  const micros = event?.serverAt?.microsSinceUnixEpoch ??
+    (event?.tag === 'Reducer' ? event.value?.timestamp?.microsSinceUnixEpoch : undefined);
   return micros === undefined ? null : now - Number(micros) / 1000;
 }

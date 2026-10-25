@@ -61,3 +61,25 @@ footer a:hover { text-decoration: underline; }
   .glass .eyebrow, .glass.notice, .glass.slow, .invitation .notice { color: #694708; }
   .join { background: #204e3b; color: #fff; }
 }
+
+.sharing-banner { width: min(1160px, 100%); padding: 18px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; z-index: 2; }
+.sharing-banner p { font-weight: 650; font-size: 26px; }
+.sharing-banner button { min-height: 80px; }
+.helper-media { position: relative; width: min(1280px, 100%); min-height: 35svh; flex: 1; padding-top: 96px; }
+.screen-scroll { width: 100%; max-height: 60svh; overflow: auto; border-radius: 14px; background: #10201f; touch-action: pan-x pan-y pinch-zoom; }
+.screen-image { display: block; width: 100%; padding: 0; min-height: 0; border: 0; border-radius: 0; background: transparent; touch-action: pan-x pan-y pinch-zoom; }
+.screen-image img { display: block; width: 100%; height: auto; }
+.zoomed .screen-image { width: 220%; }
+.peer-tile { position: absolute; right: 0; top: 0; width: 128px; height: 88px; padding: 0; overflow: hidden; z-index: 1; }
+.peer-tile img { width: 100%; height: 100%; object-fit: contain; }
+.peer-tile span { position: absolute; bottom: 0; left: 0; width: 100%; background: #10201fee; color: #fff; font-size: 16px; }
+.screen-placeholder { padding: 40px 20px; text-align: center; }
+.freshness { display: inline-block; margin-top: 8px; padding: 6px 14px; font-size: 18px; }
+.helper .self-view { top: auto; bottom: 280px; width: 100px; opacity: .9; }
+@media (max-width: 650px) {
+  .sharing-banner { padding: 16px; }
+  .sharing-banner button { width: 100%; }
+  .helper .self-view { position: relative; align-self: flex-start; right: auto; bottom: auto; width: 100px; }
+}
+
+main:not(.helper) .self-view { top: 310px; }

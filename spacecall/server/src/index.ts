@@ -6,7 +6,8 @@ const incident = table({ name: 'incident' }, {
   status: t.string(),
   created_at: t.timestamp(),
   updated_at: t.timestamp(),
-  helper_name: t.string()
+  helper_name: t.string(),
+  screen_sharing: t.bool()
 });
 
 const presence = table({ name: 'presence' }, {
@@ -27,6 +28,7 @@ const audioFrameEvent = table({ name: 'audio_frame_event', public: true, event: 
   sample_rate: t.u32(),
   channels: t.u8(),
   rms: t.f32(),
+  server_at: t.timestamp(),
   pcm16_le: t.byteArray()
 });
 
@@ -37,10 +39,21 @@ const videoFrameEvent = table({ name: 'video_frame_event', public: true, event: 
   seq: t.u32(),
   width: t.u16(),
   height: t.u16(),
+  server_at: t.timestamp(),
   jpeg: t.byteArray()
 });
 
-const spacetime = schema({ incident, presence, audioFrameEvent, videoFrameEvent });
+const screenFrameEvent = table({ name: 'screen_frame_event', public: true, event: true }, {
+  room_id: t.string(),
+  recipient: t.identity(),
+  seq: t.u32(),
+  jpeg: t.byteArray(),
+  width: t.u16(),
+  height: t.u16(),
+  server_at: t.timestamp()
+});
+
+const spacetime = schema({ incident, presence, audioFrameEvent, videoFrameEvent, screenFrameEvent });
 export default spacetime;
 type Context = ReducerCtx<typeof spacetime.schemaType>;
 
@@ -109,7 +122,7 @@ export const open_incident = spacetime.reducer({
   }
   ctx.db.incident.insert({
     room_id, kind, status: 'ringing', created_at: ctx.timestamp,
-    updated_at: ctx.timestamp, helper_name: name
+    updated_at: ctx.timestamp, helper_name: name, screen_sharing: true
   });
   claimRole(ctx, room_id, 'elder', false);
 });
@@ -177,11 +190,11 @@ export const send_audio_frame = spacetime.reducer({
 }, (ctx, args) => {
   const peer = recipient(ctx, args.room_id);
   if (!peer) return;
-  if (args.sample_rate !== 16000 || args.channels !== 1 || args.pcm16_le.length !== 1600 ||
+  if (args.sample_rate !== 16000 || args.channels !== 1 || ![1280, 1600].includes(args.pcm16_le.length) ||
       !Number.isFinite(args.rms) || args.rms < 0 || args.rms > 1) {
     throw new SenderError('Invalid audio frame');
   }
-  ctx.db.audioFrameEvent.insert({ ...args, sender: ctx.sender, recipient: peer });
+  ctx.db.audioFrameEvent.insert({ ...args, sender: ctx.sender, recipient: peer, server_at: ctx.timestamp });
 });
 
 export const send_video_frame = spacetime.reducer({
@@ -193,7 +206,7 @@ export const send_video_frame = spacetime.reducer({
       args.jpeg.length < 4 || args.jpeg.length > 128000 || args.jpeg[0] !== 0xff || args.jpeg[1] !== 0xd8) {
     throw new SenderError('Invalid video frame');
   }
-  ctx.db.videoFrameEvent.insert({ ...args, sender: ctx.sender, recipient: peer });
+  ctx.db.videoFrameEvent.insert({ ...args, sender: ctx.sender, recipient: peer, server_at: ctx.timestamp });
 });
 
 export const call_incident = spacetime.view(
@@ -213,3 +226,37 @@ export const audio_visibility = spacetime.clientVisibilityFilter.sql(
 export const video_visibility = spacetime.clientVisibilityFilter.sql(
   'SELECT * FROM video_frame_event WHERE recipient = :sender'
 );
+
+export const set_screen_sharing = spacetime.reducer({ room_id: t.string(), on: t.bool() }, (ctx, { room_id, on }) => {
+  const row = liveIncident(ctx, room_id);
+  if (!row) throw new SenderError('Call ended');
+  if (member(ctx, room_id).role !== 'elder') throw new SenderError('Only the elder can change screen sharing');
+  ctx.db.incident.room_id.update({ ...row, screen_sharing: on, updated_at: ctx.timestamp });
+});
+
+export const send_screen_frame = spacetime.reducer({
+  room_id: t.string(), seq: t.u32(), jpeg: t.byteArray(), width: t.u16(), height: t.u16()
+}, (ctx, args) => {
+  // The Python sender holds the room capability, but has its own HTTP identity.
+  const row = liveIncident(ctx, args.room_id);
+  if (!row) throw new SenderError('Call ended');
+  if (!row.screen_sharing) throw new SenderError('Screen sharing paused');
+  if (args.jpeg.length < 4 || args.jpeg.length > 200000 || args.jpeg[0] !== 0xff || args.jpeg[1] !== 0xd8 ||
+      args.width < 1 || args.width > 1280 || args.height < 1) {
+    throw new SenderError('Invalid screen frame');
+  }
+  if (row.status !== 'connected') return;
+  const helper = ctx.db.presence.slot.find(`${args.room_id}:helper`);
+  if (helper?.joined) ctx.db.screenFrameEvent.insert({ ...args, recipient: helper.identity, server_at: ctx.timestamp });
+});
+
+export const screen_visibility = spacetime.clientVisibilityFilter.sql(
+  'SELECT * FROM screen_frame_event WHERE recipient = :sender'
+);
+
+// Capability-only preflight lets the HTTP sender wait without taking screenshots.
+export const screen_share_ready = spacetime.reducer({ room_id: t.string() }, (ctx, { room_id }) => {
+  const row = liveIncident(ctx, room_id);
+  if (!row) throw new SenderError('Call ended');
+  if (!row.screen_sharing) throw new SenderError('Screen sharing paused');
+});

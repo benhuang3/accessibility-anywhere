@@ -11,6 +11,7 @@ from ally.contracts import EventBus, Offer, Risk
 from . import actions, behavior, contact, domains, fakescan, fields, joined, process, soft, text
 from .copy import load_copy, render
 from .guardian import Evidence
+from .screenshare import ScreenShare
 
 log = logging.getLogger("ally")
 _ORDER = ("scam_popup", "remote_access", "untrusted_site", "payment_field")
@@ -129,7 +130,11 @@ class RiskWire:
     def __init__(self, bus: EventBus, snapshot_fn=process.snapshot_processes,
                  poll_seconds=10.0, clock=time.time, deduper=None, ask=None, call=None,
                  broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None,
-                 overlay_active=None, review_timeout_s=10.0, contact=None, notify=None, say=None):
+                 overlay_active=None, review_timeout_s=10.0, contact=None, notify=None, say=None,
+                 screen_capture=None, screen_share=True):
+        self.screen_capture = screen_capture
+        self.screen_share = screen_share
+        self._screen_share = None
         self.contact = contact  # (name, send, Meet URL, auto_alert, service, Spacecall URL), or None
         self.auto_alert = bool(contact and len(contact) > 3 and contact[3])
         self._last_auto_alert = None
@@ -304,6 +309,8 @@ class RiskWire:
         def url(role):
             fragment = urllib.parse.urlencode({"room": room, "role": role, "name": self.contact[0],
                                                "kind": risk.kind}, quote_via=urllib.parse.quote)
+            if self.screen_share is False:
+                fragment += "&screen=off"
             return base + "#" + fragment
 
         return url("elder"), url("helper")
@@ -344,7 +351,29 @@ class RiskWire:
     def on_call_ended(self, msg) -> None:
         service = msg.get("service")
         if service in ("meet", "spacecall"):
+            self._stop_screen_share()
             self.bus.publish("risk_call_ended", {"service": service})
+
+    def _stop_screen_share(self):
+        with self._lock:
+            share, self._screen_share = self._screen_share, None
+            if share is not None:
+                share.stop()
+
+    def _start_screen_share(self, url):
+        self._stop_screen_share()
+        if not self._spacecall_url() or not self.screen_share or self.screen_capture is None:
+            return
+        try:
+            room = urllib.parse.parse_qs(urllib.parse.urlsplit(url).fragment)["room"][0]
+            with self._lock:
+                if self._stop.is_set():
+                    return
+                self._screen_share = ScreenShare("https://maincloud.spacetimedb.com", "ally-call",
+                                                 room, self.screen_capture)
+                self._screen_share.start()
+        except Exception:
+            log.debug("could not start screen sharing")
 
     def _contact_action(self, offer, risk, alert) -> None:
         if alert is not None and not self._call_url() and (alert["sent"] or not alert["done"].is_set()):
@@ -403,7 +432,10 @@ class RiskWire:
                 call_url, helper_url = alert["call_urls"]
         else:
             call_url, helper_url = self._call_urls(risk)
+        self._stop_screen_share()
         opened = self._open_call(call_url)
+        if opened:
+            self._start_screen_share(call_url)
         if alert is not None:
             alert["done"].wait()  # the call opens immediately; only delivery waits for the pending push
         already_sent = alert is not None and alert["call_sent" if call_url else "sent"]
@@ -614,6 +646,9 @@ class RiskWire:
     def stop(self):
         with self._lock:
             self._stop.set()
+            if self._screen_share is not None:
+                self._screen_share.stop()
+                self._screen_share = None
             if self._unsubscribe is not None:
                 self._unsubscribe()
                 self._unsubscribe = None
@@ -695,12 +730,15 @@ def attach(agent) -> RiskWire:
         guardian, screen_size = _make_guardian(agent)
     except Exception:
         log.debug("risk second opinion unavailable", exc_info=True)
+    risk_config = (getattr(getattr(agent, "config", None), "data", {}) or {}).get("risk", {}) or {}
     wire = RiskWire(agent.bus, ask=getattr(proactive, "ask", None),
                     call=getattr(bridge, "call", None),
                     broadcast=getattr(bridge, "broadcast", None),
                     guardian=guardian, screen_size=screen_size,
                     overlay_active=lambda: getattr(agent, "overlay", None) is not None,
-                    contact=_make_contact(agent), notify=notify, say=say)
+                    contact=_make_contact(agent), notify=notify, say=say,
+                    screen_capture=lambda: agent.platform.screenshot_png(),
+                    screen_share=risk_config.get("screen_share", True) is True)
     if hasattr(bridge, "on_page"):
         bridge.on_page = wire.on_page
         bridge.on_call_ended = wire.on_call_ended

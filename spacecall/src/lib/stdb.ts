@@ -2,6 +2,7 @@ import { get, writable } from 'svelte/store';
 import { DbConnection, tables } from '../module_bindings';
 import { STDB_URI, DB_NAME } from './config';
 import { handleAudioEvent, handleVideoEvent, setTransmitting, stopCallRuntime, trackReducerCall, recordSendFailure } from './callRuntime';
+import { handleScreenEvent, clearScreen } from './screenshare';
 import { INCIDENT_TTL_MS, type RoomLink } from './room';
 import type { Incident } from './types';
 
@@ -18,6 +19,7 @@ function applyIncident(row: Incident) {
   const expired = Date.now() - Number(row.createdAt.microsSinceUnixEpoch / 1000n) >= INCIDENT_TTL_MS;
   incidentStore.set(expired ? { ...row, status: 'ended' } : row);
   setTransmitting(row.status === 'connected' && !expired);
+  if (!row.screenSharing || row.status === 'ended' || expired) clearScreen();
   if (row.status === 'ended' || expired) stopCallRuntime();
 }
 
@@ -26,6 +28,7 @@ export function connectStdb(link: RoomLink): Promise<DbConnection> {
   current = link;
   connectionError.set('');
   incidentStore.set(null);
+  clearScreen(true);
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       connectionError.set('The call could not connect. Please check your internet and open the link again.');
@@ -38,8 +41,13 @@ export function connectStdb(link: RoomLink): Promise<DbConnection> {
           if (disposed) { conn.disconnect(); return; }
           conn.db.callIncident.onInsert((_ctx, row) => applyIncident(row));
           conn.db.callIncident.onUpdate((_ctx, _old, row) => applyIncident(row));
-          conn.db.audioFrameEvent.onInsert((ctx, row) => handleAudioEvent(row, ctx.event.tag === 'Reducer' ? ctx.event : undefined));
-          conn.db.videoFrameEvent.onInsert((ctx, row) => handleVideoEvent(row, ctx.event.tag === 'Reducer' ? ctx.event : undefined));
+          conn.db.audioFrameEvent.onInsert((_ctx, row) => handleAudioEvent(row));
+          conn.db.videoFrameEvent.onInsert((_ctx, row) => handleVideoEvent(row));
+          conn.db.screenFrameEvent.onInsert((_ctx, row) => {
+            const incident = get(incidentStore);
+            if (link.role === 'helper' && row.roomId === link.roomId && incident?.screenSharing &&
+                incident.status === 'connected') handleScreenEvent(row);
+          });
           conn.subscriptionBuilder().onApplied(() => {
             clearTimeout(timeout);
             isConnected.set(true);
@@ -52,7 +60,8 @@ export function connectStdb(link: RoomLink): Promise<DbConnection> {
           }).subscribe([
             tables.callIncident.where(row => row.roomId.eq(link.roomId)),
             tables.audioFrameEvent.where(row => row.roomId.eq(link.roomId).and(row.recipient.eq(identity))),
-            tables.videoFrameEvent.where(row => row.roomId.eq(link.roomId).and(row.recipient.eq(identity)))
+            tables.videoFrameEvent.where(row => row.roomId.eq(link.roomId).and(row.recipient.eq(identity))),
+            tables.screenFrameEvent.where(row => row.roomId.eq(link.roomId).and(row.recipient.eq(identity)))
           ]);
           heartbeatTimer = setInterval(() => {
             const row = get(incidentStore);
@@ -72,6 +81,7 @@ export function connectStdb(link: RoomLink): Promise<DbConnection> {
           clearInterval(heartbeatTimer);
           setTransmitting(false);
           stopCallRuntime();
+          clearScreen(true);
           if (!disposed && get(incidentStore)?.status !== 'ended') {
             connectionError.set('The connection was lost. Please open a new call from Ally.');
           }
@@ -91,4 +101,5 @@ export function disconnectStdb() {
   connection = null;
   isConnected.set(false);
   stopCallRuntime();
+  clearScreen(true);
 }

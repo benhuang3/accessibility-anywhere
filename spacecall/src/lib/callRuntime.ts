@@ -3,7 +3,7 @@ import workletUrl from './pcm-capture-worklet.ts?worker&url';
 import type { DbConnection } from '../module_bindings';
 import type { AudioFrame, VideoFrame } from './types';
 import {
-  AUDIO_CHUNK_MS, MAX_AUDIO_PENDING, AudioJitterBuffer, CallHealth, LatestFrameSender, audioStartTime, serverDelayMs
+  AUDIO_CHUNK_MS, AUDIO_SAMPLES, MAX_AUDIO_PENDING, AudioJitterBuffer, CallHealth, LatestFrameSender, audioStartTime, audioScheduleDue, serverDelayMs
 } from './mediaPolicy';
 
 export const localVideoStream = writable<MediaStream | null>(null);
@@ -148,11 +148,11 @@ function captureAudio(rt: Runtime) {
         continue;
       }
       rt.lastAudioSend = now;
-      const bytes = new Uint8Array(1600);
+      const bytes = new Uint8Array(AUDIO_SAMPLES * 2);
       const view = new DataView(bytes.buffer);
       let sum = 0;
-      for (let i = 0; i < 800; i++) {
-        const position = i * input.length / 800;
+      for (let i = 0; i < AUDIO_SAMPLES; i++) {
+        const position = i * input.length / AUDIO_SAMPLES;
         const left = Math.floor(position);
         const fraction = position - left;
         const value = get(muted) ? 0 : Math.max(-1, Math.min(1,
@@ -165,7 +165,7 @@ function captureAudio(rt: Runtime) {
       rt.health.record('audioUp', now, bytes.length);
       void rt.conn.reducers.sendAudioFrame({
         roomId: rt.roomId, seq, sampleRate: 16000, channels: 1,
-        rms: Math.sqrt(sum / 800), pcm16Le: bytes
+        rms: Math.sqrt(sum / AUDIO_SAMPLES), pcm16Le: bytes
       }).catch(() => {
         if (!rt.stopped) rt.health.record('sendDrop', performance.now());
       }).finally(() => { rt.audioPending.delete(seq); });
@@ -263,7 +263,7 @@ function playAudio(rt: Runtime) {
   if (rt.nextPlay && rt.nextPlay <= now && rt.jitter.underrun()) {
     rt.health.record('underrun', performance.now());
   }
-  if (rt.nextPlay > now + 0.02) return;
+  if (!audioScheduleDue(rt.nextPlay, now)) return;
   const buffer = rt.jitter.take();
   if (!buffer) return;
   const source = rt.context.createBufferSource();
@@ -276,17 +276,15 @@ function playAudio(rt: Runtime) {
   rt.nextPlay = start + buffer.duration;
 }
 
-type MediaEvent = Parameters<typeof serverDelayMs>[0];
-
-export function handleAudioEvent(row: AudioFrame, event?: MediaEvent) {
+export function handleAudioEvent(row: AudioFrame) {
   const rt = runtime;
   if (!rt || !rt.sending || row.roomId !== rt.roomId || row.seq <= rt.lastAudioSeq ||
-      row.sampleRate !== 16000 || row.channels !== 1 || row.pcm16Le.length !== 1600) return;
+      row.sampleRate !== 16000 || row.channels !== 1 || row.pcm16Le.length !== AUDIO_SAMPLES * 2) return;
   rt.lastAudioSeq = row.seq;
   rt.health.record('audioDown', performance.now(), row.pcm16Le.length);
-  rt.delayMs = serverDelayMs(event, Date.now());
+  rt.delayMs = serverDelayMs(row, Date.now());
   if (rt.context.state !== 'running') { audioNeedsTap.set(true); return; }
-  const buffer = rt.context.createBuffer(1, 800, 16000);
+  const buffer = rt.context.createBuffer(1, AUDIO_SAMPLES, 16000);
   const samples = buffer.getChannelData(0);
   const view = new DataView(row.pcm16Le.buffer, row.pcm16Le.byteOffset, row.pcm16Le.byteLength);
   for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
@@ -294,12 +292,12 @@ export function handleAudioEvent(row: AudioFrame, event?: MediaEvent) {
   playAudio(rt);
 }
 
-export function handleVideoEvent(row: VideoFrame, event?: MediaEvent) {
+export function handleVideoEvent(row: VideoFrame) {
   const rt = runtime;
   if (!rt || !rt.sending || row.roomId !== rt.roomId || row.seq <= rt.lastVideoSeq) return;
   rt.lastVideoSeq = row.seq;
   rt.health.record('videoDown', performance.now(), row.jpeg.length);
-  rt.delayMs = serverDelayMs(event, Date.now());
+  rt.delayMs = serverDelayMs(row, Date.now());
   const old = get(remoteVideoUrl);
   remoteVideoUrl.set(URL.createObjectURL(new Blob([new Uint8Array(row.jpeg)], { type: 'image/jpeg' })));
   if (old) URL.revokeObjectURL(old);
