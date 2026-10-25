@@ -24,6 +24,23 @@ Built for Cal Hacks 13.0 by Ben H (brain and OS layer, integration), Hayden (sen
 
 Windows is the main platform. Linux (GNOME) keeps the core; the Mac version was removed.
 
+### How we use SpacetimeDB
+
+SpacetimeDB is the whole backend of **Ally Call**, the one-tap call to a trusted helper during a scam. One TypeScript
+module (`spacecall/server/src/index.ts`) replaces an app server, a media relay and a database:
+
+- **Real-time media over reducers and event tables**: 16 kHz audio, camera JPEGs and the elder's live screen (sent by
+  the Python agent through SpacetimeDB's HTTP API at up to 15 fps) flow as event-table rows to exactly one recipient.
+- **The helper can act on the elder's screen**: highlight, tap, drag and close-tab gestures travel as
+  `helper_action_event` rows and come back as `action_result_event` rows once the PC has carried them out.
+- **Privacy enforced by the server**: per-incident capability rooms, roles checked against `presence` by identity,
+  row-level visibility filters on every event table, private tables read only through identity-filtered views,
+  strict validation in every reducer, and automatic expiry after two hours or on disconnect.
+- **Face profile sync**: the eye tracker's profile is stored privately per identity in the same module (optional).
+
+8 tables, 14 reducers, a disconnect hook, 2 views, 5 visibility filters, and 154 tests (79 TypeScript, 75 Python).
+Full write-up: **[docs/SPACETIMEDB.md](docs/SPACETIMEDB.md)**.
+
 ---
 
 ## Quick start (about 5 minutes)
@@ -198,7 +215,7 @@ safe to do, and **Yes, close it** / **Keep it open**. "Keep it open" asks "Are y
 to continue." before snoozing that warning for 30 minutes.
 
 **Call Priya** (your trusted helper) opens **Ally Call**, a small mini-player in the corner, built on SpacetimeDB
-(`spacecall/`): the helper sees your screen on their phone and can **Highlight** something, **Use your screen**
+(`spacecall/`, see [docs/SPACETIMEDB.md](docs/SPACETIMEDB.md)): the helper sees your screen on their phone and can **Highlight** something, **Use your screen**
 (tap to click, drag to scroll; never typing) or **Close a tab**. Google Meet remains the fallback. `[risk]`:
 `trusted_contact`, `contact_topic`, `call_service` (`meet` or `spacecall`), `spacecall_url`, `screen_share`,
 `auto_alert`, `screen_review`.
@@ -352,7 +369,7 @@ python run.py agent        run without auto-restart (development)
 | `ally/speech.py`, `ally/voice*.py`, `ally/listener.py` | Speech, yes/no answers, hands-free listening |
 | `ally/server.py`, `ally/bridge.py`, `dashboard/` | Dashboard, API, extension link |
 | `extension/` | Chrome extension: `background.js` (actions), `steps/` (service-worker side), `page/` (page side) |
-| `spacecall/` | Ally Call (SvelteKit app + SpacetimeDB TypeScript module) |
+| `spacecall/` | Ally Call: SvelteKit app + SpacetimeDB TypeScript module (`docs/SPACETIMEDB.md`) |
 | `demo/` | Demo sites (below) |
 | `docs/` | Specs and plans; `docs/integration_plan.md` has the team's change log |
 | `handoff/`, `design/` | Specs, eval results and notes between teammates; mascot and design tokens |
