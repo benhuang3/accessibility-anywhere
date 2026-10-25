@@ -317,6 +317,16 @@ class SpacecallTests(unittest.TestCase):
             self.assertEqual(fragment(calls[1][1]["url"])["role"], "elder")
             self.assertEqual(fragment(self.sent[0][1])["role"], "helper")
 
+    def test_a_call_that_cannot_open_gives_the_camera_back(self):
+        def call(action, args):
+            raise OSError("no browser")
+
+        wire = self.make_wire(call=call)
+        ended = []
+        wire.bus.subscribe("risk_call_ended", ended.append)
+        self.assertFalse(wire._open_call("https://example.github.io/ally-call/#room=x"))
+        self.assertEqual(len(ended), 1)
+
     def test_failures_never_log_the_room(self):
         urls = []
 

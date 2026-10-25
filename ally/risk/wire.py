@@ -383,6 +383,10 @@ class RiskWire:
             return True
         except Exception:
             log.debug("could not open the video call")  # exceptions can contain private room URLs
+            try:  # no call after all: the eye tracker takes its camera back now, not after 45 minutes
+                self.bus.publish("risk_call_ended", {"service": "none"})
+            except Exception:
+                pass
             return False
 
     def _publish_contact(self, risk, ok, opened, auto=False) -> None:
