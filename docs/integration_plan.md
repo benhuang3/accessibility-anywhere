@@ -140,6 +140,19 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 08:40 PT — Ben H (via Claude Code) — `main`
+
+**Pushed to `main`:**
+- **Reading aloud (task 8 done):** long pages are read a part at a time ("Say keep reading for more", then "keep
+  reading" / "read more"), and "read this page in Spanish" (21 languages) has Claude translate the part and Cartesia
+  Sonic speak it with that language. New tool `keep_reading`; `read_page(language=...)`.
+- `docs/CARTESIA.md`, a write-up of how Ally uses Cartesia, plus a "How we use Cartesia" section in `README.md`.
+- 1250 unit tests pass in the Windows VM.
+**Ben W:** small changes in your area. `ally/speech.py`: a sentence's style may carry `language` (passed to
+`/tts/bytes`), the prompt cache key includes a non-English language (English keys unchanged), and a rejected
+language no longer marks the model unusable. `ally/context.py`: `ctx.say(..., style=...)`. Please try "read this
+page in Spanish" with the real key, and correct `docs/CARTESIA.md` if anything is off.
+
 ### Oct 25, 08:10 PT — Ben H (via Claude Code) — `main`
 
 **Pushed to `main`:** `docs/SPACETIMEDB.md`, a full write-up of how Ally uses SpacetimeDB (Ally Call's module:
