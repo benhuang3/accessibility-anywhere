@@ -156,6 +156,50 @@ class GazeModelTests(unittest.TestCase):
         px, py = c.predict(on_target[8][0])
         self.assertLess(abs(px - on_target[8][1][0]) + abs(py - on_target[8][1][1]), 5)
 
+    def _v4_scene(self, pose, true_coef, screen=(1920, 1080)):
+        """(features, target) at this head pose, made with the same geometry v4 assumes: the eye
+        angles needed to look at each target are produced by the true eye model's inverse."""
+        yaw, pitch, tx, ty, tz = pose
+        out = []
+        for gx in np.linspace(150, 1770, 5):
+            for gy in np.linspace(120, 960, 4):
+                need = gm._v4_needed([0, 0, 0, 0, yaw, pitch, tx, ty, tz], (gx, gy), screen, gm.DEFAULT_SCREEN_MM)
+                h, v = need[0] / true_coef[0], need[1] / true_coef[1]  # linear eyes: angle = k * offset
+                out.append(([h, v, 0.0, 0.0, yaw, pitch, tx, ty, tz], (float(gx), float(gy))))
+        return out
+
+    def test_v4_keeps_its_aim_when_the_head_moves(self):
+        k = (0.9, 1.1)
+        calib = self._v4_scene((0.0, -0.10, 0.0, -2.0, -30.0), k)
+        v4, v1 = gm.fit(calib, (1920, 1080), 'v4'), gm.fit(calib, (1920, 1080), 'v1')
+        self.assertLess(v4['error_px'], 10)
+        moved = self._v4_scene((0.14, -0.02, 3.0, -1.0, -42.0), k)  # turned 8 deg, sat back 12 cm, shifted 3 cm
+        err = lambda m: float(np.median([np.hypot(*(np.asarray(gm.predict(m, f, clamp=False)) - t)) for f, t in moved]))
+        self.assertLess(err(v4), 15)
+        self.assertGreater(err(v1), 150)  # the old regression memorised the calibration head pose
+
+    def test_v4_falls_back_without_a_head_pose(self):
+        calib = self._v4_scene((0.0, -0.10, 0.0, -2.0, -30.0), (0.9, 1.1))
+        m = gm.fit(calib, (1920, 1080), 'v4')
+        f = list(calib[3][0]); f[8] = -0.06  # no transformation matrix: the rough pose, not centimetres
+        self.assertEqual(gm.predict(m, f), gm.predict(m['fallback'], f))
+        self.assertTrue(gm.load(self._saved(m), (1920, 1080))['fallback'])
+
+    def _saved(self, model):
+        import tempfile
+        path = Path(tempfile.mkdtemp()) / 'cal.json'
+        gm.save(model, path)
+        return path
+
+    def test_v4_is_the_default_and_retunes_like_the_others(self):
+        self.assertEqual(gm.DEFAULT_FEATURE_SET, 'v4')
+        calib = self._v4_scene((0.0, -0.10, 0.0, -2.0, -30.0), (0.9, 1.1))
+        m = gm.fit(calib, (1920, 1080))
+        shifted = [(f, (t[0] + 120, t[1] - 80)) for f, t in calib[:5]]
+        tuned = gm.retune(m, shifted)
+        self.assertAlmostEqual(tuned['offset'][0], 120, delta=5)
+        self.assertAlmostEqual(tuned['offset'][1], -80, delta=5)
+
     def test_fixation(self):
         pts = [(i * 0.05, 100 + i % 2, 100) for i in range(8)] + [(0.4, 500, 500)] + [(0.45 + i * 0.05, 300, 300) for i in range(14)]
         f = gm.fixation(pts, 0, 1.2, 5)
@@ -284,7 +328,7 @@ class GazeModelTests(unittest.TestCase):
             p.write_text('\n'.join((json.dumps(r) for r in records)), encoding='utf-8')
             rows = gaze_eval.evaluate(p)
             validation = [row for row in rows if row['phase'] == 'validation']
-            self.assertEqual({row['features'] for row in validation}, {'v1', 'v2', 'v3'})
+            self.assertEqual({row['features'] for row in validation}, {'v1', 'v2', 'v3', 'v4'})
             self.assertTrue(all(row['error_px'] < 50 for row in validation), validation)
             gaze_eval.report([p], Path(td) / 'gaze_eval.csv')
             self.assertTrue((Path(td) / 'gaze_eval.csv').is_file())

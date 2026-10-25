@@ -55,7 +55,7 @@ def evaluate(path):
     targets = [r for r in rows if r.get('rec') == 'target']
     results = []
     screen_mm = meta.get('screen_mm', (344.0, 193.0))
-    for fs in ('v1', 'v2', 'v3'):
+    for fs in ('v1', 'v2', 'v3', 'v4'):
         feats = []
         for fr in frames:
             z = gm.features_for_model({'features': fs, 'screen_mm': screen_mm}, fr['lm'], fr.get('bs'), fr.get('mat'), fr['w'], fr['h'])
@@ -85,7 +85,7 @@ def evaluate(path):
             train_weights.extend([0.9 if moved else 1.0] * len(clean))
         if len({tuple(point) for _, point in train}) < 6:
             continue
-        model = gm.fit(train, screen, fs, cutoff, train_weights)
+        model = gm.fit(train, screen, fs, cutoff, train_weights, screen_mm=screen_mm)
         model['screen_mm'] = list(screen_mm)
         corrector = gm.Corrector(model)
         for click in sorted((r for r in rows if r.get('rec') == 'click'), key=lambda c: c['t']):
@@ -156,7 +156,7 @@ def report(paths, out=None):
     summary_headers = ['session', 'features', 'validation', 'drift without re-tune', 'drift with re-tune']
     print('| ' + ' | '.join(summary_headers) + ' |\n|' + '|'.join(['---'] * len(summary_headers)) + '|')
     for path in files:
-        for fs in ('v1', 'v2', 'v3'):
+        for fs in ('v1', 'v2', 'v3', 'v4'):
             validation = indexed.get((str(path), fs, 'validation'), {})
             drift = indexed.get((str(path), fs, 'drift'), {})
             def metric(row, error_key='error_px'):
@@ -173,7 +173,7 @@ def report(paths, out=None):
     print(f'\nCSV: {output}')
     phases = [('validation', 'validation', ''), ('drift', 'drift', ''),
               ('drift', 'drift after retune', 'retuned_')]
-    for fs in ('v1', 'v2', 'v3'):
+    for fs in ('v1', 'v2', 'v3', 'v4'):
         for phase, label, prefix in phases:
             sessions = {row['file'] for row in rows if row['features'] == fs and row['phase'] == phase and _meets(row, prefix)}
             print(f'{fs} meets the bar on {len(sessions)} session(s) for {label}.')

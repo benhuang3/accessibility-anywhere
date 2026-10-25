@@ -18,7 +18,7 @@ FEATURES = ['h', 'v', 'look_h', 'look_v', 'yaw', 'pitch', 'tx', 'ty', 'tz']
 FEATURES_V2 = ['right_h', 'right_v', 'left_h', 'left_v', 'left_lid', 'right_lid', 'up_left', 'down_left', 'up_right', 'down_right', 'yaw', 'pitch', 'roll', 'tx', 'ty', 'tz']
 FEATURES_V3 = ['gaze_x', 'gaze_y', 'eye_h', 'eye_v', 'yaw', 'pitch', 'roll', 'tx', 'ty', 'tz']
 MODEL_VERSION = 1
-DEFAULT_FEATURE_SET = 'v1'
+DEFAULT_FEATURE_SET = 'v4'  # head geometry + learned eyes: survives head movement (see _fit_v4)
 
 def ray_screen_point(origin, direction, screen_mm=(344.0, 193.0), screen_px=(1920, 1080),
                      plane_z=0.0):
@@ -128,13 +128,18 @@ def _ridge(x: np.ndarray, y: np.ndarray, lam: float, weights=None) -> np.ndarray
     return np.linalg.solve(x.T @ x + lam * penalty, x.T @ y)
 
 def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET, openness_cutoff=None,
-        sample_weights=None):
-    """Fit a model from (feature vector, target point) samples across at least six dots."""
-    if feature_set not in ('v1', 'v2', 'v3'):
-        raise ValueError('feature_set must be v1, v2 or v3')
+        sample_weights=None, screen_mm=None):
+    """Fit a model from (feature vector, target point) samples across at least six dots.
+
+    screen_mm: the screen's physical size in millimetres (v4 uses it; default this laptop's).
+    """
+    if feature_set not in ('v1', 'v2', 'v3', 'v4'):
+        raise ValueError('feature_set must be v1, v2, v3 or v4')
     targets = sorted({tuple(t) for _f, t in samples})
     if len(targets) < 6:
         raise ValueError(f'saw your eyes at only {len(targets)} of the dots')
+    if feature_set == 'v4':
+        return _fit_v4(samples, screen, screen_mm, openness_cutoff, sample_weights)
     raw = expand([f for f, _ in samples], feature_set)
     y = np.array([t for _, t in samples], float)
     mean, std = (raw.mean(0), raw.std(0))
@@ -174,16 +179,107 @@ def retune(model, samples):
 def _offset(model) -> np.ndarray:
     return np.asarray(model.get('offset', [0.0, 0.0]), dtype=float)
 
+
+# ---------------------------------------------------------------- v4: head geometry, learned eyes
+# v4 uses the v1 feature vector (h, v, look_h, look_v, yaw, pitch, tx, ty, tz). The head is taken as
+# geometry, not learned: the gaze line starts at the head (tx, ty, tz in cm from the camera, which
+# sits at the top centre of the screen) and its angle is the head's angle plus the eye's angle. Only
+# the eye angle is fitted, so moving the head after calibration doesn't break the estimate (on four
+# real recordings: 770-1000 px after the user moved with v1, 155-260 px with v4, no re-tune).
+# Axis directions (MediaPipe's camera frame vs screen pixels), chosen once from the recordings:
+_V4_SIGNS = (1.0, 1.0, -1.0, -1.0, -1.0, -1.0)  # screen x, screen y, head yaw, head pitch, tx, ty
+_V4_MIN_DISTANCE_CM = 10.0  # closer than this the pose is the rough no-matrix guess: use the fallback
+DEFAULT_SCREEN_MM = (344.0, 193.0)
+
+
+def _v4_eye_terms(f) -> np.ndarray:
+    h, v, lh, lv = (float(x) for x in f[:4])
+    return np.array([h, v, lh, lv, h * h, v * v, h * v, 1.0])
+
+
+def _px_per_cm(screen, screen_mm) -> tuple[float, float]:
+    return screen[0] / (screen_mm[0] / 10.0), screen[1] / (screen_mm[1] / 10.0)
+
+
+def _v4_needed(f, target, screen, screen_mm):
+    """The eye angles (yaw, pitch) that would put this head's gaze on target, or None."""
+    sx, sy, shy, shp, stx, sty = _V4_SIGNS
+    yaw, pitch, tx, ty, tz = (float(x) for x in f[4:9])
+    if abs(tz) < _V4_MIN_DISTANCE_CM:
+        return None
+    kx, ky = _px_per_cm(screen, screen_mm)
+    xt = sx * (target[0] - screen[0] / 2) / kx
+    yt = sy * target[1] / ky
+    return (math.atan2(xt - stx * tx, abs(tz)) - shy * yaw, math.atan2(yt - sty * ty, abs(tz)) - shp * pitch)
+
+
+def _v4_point(model, f):
+    """Raw screen point for one feature vector, or None when the head pose isn't usable."""
+    sx, sy, shy, shp, stx, sty = _V4_SIGNS
+    yaw, pitch, tx, ty, tz = (float(x) for x in f[4:9])
+    if abs(tz) < _V4_MIN_DISTANCE_CM:
+        return None
+    eye_yaw, eye_pitch = _v4_eye_terms(f) @ np.asarray(model['coef'], dtype=float)
+    a, b = shy * yaw + eye_yaw, shp * pitch + eye_pitch
+    if abs(a) >= 1.4 or abs(b) >= 1.4:  # nearly parallel to the screen: no sensible point
+        return None
+    screen, screen_mm = model['screen'], model.get('screen_mm') or DEFAULT_SCREEN_MM
+    kx, ky = _px_per_cm(screen, screen_mm)
+    d = abs(tz)
+    return (screen[0] / 2 + sx * (stx * tx + d * math.tan(a)) * kx, sy * (sty * ty + d * math.tan(b)) * ky)
+
+
+def _v4_coef(rows, screen, screen_mm, lam=1e-3):
+    xs, ys = [], []
+    for f, t in rows:
+        need = _v4_needed(f, t, screen, screen_mm)
+        if need is not None:
+            xs.append(_v4_eye_terms(f))
+            ys.append(need)
+    if len(xs) < 8:
+        return None
+    x, y = np.asarray(xs), np.asarray(ys)
+    return np.linalg.solve(x.T @ x + lam * np.eye(x.shape[1]), x.T @ y)
+
+
+def _fit_v4(samples, screen, screen_mm, openness_cutoff, sample_weights):
+    screen_mm = tuple(float(v) for v in (screen_mm or DEFAULT_SCREEN_MM))
+    fallback = fit(samples, screen, 'v1', openness_cutoff, sample_weights)  # for frames without a pose
+    coef = _v4_coef(samples, screen, screen_mm)
+    if coef is None:  # no usable head pose (no transformation matrix): plain v1 still works
+        return fallback
+    targets = sorted({tuple(t) for _f, t in samples})
+    errs = []
+    for g in targets:  # leave one target out, like the other feature sets
+        part = _v4_coef([s for s in samples if tuple(s[1]) != g], screen, screen_mm)
+        if part is None:
+            continue
+        probe = {'coef': part.tolist(), 'screen': list(screen), 'screen_mm': list(screen_mm)}
+        pts = [p for p in (_v4_point(probe, f) for f, t in samples if tuple(t) == g) if p is not None]
+        if pts:
+            errs.append(float(np.hypot(*(np.median(np.asarray(pts), axis=0) - np.asarray(g, float)))))
+    model = dict(fallback)
+    model.update({'features': 'v4', 'coef': coef.tolist(), 'screen_mm': list(screen_mm),
+                  'error_px': round(float(np.median(errs))) if errs else fallback['error_px'],
+                  'fallback': fallback, 'mean': None, 'std': None})
+    return model
+
 def predict(model: dict, f, clamp: bool = True) -> tuple[float, float]:
     """Predict a screen point, clamped to a 10% margin beyond its edges.
 
     clamp=False gives the raw estimate: retune and Corrector measure drift from it, because after a
     head move the estimate can sit far off screen and clamping would hide most of the shift.
     """
-    raw = expand(f, model.get('features', 'v1'))
-    x = np.column_stack([np.ones(len(raw)), (raw - np.array(model['mean'])) / np.array(model['std'])])
-    p = (x @ np.array(model['coef']))[0]
-    p += np.asarray(model.get('offset', [0.0, 0.0]), dtype=float)
+    if model.get('features') == 'v4':
+        point = _v4_point(model, f)
+        if point is None:  # no usable head pose in this frame: the v1 model fitted alongside
+            point = predict(model['fallback'], f, clamp=False)
+        p = np.asarray(point, dtype=float)
+    else:
+        raw = expand(f, model.get('features', 'v1'))
+        x = np.column_stack([np.ones(len(raw)), (raw - np.array(model['mean'])) / np.array(model['std'])])
+        p = (x @ np.array(model['coef']))[0]
+    p = p + np.asarray(model.get('offset', [0.0, 0.0]), dtype=float)
     if not clamp:
         return (float(p[0]), float(p[1]))
     width, height = model['screen']
@@ -353,6 +449,8 @@ def radius_px(model, features=None):
     distance = max(abs(float(calibration[-1])), 1e-06)
     translation_delta = float(np.linalg.norm(f[ix + angles:ix + pose_size] - calibration[angles:])) / distance
     movement = max(rotation_delta / 10.0, translation_delta / 0.15)
+    if fs == 'v4':  # head geometry is modelled: moving costs much less accuracy (about 1.5x on recordings)
+        movement *= 0.25
     return base * (1 + min(2.0, movement))
 
 def save(model, path):
