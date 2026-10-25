@@ -132,7 +132,7 @@ resolves the `Offer`. Spoken risk warnings never ask a question Ally isn't liste
 | C: tests + setup | `agent/voice-tests` | `tests/e2e_voice.py`, `tests/fakes/`, `ally/doctor.py` voice part, new `ally/voice_setup.py` | Silent tests on Windows, `doctor` voice checks, `run.py voice-check` guided setup, then a full-agent e2e test |
 
 **Contract additions (for Ganesh's overlay and Ben H's dashboard):** bus topic `"voice"` with
-`{"state": "speaking" | "listening" | "idle", "text": caption, "offer_id": int | None, "kind": str, "ts": float}`.
+`{"state": "speaking" | "listening" | "thinking" | "idle", "text": caption, "offer_id": int | None, "kind": str, "ts": float}`.
 Show it as captions and a "Listening" light. Nothing else changes in `contracts.py`.
 
 ## Change log (everyone: add an entry here with every push)

@@ -94,6 +94,9 @@ def card_tone(card: "CardContent | None", offer: "OfferContent | None") -> Tone:
     """Urgency lives in words and the bear's face, never in the card colour."""
     if card is not None and card.kind == "done":
         return Tone(None, "check", "happy", toast=True)
+    if card is not None and card.kind == "voice":
+        bear = {"listening": "listening", "thinking": "idle", "speaking": "happy"}.get(card.voice_state, "idle")
+        return Tone(None, None, bear)
     if card is not None and card.kind == "risk":
         _, body = split_title(card.text)
         if offer is None and not body and card.text.startswith("Closed"):
@@ -145,6 +148,7 @@ class CardContent:
     text: str
     actions: tuple[str, ...]
     kind: str
+    voice_state: str = ""
 
 
 @dataclass(frozen=True)
@@ -175,17 +179,22 @@ class PanelState:
         return mode, self.current_card, self.current_offer
 
     def card(self, text: str, actions: Sequence[str] = ("OK",), kind: str = "info",
-             t: float | None = None) -> tuple:
-        if self.current_card is not None and self.current_card.kind == "risk" and kind == "info":
+             t: float | None = None, voice_state: str = "") -> tuple:
+        if self.current_card is not None and self.current_card.kind == "risk" and kind in ("info", "voice"):
+            return self.view
+        if kind == "voice" and (self.current_offer is not None
+                                or (self.current_card is not None and self.current_card.kind == "done")):
             return self.view
         now = self.clock() if t is None else t
-        self.current_card = CardContent(sanitize_text(text), tuple(sanitize_text(a) for a in actions), kind)
+        self.current_card = CardContent(sanitize_text(text), tuple(sanitize_text(a) for a in actions), kind, voice_state)
         offer = self.current_offer
         self.merged = bool(kind == "risk" and offer is not None and offer.context == "risk"
                            and (self.merged or 0 <= now - self._offer_at <= MERGE_SECONDS))
         return self.view
 
     def offer(self, offer_id: int, context: str, prompt: str, t: float | None = None) -> tuple:
+        if self.current_card is not None and self.current_card.kind == "voice":
+            self.current_card = None
         self.current_offer = OfferContent(offer_id, context, sanitize_text(prompt))
         self._offer_at = self.clock() if t is None else t
         # A visible warning can accept a new decision at any age. An earlier
@@ -279,7 +288,9 @@ class DisplayState:
     card_kind: str | None = None
 
     def may_show_card(self, kind: str) -> bool:
-        if self.card_kind == "risk" and kind == "info":
+        if self.card_kind == "risk" and kind in ("info", "voice"):
+            return False
+        if self.card_kind == "done" and kind == "voice":
             return False
         return True
 
@@ -303,12 +314,16 @@ class CommandView:
         kind = cmd[0]
         if kind == "card":
             _, text, actions, card_kind = cmd
-            if self.card_kind == "risk" and card_kind == "info":
+            if self.card_kind == "risk" and card_kind in ("info", "voice"):
+                return False
+            if card_kind == "voice" and (self.offer is not None or self.card_kind == "done"):
                 return False
             self.card = (text, actions, card_kind)
             self.card_kind = card_kind
             return True
         if kind == "offer":
+            if self.card_kind == "voice":
+                self.card = self.card_kind = None
             self.offer = cmd
             return True
         if kind == "highlight":

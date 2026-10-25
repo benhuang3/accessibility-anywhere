@@ -87,6 +87,8 @@ class Agent:
         # ---- proactive layer (see docs/integration_plan.md): bus -> coordinator -> overlay/voice -> tools.
         # Hayden's senses feeds the bus through on_struggle(); risk and simulate feed it via /api/event.
         self.bus = EventBus()
+        self._voice_lock = threading.RLock()
+        self._voice_token = None
         self.habits = HabitMemory(self.paths.state_dir / "habits.json",
                                   int(self.proactive_cfg().get("auto_apply_after", 2)))
         self.proactive = Coordinator(self.bus, lambda n, a, src: self.call_tool(n, a, source=src), self.habits,
@@ -169,17 +171,76 @@ class Agent:
     def handle_text(self, text: str, source: str = "text", speak: bool = True) -> Reply:
         text = (text or "").strip()
         if not text:
+            if source == "voice":
+                self._voice_state("idle")
             return Reply("", mode="none")
-        self.events.add("heard", text, source=source)
-        gen = self.speaker.generation
-        reply = self.brain.handle(text, source=source)
-        if reply.text:
-            self.events.add("reply", reply.text, mode=reply.mode)
-        silent = any(a.get("silent") for a in reply.actions)
-        if (speak and not silent and self.config.data["agent"].get("speak_replies", True)
-                and self.speaker.generation == gen):
-            self.speaker.say(reply.text)
-        return reply
+        try:
+            self.events.add("heard", text, source=source)
+            gen = self.speaker.generation
+            reply = self.brain.handle(text, source=source)
+            if reply.text:
+                self.events.add("reply", reply.text, mode=reply.mode)
+            silent = any(a.get("silent") for a in reply.actions)
+            voice_token = None
+            if (speak and not silent and self.config.data["agent"].get("speak_replies", True)
+                    and self.speaker.generation == gen):
+                if source == "voice" and reply.text and not reply.error:
+                    voice_token = self._voice_state("speaking", reply.text)
+                spoken = self.speaker.say(reply.text)
+                if voice_token is not None and spoken is not False:
+                    try:
+                        threading.Thread(target=self._voice_finished, args=(voice_token, reply.text),
+                                         name="voice-caption", daemon=True).start()
+                    except Exception:
+                        voice_token = None
+                else:
+                    voice_token = None
+            if source == "voice" and voice_token is None:
+                self._voice_state("idle")
+            return reply
+        except Exception:
+            if source == "voice":
+                self._voice_state("idle")
+            raise
+
+    def _voice_state(self, state: str, text: str = "", timeout: float | None = None) -> object | None:
+        """Best-effort captions; old listening windows and speech waits cannot end a newer turn."""
+        try:
+            with self._voice_lock:
+                token = self._voice_token = object()
+                self.bus.publish("voice", {"state": state, "text": text, "offer_id": None,
+                                           "kind": "request", "ts": time.time()})
+            if state == "listening":
+                timer = threading.Timer(8.0 if timeout is None else timeout, self._voice_idle, args=(token,))
+                timer.daemon = True
+                timer.start()
+            return token
+        except Exception:
+            log.debug("voice caption unavailable", exc_info=True)
+            return None
+
+    def _voice_idle(self, token: object) -> None:
+        with self._voice_lock:
+            if self._voice_token is token:
+                self._voice_state("idle")
+
+    def _voice_finished(self, token: object, text: str) -> None:
+        started = time.monotonic()
+        try:
+            wait = getattr(self.speaker, "wait", None)
+            if callable(wait):
+                wait()
+            else:
+                speaking = self.speaker.speaking
+                if not isinstance(speaking, bool):
+                    raise ValueError("no speech completion status")
+                while speaking and self._voice_token is token:
+                    time.sleep(0.05)
+                    speaking = self.speaker.speaking
+        except Exception:
+            seconds = max(3.0, min(20.0, 0.4 * len(text.split())))
+            time.sleep(max(0.0, seconds - (time.monotonic() - started)))
+        self._voice_idle(token)
 
     def speak_result(self, out: Outcome) -> None:
         if not (isinstance(out.value, dict) and out.value.get("silent")):
@@ -350,6 +411,29 @@ class Agent:
                 ov = Overlay()
                 if ov.start():
                     self.overlay = self.proactive.ui = ov
+                    quiet = False
+                    voice_lock = threading.Lock()
+
+                    def on_voice(msg):
+                        with voice_lock:
+                            if not quiet and isinstance(msg, dict):
+                                ov.voice(msg.get("state", ""), msg.get("text", ""))
+
+                    def on_contact(msg):
+                        nonlocal quiet
+                        with voice_lock:
+                            if isinstance(msg, dict) and msg.get("call_opened"):
+                                quiet = True
+                                ov.voice("quiet")
+
+                    def on_call_ended(_msg):
+                        nonlocal quiet
+                        with voice_lock:
+                            quiet = False
+
+                    self.bus.subscribe("voice", on_voice)
+                    self.bus.subscribe("risk_contact", on_contact)
+                    self.bus.subscribe("risk_call_ended", on_call_ended)
                 else:
                     self.events.add("error", ov.error)
             except Exception as e:

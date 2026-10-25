@@ -71,6 +71,37 @@ class CompanionLayoutTests(unittest.TestCase):
         self.assertEqual(card_tone(None, OfferContent(2, "browser:x", "Make this bigger?")).bear, "listening")
         self.assertIsNone(card_tone(CardContent("Hello.", ("OK",), "info"), None).badge)
 
+    def test_voice_tone_has_no_badge_or_icon_and_matches_the_state(self):
+        for state, bear in (("listening", "listening"), ("thinking", "idle"), ("speaking", "happy")):
+            tone = card_tone(CardContent("Caption", (), "voice", state), None)
+            self.assertEqual((tone.badge, tone.icon, tone.bear, tone.toast), (None, None, bear, False))
+
+    def test_voice_priority_matches_panel_display_and_command_view(self):
+        for kind in ("risk", "done"):
+            panel, display, view = PanelState(), DisplayState(), CommandView()
+            panel.card("Keep this.", kind=kind)
+            display.note_card(kind)
+            view.apply(make_card_command("Keep this.", (), kind))
+            before = panel.current_card
+            panel.card("Voice", (), "voice")
+            self.assertIs(panel.current_card, before)
+            self.assertFalse(display.may_show_card("voice"))
+            self.assertFalse(view.apply(make_card_command("Voice", (), "voice")))
+        for context in ("risk", "browser:example.com"):
+            panel = PanelState()
+            panel.card("Listening", (), "voice")
+            panel.offer(7, context, "Help?")
+            self.assertEqual(panel.view[0], "bubble")
+            panel.card("Reply", (), "voice")
+            self.assertIsNone(panel.current_card)
+            panel.clear()
+            self.assertEqual(panel.view[0], "none")
+        for kind in ("risk", "done", "info"):
+            panel = PanelState()
+            panel.card("Listening", (), "voice")
+            panel.card("Replacement", kind=kind)
+            self.assertEqual(panel.current_card.kind, kind)
+
     def test_done_kind_has_a_check_and_toast_for_any_wording(self):
         for message in ("Priya closed that page for you.", "Priya is pointing here.", "Priya made the page bigger."):
             tone = card_tone(CardContent(message, ("OK",), "done"), None)
@@ -621,6 +652,70 @@ class PanelRenderingTests(unittest.TestCase):
         self.assertIsNotNone(ov._panel.current_card)
         ov._dismiss_toast(ov._panel.current_card)
         self.assertEqual(ov._panel.view[0], "none")
+
+    def test_voice_queues_then_renders_a_small_caption_without_buttons(self):
+        ov = self.overlay()
+        ov._bear_image = Mock(return_value=None)
+        for state, text, caption, bear in (
+                ("listening", "Listening...", "Listening...", "listening"),
+                ("thinking", "Make this easier. Please.",
+                 "\N{LEFT DOUBLE QUOTATION MARK}Make this easier. Please.\N{RIGHT DOUBLE QUOTATION MARK}", "idle"),
+                ("speaking", "x" * 300, "x" * 200, "happy")):
+            with self.subTest(state=state):
+                ov._tk.Button.reset_mock()
+                ov._tk.Label.reset_mock()
+                ov.voice(state, text)
+                ov._tk.Button.assert_not_called()
+                ov._handle(ov._q.get_nowait())
+                card = ov._panel.current_card
+                self.assertEqual((card.kind, card.text, card.actions), ("voice", caption, ()))
+                ov._bear_image.assert_called_with(bear)
+                ov._tk.Button.assert_not_called()
+                labels = [call.kwargs["text"] for call in ov._tk.Label.call_args_list]
+                self.assertIn(caption, labels)
+        ov._root.after.assert_not_called()
+
+    def test_voice_fades_four_seconds_after_idle_and_new_states_cancel_it(self):
+        ov = self.overlay()
+        ov.voice("speaking", "Done.")
+        ov._handle(ov._q.get_nowait())
+        ov.voice("idle")
+        ov._handle(ov._q.get_nowait())
+        fade = ov._root.after.call_args.args
+        self.assertEqual(fade[:2], (4000, ov._dismiss_voice))
+        ov.voice("thinking", "Next request")
+        ov._handle(ov._q.get_nowait())
+        ov._root.after_cancel.assert_called_once()
+        fade[1](*fade[2:])
+        self.assertEqual(ov._panel.current_card.voice_state, "thinking")
+        ov.voice("idle")
+        ov._handle(ov._q.get_nowait())
+        fade = ov._root.after.call_args.args
+        fade[1](*fade[2:])
+        self.assertIsNone(ov._panel.current_card)
+        self.assertIsNone(ov._card_win)
+
+    def test_voice_fade_cannot_remove_risk_done_or_offer_replacement(self):
+        for replacement in ("risk", "done", "offer"):
+            with self.subTest(replacement=replacement):
+                ov = self.overlay()
+                ov.voice("speaking", "Reply")
+                ov._handle(ov._q.get_nowait())
+                ov.voice("idle")
+                ov._handle(ov._q.get_nowait())
+                fade = ov._root.after.call_args.args
+                if replacement == "offer":
+                    ov.offer(Offer("Help?", context="browser:example.com"))
+                else:
+                    ov.show_card("Keep this.", kind=replacement)
+                ov._handle(ov._q.get_nowait())
+                before = ov._panel.view
+                fade[1](*fade[2:])
+                for state in ("listening", "thinking", "speaking", "idle"):
+                    ov.voice(state, "Ignore this")
+                    ov._handle(ov._q.get_nowait())
+                self.assertEqual(ov._panel.view, before)
+                ov._root.after_cancel.assert_called_once()
 
     def test_extra_action_rebuilds_pending_and_final_notes_without_blocking_or_repeating(self):
         for merged in (True, False):

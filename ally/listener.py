@@ -210,6 +210,11 @@ class WakeListener:
             self._ignore_until = time.monotonic() + 0.3  # don't hear our own beep
             self.agent.speaker.beep("start", wait=False)
         self.agent.events.add("voice", "Listening...")
+        try:
+            self.agent._voice_state("listening", "Listening\N{HORIZONTAL ELLIPSIS}",
+                                    timeout=max(0.0, self.awake_until - time.monotonic()))
+        except Exception:
+            pass
 
     def claim(self) -> queue.Queue | None:
         """Send the next utterances to the caller (a yes/no question) instead of wake-word handling.
@@ -339,6 +344,10 @@ class WakeListener:
         self.awake_until = 0.0
         self._follow = float(self.cfg.get("follow_up_seconds", 6)) > 0
         a.last_utterance = (utt.t0, utt.t1)
+        try:
+            a._voice_state("thinking", rest)
+        except Exception:
+            pass
         threading.Thread(target=self._run, args=(rest,), name="voice-request", daemon=True).start()
         return rest
 
@@ -347,6 +356,10 @@ class WakeListener:
             self.agent.handle_text(text, source="voice")
         except Exception:
             log.exception("voice request failed: %s", text)
+            try:
+                self.agent._voice_state("idle")
+            except Exception:
+                pass
         finally:
             # The follow-up window starts when Ally stops talking (the capture loop extends it till then).
             follow = float(self.cfg.get("follow_up_seconds", 6))

@@ -56,6 +56,7 @@ from .layout import (
     make_highlight_command,
     make_offer_command,
     rounded_rect,
+    sanitize_text,
     split_title,
 )
 
@@ -204,6 +205,8 @@ class Overlay:
         self._offer_has_bear = False
         self._images: dict[str, Any] = {}
         self._glyph_font: str | None = None
+        self._voice_fade = None
+        self._voice_version = None
 
     def start(self) -> bool:
         if self._thread is not None and self._thread.is_alive():
@@ -248,6 +251,9 @@ class Overlay:
             return
         self._state.note_card(kind)
         self._q.put(make_card_command(text, actions, kind))
+
+    def voice(self, state: str, text: str = "") -> None:
+        self._q.put(("voice", state, sanitize_text(text, 200)))
 
     def offer(self, offer) -> None:
         self._offers[offer.id] = offer
@@ -328,7 +334,11 @@ class Overlay:
                 self._marker = Marker(self._tk, self._root, getattr(self, "_scale", 1.0), _show_without_focus)
             self._marker.handle(*cmd[1:])
             return
+        if kind == "voice":
+            self._handle_voice(cmd[1], cmd[2])
+            return
         if kind == "stop":
+            self._cancel_voice_fade()
             if getattr(self, "_marker", None) is not None:
                 self._marker.handle("clear", 0, 0)
             self._destroy_all()
@@ -356,6 +366,7 @@ class Overlay:
             self._show_highlight(cmd[1])
             return
         if kind == "card":
+            self._cancel_voice_fade()
             current = self._panel.current_offer
             offer = self._offers.get(current.id) if current is not None else None
             if cmd[3] == "done" and offer is not None and offer.done:
@@ -385,6 +396,7 @@ class Overlay:
         if kind == "offer":
             offer = self._offers.get(cmd[1])
             if offer is not None and not getattr(offer, "done", False):
+                self._cancel_voice_fade()
                 current = self._panel.current_offer
                 if current is not None and current.id != offer.id:
                     self._offers.pop(current.id, None)
@@ -393,6 +405,41 @@ class Overlay:
             else:
                 self._offers.pop(cmd[1], None)
             return
+
+    def _cancel_voice_fade(self) -> None:
+        self._voice_version = object()
+        if self._voice_fade is not None and self._root is not None:
+            self._root.after_cancel(self._voice_fade)
+        self._voice_fade = None
+
+    def _handle_voice(self, state: str, text: str) -> None:
+        card = self._panel.current_card
+        if state == "quiet":
+            self._cancel_voice_fade()
+            if card is not None and card.kind == "voice":
+                self._panel.ok()
+                self._render()
+            return
+        if state == "idle":
+            if card is not None and card.kind == "voice":
+                self._cancel_voice_fade()
+                if self._root is not None:
+                    self._voice_fade = self._root.after(4000, self._dismiss_voice, card, self._voice_version)
+            return
+        if state not in ("listening", "thinking", "speaking"):
+            return
+        if state == "thinking":
+            text = f"\N{LEFT DOUBLE QUOTATION MARK}{text}\N{RIGHT DOUBLE QUOTATION MARK}"
+        self._panel.card(text, actions=(), kind="voice", voice_state=state)
+        if self._panel.current_card is not card:
+            self._cancel_voice_fade()
+            self._render()
+
+    def _dismiss_voice(self, card, version) -> None:
+        if self._voice_version is version and self._panel.current_card is card:
+            self._voice_fade = None
+            self._panel.ok()
+            self._render()
 
     @staticmethod
     def _place(win, x: int, y: int, w: int | None = None, h: int | None = None) -> None:
@@ -561,7 +608,9 @@ class Overlay:
         else:
             if tone.badge:
                 self._badge(inner, tone.badge, tone.icon).pack(anchor="w", pady=(0, px(12)))
-            if card is not None:
+            if card is not None and card.kind == "voice":
+                label(inner, card.text, BODY_PX, TEXT_FG)
+            elif card is not None:
                 title, body = split_title(card.text)
                 label(inner, title, TITLE_PX, TITLE_FG, weight="bold")
                 if body:
@@ -574,8 +623,10 @@ class Overlay:
                     label(inner, title, TITLE_PX, TITLE_FG, weight="bold")
                     if body:
                         label(inner, body, BODY_PX, TEXT_FG, pady=(px(8), 0))
-            row = tk.Frame(inner, bg=CARD_BG)
-            row.pack(fill="x", pady=(0 if (offer is not None and card is not None) else px(20), 0))
+            row = None
+            if offer is not None or card.kind != "voice":
+                row = tk.Frame(inner, bg=CARD_BG)
+                row.pack(fill="x", pady=(0 if (offer is not None and card is not None) else px(20), 0))
             if offer is not None:
                 real = self._offers.get(offer.id, offer)  # the panel state holds a copy; options live on the Offer
                 labels = button_labels(offer.prompt, getattr(real, "options", ("yes", "no")))
@@ -598,7 +649,7 @@ class Overlay:
                 if extra:
                     self._extra_row(inner, offer.id, extra)
                     footer = True
-            else:
+            elif card.kind != "voice":
                 actions = card.actions or ("OK",)
                 width = (inner_w - px(12) * (len(actions) - 1)) // len(actions)
                 for index, text in enumerate(actions):

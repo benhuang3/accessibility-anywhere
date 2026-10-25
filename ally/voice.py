@@ -193,6 +193,11 @@ class VoiceInput:
             if self.cfg.get("beep", True):
                 a.speaker.beep("start", wait=True)
             a.events.add("voice", "Listening...")
+            try:
+                a._voice_state("listening", "Listening\N{HORIZONTAL ELLIPSIS}",
+                               timeout=float(self.cfg.get("max_seconds", 8)))
+            except Exception:
+                pass
             t0 = time.time()
             pcm = self._record()
             a.last_utterance = (t0, time.time())  # where the user looked while talking (eye tracker)
@@ -200,20 +205,40 @@ class VoiceInput:
                 a.speaker.beep("stop", wait=False)
             if len(pcm) < RATE * 2 * 0.3:
                 a.events.add("voice", "Didn't hear anything.")
+                try:
+                    a._voice_state("idle")
+                except Exception:
+                    pass
                 return
             wav = wav_bytes(pcm)
             text = self.transcribe(wav)
             if not text:
                 a.events.add("voice", "Didn't catch that.")
+                try:
+                    a._voice_state("idle")
+                except Exception:
+                    pass
                 a.speaker.say("Sorry, I didn't catch that.")
                 return
+            try:
+                a._voice_state("thinking", text)
+            except Exception:
+                pass
             a.handle_text(text, source="voice")
         except ToolError as e:
             a.events.add("error", str(e))
+            try:
+                a._voice_state("idle")
+            except Exception:
+                pass
             a.speaker.say(str(e))
         except Exception as e:
             log.exception("voice input failed")
             a.events.add("error", f"Voice input failed: {e}")
+            try:
+                a._voice_state("idle")
+            except Exception:
+                pass
         finally:
             with self._lock:
                 self.listening = False
