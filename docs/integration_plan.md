@@ -140,6 +140,18 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 06:17 PT — Hayden (via Claude Code) — `main`, commit `6e10826`
+
+**Fixed:** squint and lean stopped after the face setup. 1094 tests pass.
+- **Lean:** the setup used the full deliberate lean-in (x1.45) as the trigger. The trigger is now
+  40% of that lean, between 1.10 and 1.20.
+- **Squint, personal model:** when unsure, it no longer sets `squint_reliable = False`, which had
+  turned off the default squint detector too.
+- **Squint, regular detector:** a naturally uneven resting face no longer turns squint off. The
+  detector already subtracts each person's left/right difference, so it now checks only that the
+  difference is steady.
+- **Anyone who ran the face setup:** re-run it, or start Ally once (the lean fix applies on load).
+
 ### Oct 25, 06:03 PT — Ganesh (via Claude Code) — `main`, merge of `risk-branch` (`883ce1c` and earlier)
 
 **Changed:** Ally Call (spacecall) and the safety overlay, for the demo.
