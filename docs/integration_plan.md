@@ -140,6 +140,13 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 06:21 PT — Hayden (via Claude Code) — `main`, commit `0f4f587`
+
+**Fixed:** the gaze ring did not appear after the smooth-ring change. `ReleaseDC` had no ctypes
+argtypes, so the 64-bit screen DC handle overflowed on the first frame. The argtypes are now
+declared for `ReleaseDC`, `DeleteDC` and `DeleteObject`. Checked live: the window shows and the
+animation runs.
+
 ### Oct 25, 06:17 PT — Hayden (via Claude Code) — `main`, commit `6e10826`
 
 **Fixed:** squint and lean stopped after the face setup. 1094 tests pass.
