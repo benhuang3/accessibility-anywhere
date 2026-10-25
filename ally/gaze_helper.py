@@ -359,9 +359,118 @@ def apply_click(corrector, frames, t, x, y) -> bool:
     return bool(corrector.add(frame[1], (float(x), float(y)), float(t)))
 
 
+_FEATURE_SETS = ("v1", "v2", "v3", "v4", "v5")
+LIVE_CNN = "mobileone_s0"
+_cnn_logged = False
+
+
 def feature_set_name(value) -> str:
     """The feature set a calibration should fit. Anything else stays on v1."""
-    return value if value in ("v1", "v2") else "v1"
+    return value if value in _FEATURE_SETS else "v1"
+
+
+def helper_state_dir(cfg: dict) -> Path:
+    """App state folder. The gaze model sits in state/models, next to the face landmarker."""
+    raw = cfg.get("state") if isinstance(cfg, dict) else None
+    if raw:
+        return Path(raw)
+    model = cfg.get("model") if isinstance(cfg, dict) else None
+    if model:
+        parent = Path(model).parent
+        if parent.name == "models":
+            return parent.parent
+    return Path("state")
+
+
+def cnn_readiness(state_dir) -> dict:
+    """Whether mobileone_s0 can run: the file is on disk, and onnxruntime imports.
+
+    This does not open the camera and does not download anything.
+    """
+    from ally.gaze_cnn import model_file
+
+    path = model_file(Path(state_dir), LIVE_CNN)
+    try:
+        import onnxruntime  # noqa: F401
+        ort = True
+    except ImportError:
+        ort = False
+    return {"file": path.is_file(), "path": str(path), "onnxruntime": ort}
+
+
+def cnn_fallback_note(state_dir) -> str | None:
+    """Why v5 cannot run, or None when the model file and onnxruntime are both ready."""
+    ready = cnn_readiness(state_dir)
+    if ready["file"] and ready["onnxruntime"]:
+        return None
+    parts = ["Using v4 instead of v5."]
+    if not ready["file"]:
+        parts.append("mobileone_s0_gaze.onnx is not in state/models. Run python scripts/get_gaze_models.py.")
+    if not ready["onnxruntime"]:
+        parts.append("onnxruntime is not installed. Run pip install onnxruntime.")
+    return " ".join(parts)
+
+
+def log_cnn_fallback(note: str) -> None:
+    """Print the v4 fallback once. Later frames stay quiet."""
+    global _cnn_logged
+    if _cnn_logged or not note:
+        return
+    _cnn_logged = True
+    err = sys.stderr
+    if err is None:
+        return
+    try:
+        err.write(note + "\n")
+        err.flush()
+    except OSError:
+        pass
+
+
+def open_live_cnn(state_dir):
+    """Load mobileone_s0 once, or None when the file or onnxruntime is missing."""
+    from ally.gaze_cnn import GazeCNN, MissingDependency, model_file
+
+    path = model_file(Path(state_dir), LIVE_CNN)
+    if not path.is_file():
+        return None
+    try:
+        runner = GazeCNN(path)
+        runner.load()
+    except Exception:
+        return None
+    return runner
+
+
+def resolve_live_features(requested, state_dir):
+    """(feature set, CNN runner or None, fallback note or None).
+
+    v5 loads mobileone_s0. A missing model file or onnxruntime logs once and uses v4.
+    """
+    name = feature_set_name(requested)
+    if name != "v5":
+        return name, None, None
+    note = cnn_fallback_note(state_dir)
+    if note is None:
+        runner = open_live_cnn(state_dir)
+        if runner is not None:
+            return "v5", runner, None
+        note = "Using v4 instead of v5. The gaze model could not be loaded. Run pip install onnxruntime."
+    log_cnn_fallback(note)
+    return "v4", None, note
+
+
+def mention_fallback(result: dict, lines, note: str | None):
+    """Put the v4 fallback sentence on a calibration result, which is what the agent shows."""
+    if not note:
+        return result, lines
+    text = list(lines or [])
+    if note not in text:
+        text.append(note)
+    out = dict(result)
+    out["cnn_fallback"] = note
+    out["lines"] = text
+    return out, text
 
 
 def validation_score(model: dict, samples: list, screen: tuple[int, int]) -> dict:
@@ -1652,20 +1761,43 @@ def face_snapshot(landmarks, matrix, light, eye_light=None, two: bool = False) -
             "yaw": yaw, "pitch": pitch, "eye_light": eye_f}
 
 
-def frame_features(model, landmarks, blendshapes, matrix, width, height):
-    """Feature vector for this model (v1 or v2) plus eye openness. None when the landmarks are unusable."""
+def read_cnn_angles(runner, frame, landmarks):
+    """Yaw and pitch in degrees, or None. The frame is only handed to the model and is not kept."""
+    if runner is None or frame is None or landmarks is None:
+        return None
+    try:
+        got = runner.angles(frame, landmarks)
+    except Exception:
+        return None
+    if not got or len(got) < 2:
+        return None
+    try:
+        yaw, pitch = float(got[0]), float(got[1])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(yaw) or not math.isfinite(pitch):
+        return None
+    return yaw, pitch
+
+
+def frame_features(model, landmarks, blendshapes, matrix, width, height, cnn=None):
+    """Feature vector for this model plus eye openness. None when the landmarks are unusable.
+
+    `cnn` is (yaw, pitch) in degrees for v5. Other feature sets ignore it.
+    """
     from ally import gaze_model
 
     probe = model if isinstance(model, dict) else {"features": "v1"}
-    if probe.get("features") not in ("v1", "v2"):
+    if probe.get("features") not in _FEATURE_SETS:
         probe = {"features": "v1"}
-    return gaze_model.features_for_model(probe, landmarks, blendshapes, matrix, width, height)
+    return gaze_model.features_for_model(probe, landmarks, blendshapes, matrix, width, height, cnn=cnn)
 
 
-def look(landmarker, mp, cv2, frame, t_ms: int, model=None) -> dict:
+def look(landmarker, mp, cv2, frame, t_ms: int, model=None, gaze_cnn=None) -> dict:
     """One camera frame -> landmarks, features, and readiness numbers. The frame is not returned.
 
-    `model` only picks the feature set (a fitted model, or {"features": "v1"} / "v2").
+    `model` only picks the feature set. `gaze_cnn`, when set, is asked for yaw and pitch on this
+    frame; the picture stays in this function.
     """
     import numpy as np
     from ally.senses.face import brightness, face_box
@@ -1688,7 +1820,8 @@ def look(landmarker, mp, cv2, frame, t_ms: int, model=None) -> dict:
     mat = None
     if res.facial_transformation_matrixes and chosen < len(res.facial_transformation_matrixes):
         mat = res.facial_transformation_matrixes[chosen]
-    feat = frame_features(model, lms, bs, mat, w, h)
+    angles = read_cnn_angles(gaze_cnn, frame, lms)
+    feat = frame_features(model, lms, bs, mat, w, h, cnn=angles)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     light = brightness(gray, face_box(np.asarray(lms), w, h))
     face = face_snapshot(lms, mat, light, _eye_light(gray, lms, w, h))
@@ -1802,7 +1935,7 @@ def main(argv: list[str]) -> int:
         return 3
 
     gaze_on, signals_on = bool(cfg.get("gaze", True)), bool(cfg.get("signals", False))
-    feature_set = feature_set_name(cfg.get("features", "v1"))
+    feature_set, live_cnn, cnn_note = resolve_live_features(cfg.get("features", "v1"), helper_state_dir(cfg))
     click_learning = bool(cfg.get("click_learning", True))
     if signals_on:
         from ally.senses import face as face_signals
@@ -1957,7 +2090,8 @@ def main(argv: list[str]) -> int:
             probe = {"features": feature_set}
         else:
             probe = model or {"features": feature_set}
-        seen = look(landmarker, mp, cv2, frame, int((tick - t_start) * 1000), probe)
+        use_cnn = live_cnn if probe.get("features") == "v5" else None
+        seen = look(landmarker, mp, cv2, frame, int((tick - t_start) * 1000), probe, use_cnn)
         feat, lms, bs, mat = seen["feat"], seen["lms"], seen["bs"], seen["mat"]
         face, w, h = seen["face"], seen["w"], seen["h"]
         now = time.time()
@@ -1998,9 +2132,11 @@ def main(argv: list[str]) -> int:
                     fitted = attach_screen_mm(gaze_model.fit(calib.usable(), size, feature_set, screen_mm=mm or None), mm)
                     calib.accept_fit(fitted)
                 except (ValueError, np.linalg.LinAlgError) as e:
-                    result = {"calibrated": False, "why": f"I {e}. Try again with more light on your face."}
+                    result = {"calibrated": False, "why": f"I {e}. Try again with more light on your face.",
+                              "features": feature_set}
+                    result, lines = mention_fallback(result, ["Calibration didn't work.", result["why"]], cnn_note)
                     emit(result)
-                    calib.finish(result, ["Calibration didn't work.", result["why"]])
+                    calib.finish(result, lines)
             elif state == "score":
                 check_only = getattr(calib, "check_only", False)
                 scoring = model if check_only else calib.model
@@ -2052,6 +2188,8 @@ def main(argv: list[str]) -> int:
                         result = {"calibrated": False, "why": f"couldn't save the calibration ({e})"}
                         lines = ["Calibration didn't work.", result["why"]]
                         result.pop("grade", None)
+                result["features"] = feature_set
+                result, lines = mention_fallback(result, lines, cnn_note)
                 emit(result)
                 calib.finish(result, lines)
             elif state in ("done", "cancel"):

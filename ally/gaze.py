@@ -203,6 +203,7 @@ class GazeManager:
                     log.warning("gaze: %s", self.error)
                     return
             args = {"model": str(self.model_path), "calibration": str(self.calibration_path),
+                    "state": str(self.agent.paths.state_dir),
                     "camera": int(self.cfg.get("camera", 0)), "fps": int(self.cfg.get("fps", 20)),
                     "gaze": self.wanted(), "signals": self.senses_wanted(), "signals_fps": self._senses_fps(),
                     "features": self.cfg.get("features", "v1"),
