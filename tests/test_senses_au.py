@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+import zipfile
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from helpers import ROOT
@@ -200,6 +202,137 @@ class SmokeTests(unittest.TestCase):
             self.assertLessEqual(value, 1.0)
         again = runner.presence(frame, _normalized(_pixels(), 640, 480))
         self.assertEqual(len(again), au.AU_COUNT)
+
+
+def _script():
+    path = ROOT / "scripts" / "get_au_models.py"
+    spec = importlib.util.spec_from_file_location("get_au_models", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _package(members: dict[str, bytes], pad: bool = True) -> bytes:
+    module = _script()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as package:
+        for name, payload in members.items():
+            package.writestr(name, payload)
+        if pad:
+            # Padding has to live inside the zip. Bytes after the directory make it look broken.
+            info = zipfile.ZipInfo("padding.bin")
+            info.compress_type = zipfile.ZIP_STORED
+            package.writestr(info, b"\0" * module.MIN_PACKAGE_BYTES)
+    return buf.getvalue()
+
+
+class _Body:
+    def __init__(self, data: bytes):
+        self._data = data
+
+    def read(self):
+        return self._data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class DownloadTests(unittest.TestCase):
+    def test_a_fake_zip_keeps_only_the_two_models(self):
+        module = _script()
+        state = Path(tempfile.mkdtemp(prefix="ally-au-zip-"))
+        data = _package({
+            "../" + module.ENCODER_FILE: b"escaped",
+            "contentFiles/any/any/" + module.ENCODER_FILE: b"encoder-weights",
+            "contentFiles/any/any/" + module.PRESENCE_FILE: b"presence-weights",
+            "contentFiles/any/any/LibreFace_AU_Intensity.onnx": b"not-this",
+            "contentFiles/any/any/LibreFace_FE.onnx": b"not-this-either",
+        })
+        calls = []
+
+        def fake(url, timeout=120):
+            calls.append(url)
+            return _Body(data)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(module.ensure_models(state, opener=fake), 0)
+        text = buf.getvalue()
+        self.assertIn("USC research license", text)
+        self.assertIn("non-profit", text)
+        self.assertIn("USC Stevens Center", text)
+        self.assertIn(module.SOURCE, text)
+        self.assertEqual(calls, [module.SOURCE])
+        models = state / "models"
+        self.assertEqual((models / module.ENCODER_FILE).read_bytes(), b"encoder-weights")
+        self.assertEqual((models / module.PRESENCE_FILE).read_bytes(), b"presence-weights")
+        names = {path.name for path in models.iterdir()}
+        self.assertEqual(names, {module.ENCODER_FILE, module.PRESENCE_FILE})
+        self.assertFalse((state / module.ENCODER_FILE).exists())
+        self.assertFalse(list(state.rglob("*.part")))
+
+    def test_present_files_are_kept_and_nothing_is_fetched(self):
+        module = _script()
+        state = Path(tempfile.mkdtemp(prefix="ally-au-have-"))
+        models = state / "models"
+        models.mkdir()
+        encoder = models / module.ENCODER_FILE
+        presence = models / module.PRESENCE_FILE
+        encoder.write_bytes(b"already-encoder")
+        presence.write_bytes(b"already-presence")
+
+        def boom(url, timeout=120):
+            raise AssertionError(f"network {url}")
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(module.ensure_models(state, opener=boom), 0)
+        self.assertIn("Already have", buf.getvalue())
+        self.assertIn("USC research license", buf.getvalue())
+        self.assertEqual(encoder.read_bytes(), b"already-encoder")
+        self.assertEqual(presence.read_bytes(), b"already-presence")
+
+        import unittest.mock as mock
+
+        buf = io.StringIO()
+        with mock.patch("urllib.request.urlopen", side_effect=AssertionError("network")):
+            with redirect_stdout(buf):
+                code = module.main(["--state", str(state)])
+        self.assertEqual(code, 0)
+        self.assertEqual(encoder.read_bytes(), b"already-encoder")
+
+    def test_a_short_or_non_zip_download_is_refused(self):
+        module = _script()
+        state = Path(tempfile.mkdtemp(prefix="ally-au-bad-"))
+        tiny = _package({
+            "contentFiles/any/any/" + module.ENCODER_FILE: b"encoder-weights",
+            "contentFiles/any/any/" + module.PRESENCE_FILE: b"presence-weights",
+        }, pad=False)
+        self.assertLess(len(tiny), module.MIN_PACKAGE_BYTES)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(module.ensure_models(state, opener=lambda url, timeout=120: _Body(tiny)), 1)
+        self.assertIn("about 84 MB", buf.getvalue())
+        self.assertFalse((state / "models").exists())
+
+        junk = b"not a zip" * (module.MIN_PACKAGE_BYTES // 8)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(module.ensure_models(state, opener=lambda url, timeout=120: _Body(junk)), 1)
+        self.assertIn("not a zip", buf.getvalue())
+        self.assertFalse(list(state.rglob("*.onnx")))
+
+        incomplete = _package({"contentFiles/any/any/" + module.ENCODER_FILE: b"only-one"})
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(
+                module.ensure_models(state, opener=lambda url, timeout=120: _Body(incomplete)), 1)
+        self.assertIn(module.PRESENCE_FILE, buf.getvalue())
+        self.assertFalse(list(state.rglob("*.onnx")))
 
 
 if __name__ == "__main__":
