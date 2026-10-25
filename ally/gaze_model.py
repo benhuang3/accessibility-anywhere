@@ -507,7 +507,8 @@ class GazeSmoother:
         spread = float(np.median(np.linalg.norm(cloud - center, axis=1))) if len(cloud) else 0.0
         gate = max(24.0, min(90.0, (float(radius or 100.0) * self.radius_scale) + 2 * spread))
         if np.linalg.norm(p - self.x) > gate:
-            if self.candidate and t - self.candidate[-1][0] <= 0.3 and np.linalg.norm(p - self.candidate[-1][1]) <= gate:
+            candidate_gate = max(140.0, min(180.0, float(radius or 100.0) * 0.75))
+            if self.candidate and t - self.candidate[-1][0] <= 0.3 and np.linalg.norm(p - self.candidate[-1][1]) <= candidate_gate:
                 self.candidate.append((t, p.copy()))
             else:
                 self.candidate = [(t, p.copy())]
