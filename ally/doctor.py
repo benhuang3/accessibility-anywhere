@@ -105,6 +105,22 @@ def describe_gaze_cnn(state_dir) -> tuple[str, str, str]:
         "; ".join(missing) + ". Fix: python scripts/get_gaze_models.py, pip install onnxruntime")
 
 
+def describe_au(state_dir) -> tuple[str, str, str]:
+    """Whether the LibreFace files are present and onnxruntime imports. Does not open the camera."""
+    from .senses.au import LICENSE, au_readiness
+
+    ready = au_readiness(state_dir)
+    if ready["files"] and ready["onnxruntime"]:
+        return "ok", "Action units", f"LibreFace AU models are present, and onnxruntime imports. {LICENSE}"
+    missing = []
+    if not ready["files"]:
+        missing.append("LibreFace AU models are missing")
+    if not ready["onnxruntime"]:
+        missing.append("onnxruntime is not installed")
+    detail = "; ".join(missing) + ". Fix: python scripts/get_au_models.py, pip install onnxruntime. " + LICENSE
+    return "warn", "Action units", detail
+
+
 def voice_checks(cfg: dict, online: bool = True) -> list[tuple[str, str, str]]:
     """Cartesia voice, the fallback voice, and how spoken yes/no answers will be heard."""
     out = []
@@ -268,6 +284,7 @@ def run_checks(home=None, online: bool = True) -> list[tuple[str, str, str]]:
                     "on (counts clicks and backspaces, never which keys)" if ok else "pip install pynput"))
     else:
         out.append(("ok", "Mouse and keyboard sensing", "off (senses.input = false)"))
+    out.append(describe_au(paths.state_dir))
     out.append(("ok" if autostart.installed() else "warn", "Start at login",
                 "on" if autostart.installed() else "off: python run.py install"))
     try:

@@ -760,14 +760,25 @@ class PrivacyTests(unittest.TestCase):
     BANNED_NAMES = {"imwrite", "VideoWriter", "imencode", "VideoWriter_fourcc"}
 
     def files(self):
-        # Everything that sees camera frames or face numbers: senses, the camera helper, and the eye
-        # tracker's model, recorder and evaluator.
+        # Everything that sees camera frames or face numbers: senses (including au.py), the camera
+        # helper, and the eye tracker's model, recorder and evaluator. The download script may
+        # import urllib. It still must not write an image or a video.
         gaze = ("gaze_helper.py", "gaze_model.py", "gaze_record.py", "gaze_eval.py", "gaze_dot.py", "gaze_cnn.py")
-        return sorted((ROOT / "ally" / "senses").glob("*.py")) + [ROOT / "ally" / name for name in gaze]
+        paths = sorted((ROOT / "ally" / "senses").glob("*.py"))
+        paths += [ROOT / "ally" / name for name in gaze]
+        for path in (ROOT / "ally" / "senses" / "au.py", ROOT / "scripts" / "get_au_models.py"):
+            if path not in paths:
+                paths.append(path)
+        return paths
 
     def test_no_network_or_image_writing(self):
+        names = {path.name for path in self.files()}
+        self.assertIn("au.py", names)
+        self.assertIn("gaze_helper.py", names)
+        self.assertIn("get_au_models.py", names)
         for path in self.files():
             tree = ast.parse(path.read_text(encoding="utf-8"))
+            allow_urllib = path.name == "get_au_models.py"
             for node in ast.walk(tree):
                 mods = []
                 if isinstance(node, ast.Import):
@@ -775,6 +786,8 @@ class PrivacyTests(unittest.TestCase):
                 elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                     mods = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
                 for m in mods:
+                    if allow_urllib and m.split(".")[0] == "urllib":
+                        continue
                     self.assertFalse(m in self.BANNED_MODULES or m.split(".")[0] in self.BANNED_MODULES - {"urllib"},
                                      f"{path.name} imports {m}")
                 if isinstance(node, ast.Attribute):

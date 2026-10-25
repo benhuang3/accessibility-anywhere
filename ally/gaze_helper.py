@@ -6,11 +6,18 @@
     {"calibrated": true, "error_px": 140, "dots": 9, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
                                            calibration done ({"calibrated": false, "why": "..."} if not)
     {"t": ..., "f": {"squint_l": 0.21, ...}}     face numbers for struggle sensing (with "signals": true)
+    {"t": ..., "f": {...}, "au": [0.01, ...]}    12 LibreFace probabilities when "au" is "libreface"
+    {"t": ..., "f": {...}, "lm": [[x, y, z], ...], "bs": {"eyeSquintLeft": 0.2}, "mat": [..16..] or null, "w": 640, "h": 480}
+                                                 same line when "raw" or "raw_live" is true: 478 landmarks, every blendshape,
+                                                 the face matrix, and the frame size. Numbers only.
     {"camera_off": true}                         the camera-on window was clicked; the camera then closes
     {"error": "..."}                             a problem; the process then exits
 
 Settings "gaze" (default true) turns gaze points on; "signals" sends face numbers (ally.senses.face) at
-"signals_fps". Frames never leave this process and are never written to disk.
+"signals_fps". "raw" (default false) adds those extra numbers to the same line. "raw_live" does the same
+when the agent asks for them. "au" is "off" (default) or "libreface"; libreface reads action units at most
+"au_fps" times a second (default 5) and puts the 12 numbers on every signals line. Ally's live senses leave
+raw off unless raw_live is set. Frames never leave this process and are never written to disk.
 
 Commands on stdin: "calibrate" or "calibrate 1" / "calibrate 3" (head positions); "check" runs only the 5 check dots; "stop" cancels a calibration in
 progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not
@@ -20,8 +27,10 @@ at most once a minute and on exit, and restored on start. A new calibration star
 "choice <t0> <t1> <x> <y>" learns from a look that settled on a card (features from that dwell,
 the card centre as the target);
 "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
-"card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds) and
-"card off" closes it. The card also closes itself after seconds. "dot on" / "dot off" show or hide
+"card {json}" shows a readable card (text, optional title, size normal|large|tiny, place
+center|top|bottom, seconds) and
+"card off" closes it. The card also closes itself after seconds. place top or bottom puts a
+short card on that edge of the screen so the line being read is there. "dot on" / "dot off" show or hide
 the click-through gaze circle. "view LEVEL LEFT TOP" is the magnified view, so the circle can sit
 on the glass point while zoomed in. Unknown or broken lines are ignored.
 It exits when the agent closes its stdin (like the hotkey helper),
@@ -98,6 +107,11 @@ REGION_NAMES = (
 NUM_FACES = 2
 SECOND_FACE = 0.70  # a second face this wide, compared with the largest, means two people
 CHEEK_R, CHEEK_L = 234, 454  # same cheek points ally.senses.face uses for width
+AU_OFF, AU_LIBREFACE = "off", "libreface"
+AU_MODES = (AU_OFF, AU_LIBREFACE)
+DEFAULT_AU_FPS = 5  # the encoder is about 20 ms; five times a second is enough for a squint
+AU_FPS_MIN, AU_FPS_MAX = 1, 30
+AU_COUNT = 12  # LibreFace presence head, BP4D order
 
 
 def _out():
@@ -1771,7 +1785,25 @@ def parse_card(arg: str) -> dict | None:
     except (TypeError, ValueError):
         seconds = 0.0
     title = spec.get("title") if isinstance(spec.get("title"), str) else ""
-    return {"text": text.strip(), "title": title.strip(), "size": size, "seconds": max(0.0, seconds)}
+    place = spec.get("place", "center")
+    if place not in ("center", "top", "bottom"):
+        place = "center"
+    return {"text": text.strip(), "title": title.strip(), "size": size, "seconds": max(0.0, seconds),
+            "place": place}
+
+
+def card_origin(screen: tuple[int, int], window: tuple[int, int], place: str) -> tuple[int, int]:
+    """Top-left of the card window. top and bottom pin a short card to that edge of the screen."""
+    sw, sh = int(screen[0]), int(screen[1])
+    ww, wh = int(window[0]), int(window[1])
+    x = max(0, (sw - ww) // 2)
+    if place == "top":
+        y = 0
+    elif place == "bottom":
+        y = max(0, sh - wh)
+    else:
+        y = max(0, (sh - wh) // 2)
+    return x, y
 
 
 def classify_command(cmd: str) -> tuple[str, object]:
@@ -1868,13 +1900,16 @@ class CardWindow:
         except Exception:
             pass
         try:
-            cv2.moveWindow(CARD, max(0, (int(screen[0]) - width) // 2), max(0, (int(screen[1]) - height) // 2))
+            x, y = card_origin(screen, (width, height), self.spec.get("place") or "center")
+            cv2.moveWindow(CARD, x, y)
         except Exception:
             pass
         self.step()
 
     def _window_size(self) -> tuple[int, int]:
         sw, sh = int(self.screen[0]), int(self.screen[1])
+        if self.spec.get("place") in ("top", "bottom"):
+            return min(max(sw - 80, 1), 1100), min(max(sh, 1), 160)
         if self.spec["size"] == "tiny":
             return min(max(sw, 1), 900), min(max(sh, 1), 420)
         if self.spec["size"] == "large":
@@ -2191,6 +2226,183 @@ class ChoiceBoard:
             pass
 
 
+def _xyz(point) -> tuple[float, float, float] | None:
+    try:
+        if hasattr(point, "x") and hasattr(point, "y"):
+            x, y, z = float(point.x), float(point.y), float(getattr(point, "z", 0.0))
+        else:
+            x, y = float(point[0]), float(point[1])
+            z = float(point[2]) if len(point) > 2 else 0.0
+    except (TypeError, ValueError, IndexError):
+        return None
+    if any(math.isnan(n) or math.isinf(n) for n in (x, y, z)):
+        return None
+    return x, y, z
+
+
+def _landmarks_out(landmarks) -> list[list[float]] | None:
+    """478 points as [x, y, z], 4 decimals. None when the face did not yield 478 points."""
+    try:
+        points = list(landmarks)
+    except TypeError:
+        return None
+    if len(points) < 478:
+        return None
+    out = []
+    for point in points[:478]:
+        got = _xyz(point)
+        if got is None:
+            return None
+        out.append([round(got[0], 4), round(got[1], 4), round(got[2], 4)])
+    return out
+
+
+def _blendshapes_out(blendshapes) -> dict:
+    """Every blendshape score by name, 4 decimals. Missing or unusable scores are left out."""
+    if not isinstance(blendshapes, dict):
+        return {}
+    out = {}
+    for name, score in blendshapes.items():
+        if not isinstance(name, str):
+            continue
+        try:
+            number = float(score)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(number) or math.isinf(number):
+            continue
+        out[name] = round(number, 4)
+    return out
+
+
+def _matrix_out(matrix) -> list[float] | None:
+    """The facial transformation matrix as 16 numbers, or null when there isn't one."""
+    if matrix is None:
+        return None
+    if hasattr(matrix, "tolist"):
+        try:
+            matrix = matrix.tolist()
+        except Exception:
+            pass
+    data = getattr(matrix, "data", None)
+    if data is not None and not isinstance(matrix, (list, tuple)):
+        try:
+            matrix = list(data)
+        except TypeError:
+            return None
+    try:
+        if isinstance(matrix, (list, tuple)) and matrix and isinstance(matrix[0], (list, tuple)):
+            flat = [float(n) for row in matrix for n in row]
+        else:
+            flat = [float(n) for n in matrix]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if len(flat) != 16 or any(math.isnan(n) or math.isinf(n) for n in flat):
+        return None
+    return [round(n, 4) for n in flat]
+
+
+def raw_face(landmarks, blendshapes, matrix, width, height) -> dict:
+    """Landmarks, blendshapes, the face matrix, and frame size. No pixels."""
+    try:
+        w, h = int(width), int(height)
+    except (TypeError, ValueError):
+        w, h = 0, 0
+    out = {"bs": _blendshapes_out(blendshapes), "mat": _matrix_out(matrix), "w": w, "h": h}
+    lm = _landmarks_out(landmarks)
+    if lm is not None:
+        out["lm"] = lm
+    return out
+
+
+def au_mode(value) -> str:
+    """`off` or `libreface`. Anything else stays off."""
+    text = str(value or AU_OFF).strip().lower()
+    if text in AU_MODES:
+        return text
+    return AU_OFF
+
+
+def au_rate(value) -> int:
+    """How many action-unit reads a second, clamped. A bool is not a rate."""
+    if isinstance(value, bool):
+        return DEFAULT_AU_FPS
+    try:
+        rate = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_AU_FPS
+    if rate < AU_FPS_MIN:
+        return AU_FPS_MIN
+    if rate > AU_FPS_MAX:
+        return AU_FPS_MAX
+    return rate
+
+
+def au_due(last: float, now: float, fps) -> bool:
+    """True when the last action-unit read is at least one period old."""
+    return (float(now) - float(last)) >= (1.0 / au_rate(fps))
+
+
+def sense_helper_args(senses_cfg: dict | None) -> dict:
+    """au and raw_live for the camera helper.
+
+    raw_live is on when [senses] raw_live is true, or when squint_method or lean_method is not v1.
+    Those detectors need landmarks, blendshapes, and the face matrix on the live line.
+    """
+    cfg = senses_cfg if isinstance(senses_cfg, dict) else {}
+    mode = au_mode(cfg.get("au_model", AU_OFF))
+    squint = str(cfg.get("squint_method", "v1") or "v1")
+    lean = str(cfg.get("lean_method", "v1") or "v1")
+    raw_live = cfg.get("raw_live") is True or squint != "v1" or lean != "v1"
+    out = {"au": mode, "raw_live": raw_live}
+    if mode == AU_LIBREFACE:
+        out["au_fps"] = DEFAULT_AU_FPS
+    return out
+
+
+def _au_out(values) -> list[float] | None:
+    """12 probabilities, 4 decimals. Any other shape is left off the line."""
+    if values is None:
+        return None
+    try:
+        nums = [float(item) for item in values]
+    except (TypeError, ValueError):
+        return None
+    if len(nums) != AU_COUNT:
+        return None
+    if any(math.isnan(number) or math.isinf(number) for number in nums):
+        return None
+    return [round(number, 4) for number in nums]
+
+
+def signal_line(summary, landmarks, blendshapes, matrix, width, height, raw: bool = False,
+                raw_live: bool = False, au=None) -> dict | None:
+    """One signals object, without the timestamp.
+
+    `raw` or `raw_live` adds the raw face numbers. `au` adds 12 action-unit probabilities.
+    Live sensing passes raw false, so the line stays `{f: ...}` unless the agent set raw_live.
+    The recorder passes raw true.
+    """
+    if not isinstance(summary, dict):
+        return None
+    if raw or raw_live:
+        face = raw_face(landmarks, blendshapes, matrix, width, height)
+        # lm sits next to f so a reader sees summary scores, then the points they came from.
+        body = {"f": summary}
+        if "lm" in face:
+            body["lm"] = face["lm"]
+        body["bs"] = face["bs"]
+        body["mat"] = face["mat"]
+        body["w"] = face["w"]
+        body["h"] = face["h"]
+    else:
+        body = {"f": summary}
+    scores = _au_out(au)
+    if scores is not None:
+        body["au"] = scores
+    return body
+
+
 def main(argv: list[str]) -> int:
     try:
         cfg = json.loads(argv[1]) if len(argv) > 1 else {}
@@ -2209,6 +2421,10 @@ def main(argv: list[str]) -> int:
         return 3
 
     gaze_on, signals_on = bool(cfg.get("gaze", True)), bool(cfg.get("signals", False))
+    raw_on = cfg.get("raw") is True
+    raw_live = cfg.get("raw_live") is True
+    au_name = au_mode(cfg.get("au", AU_OFF))
+    au_on = au_name == AU_LIBREFACE
     feature_set, live_cnn, cnn_note = resolve_live_features(cfg.get("features", "v1"), helper_state_dir(cfg))
     click_learning = bool(cfg.get("click_learning", True))
     if signals_on:
@@ -2251,6 +2467,15 @@ def main(argv: list[str]) -> int:
 
     sig_period = 1.0 / max(2, min(30, int(cfg.get("signals_fps", 10))))
     period = 1.0 / max(5, min(30, int(cfg.get("fps", 20)))) if gaze_on else sig_period
+    au_runner = None
+    if au_on and signals_on:
+        from ally.senses.au import ActionUnits
+
+        au_runner = ActionUnits(helper_state_dir(cfg))
+        au_runner.load()
+    au_fps = cfg.get("au_fps", DEFAULT_AU_FPS)
+    last_au = None
+    last_au_at = 0.0
     last_sig, hud, hud_rows = 0.0, False, []
     smooth = gaze_model.GazeSmoother()
     calib: Calibration | None = None
@@ -2378,9 +2603,19 @@ def main(argv: list[str]) -> int:
         now = time.time()
         if signals_on and lms is not None and now - last_sig >= sig_period:
             last_sig = now
+            if au_runner is not None and au_due(last_au_at, now, au_fps):
+                last_au_at = now
+                try:
+                    got = au_runner.presence(frame, lms)
+                except Exception:
+                    got = None
+                if got is not None:
+                    last_au = got
             sig = face_signals.signals(lms, bs, mat, w, h, seen.get("light"))
-            if sig is not None:
-                emit({"t": round(now, 3), "f": sig})
+            shown = last_au if au_on else None
+            body = signal_line(sig, lms, bs, mat, w, h, raw_on, raw_live=raw_live, au=shown)
+            if body is not None:
+                emit({"t": round(now, 3), **body})
         if hud:
             draw_hud(cv2, frame, hud_rows)
         if card is not None:
