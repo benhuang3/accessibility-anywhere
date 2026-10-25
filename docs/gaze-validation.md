@@ -15,7 +15,7 @@ Recordings store numbers only (landmarks, blendshapes, the face matrix, dot time
 
 ## Set up
 
-With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This takes about 50 seconds.
+With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This takes about a minute and a half. `[gaze] calibration_poses = 1` is the older single sitting, about a minute.
 
 ## What you can say
 
@@ -27,11 +27,17 @@ With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This tak
   thing inside Chrome needs the extension: a content script that asks `document.elementFromPoint`.
   That is the extension owner's area.
 - "Magnify what I'm looking at", or "magnify here": zoom around that spot. The view then follows your eyes.
+  Looking near an edge pans that way. The pan is calm (default speed 0.35, about a third of a view
+  width per second at the very edge) and waits about 0.3 seconds so a small wobble does not move the
+  page. Say "follow my eyes slower" or "follow my eyes faster". That is saved as `[gaze] pan_speed`.
 - A yes or no by looking: Ally shows the choices as large cards. Two choices use the left and right
   halves of the screen. Look at one for about a second. Up to four choices. If you don't settle, Ally says none.
 - "Check my eye tracker": only the 5 check dots, about 10 seconds. Ally re-tunes the saved model
   from those dots (a shift, not a new fit) and says how far off it was before and after.
 - "Set up my eyes" runs the full setup again.
+- "Show where I am looking" draws a soft circle at the gaze point. "Hide the eye dot" removes it.
+  The circle is click-through and does not take focus. `[gaze] show_dot` (default false) remembers it.
+  While zoomed in, the circle is placed in the magnified view so it stays on the glass where you look.
 
 If the tracker isn't set up, Ally can't see your face, your eyes don't stay on one spot, or the
 uncertainty is above `max_radius_px` (default 250), Ally uses the mouse pointer and says why.
@@ -61,7 +67,9 @@ The screen waits until the setup looks right, then holds for about 3 seconds. Yo
 - "turn on a light in front of you"
 - "Center your head and look at the screen."
 
-Then 13 dots: the 3x3 grid, plus 4 between the center and the corners. A ring shrinks onto each dot for 0.8 seconds. The next 1.5 seconds are kept, skipping blinks. A dot with fewer than 10 good frames is shown once more at the end. The same happens, once, when the head turns more than about 3 degrees during a dot, or sits that far from the pose at the first dot. That repeat says: keep your head still, look with your eyes only.
+Then 13 dots: the 3x3 grid, plus 4 between the center and the corners. These are pose `normal`. A ring shrinks onto each dot for 0.8 seconds. The next 1.5 seconds are kept, skipping blinks. A dot with fewer than 10 good frames is shown once more at the end. The same happens, once, when the head turns more than about 3 degrees during a dot, or sits that far from the pose at the first dot of that round. That repeat says: keep your head still, look with your eyes only.
+
+With `calibration_poses = 3` (the default), two short rounds follow. Ally says "Sit back a little", waits until that position holds still, and collects 5 dots tagged pose `back`. Then "Lean in a little", and 5 dots tagged pose `close`. Each round judges a turned head against its own first dot. `calibration_poses = 1` skips those rounds.
 
 Then 5 new dots, each in a different area of the screen. Each one settles, then 1.5 seconds are kept. Those dots are not used to fit the model. They are the check.
 
@@ -82,7 +90,7 @@ Poor: too many areas were wrong. The second line is the likely cause.
 - Glasses glare may be covering your eyes. Move the light off to the side.
 - Otherwise: sit still, with light on your face, and try again.
 
-Ally still saves the fit when the dots could be fit. The saved file includes `validation` (`error_px`, `region_hits`, `region_total`) and the camera index. The on-screen words are the check. The `error_px` next to `dots` is the fit's own leave-one-out error.
+Ally still saves the fit when the dots could be fit. The saved file includes `validation` (`error_px`, `region_hits`, `region_total`), the camera index, and `screen_mm` (the screen's width and height in millimetres). The on-screen words are the check. The `error_px` next to `dots` is the fit's own leave-one-out error.
 
 ## Record
 
@@ -99,16 +107,16 @@ python -m ally.gaze_record --person ada --glasses yes --light dim
 
 Each session writes `state/gaze_runs/<run>/<alias>-<glasses>-<light>.jsonl`. One JSON object per line:
 
-- `meta`: alias, glasses, light, screen size, camera, git commit, created time
+- `meta`: alias, glasses, light, screen size, `screen_mm` (the screen's width and height in millimetres), camera, git commit, created time
 - `frame`: time, image width and height, 478 landmarks, all 52 blendshapes, and the 16-number face matrix or null
-- `target`: phase `calibration`, `validation`, or `drift`, plus `shown`, `start`, and `end`
+- `target`: phase `calibration`, `validation`, or `drift`, plus `shown`, `start`, and `end`. Calibration targets also have `pose`: `normal`, `back`, or `close`
 - `click`: time and screen point, only if you click during the reading
 
 `shown` is when the dot appeared. `start` to `end` is the collection window after it settled. Ctrl+C keeps what was already written.
 
 The session on screen:
 
-1. The same readiness, 13 dots, and 5 check dots as calibration. The result words are shown. This command does not replace `state/gaze_calibration.json`.
+1. The same readiness, dots, and 5 check dots as calibration, including the sit-back and lean-in rounds when `calibration_poses` is 3. The result words are shown. This command does not replace `state/gaze_calibration.json`.
 2. About 2 minutes of reading a page of text. Click if you want; the click is two numbers.
 3. Five check dots again, phase `drift`, in different areas from the calibration dots.
 

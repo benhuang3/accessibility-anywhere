@@ -104,15 +104,22 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
 
 ### Eye tracking
 
-1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About 50 seconds: Ally checks that it can
-   see your face, shows 13 dots, then 5 check dots it did not train on. Esc cancels. Do this again if
-   you move your laptop or chair a lot.
+1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About a minute and a half: Ally checks
+   that it can see your face, shows 13 dots, then asks you to sit back a little and lean in a little
+   (5 dots each, so head movement is part of the setup), then 5 check dots it did not train on.
+   Esc cancels. `[gaze] calibration_poses = 1` is the old single sitting, about a minute. Do this
+   again if you move your laptop or chair a lot.
 2. Say **"Ally, what am I looking at"** for the area of the screen. On Windows, Ally also names the
    button, link, or text under that spot. **"this"**, **"that"**, and **"here"** use the same tool.
 3. Say **"Ally, magnify what I'm looking at"** (or "magnify here"), or press `<mod>+G`. The screen
-   zooms around where you looked. While zoomed in, looking near an edge pans that way; the middle
-   stays still for reading. Move the mouse and the view follows the mouse again. Say "follow my eyes"
-   / "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
+   zooms around where you looked. While zoomed in, looking near an edge pans that way, calmly, and
+   only after the look has stayed there for a moment. The middle stays still for reading. Say
+   **"follow my eyes slower"** or **"follow my eyes faster"** to change that speed (saved as
+   `[gaze] pan_speed`, default 0.35). Move the mouse and the view follows the mouse again. Say
+   "follow my eyes" / "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
+   Say **"show where I am looking"** for a soft circle on the spot the tracker is using (click-through;
+   it does not get in the way), and **"hide the eye dot"** to remove it. `[gaze] show_dot` remembers
+   that, and it is off until you ask.
 4. A yes or no can be answered by looking. Ally shows the choices as large cards (two choices: the
    left half and the right half). Look at one for a moment.
 5. Say **"Ally, check my eye tracker"** for the 5 check dots only (about 12 seconds), without a full setup.
