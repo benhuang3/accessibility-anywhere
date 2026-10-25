@@ -140,6 +140,14 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 01:15 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `52873ea`
+
+**Pushed to `benh/os-layer`.** Bug found in manual testing: "zoom in" typed in the extension popup turned on
+the full-screen Windows magnifier (panning with the mouse) instead of zooming the page, because the popup takes
+the focus from Chrome's window. A popup command's browser now counts as in front. **Ganesh / Ben W:** anything
+that checks `bridge.chrome_focused` during a popup command now gets True. Also: after reloading the extension in
+`chrome://extensions`, reload open tabs too (they keep the old page scripts).
+
 ### Oct 25, 01:05 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `599fca1`
 
 **Pushed to `benh/os-layer` (not yet on `main`).**
