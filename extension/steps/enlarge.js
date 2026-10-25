@@ -41,8 +41,10 @@ ${prefixed(FIT_PAUSE, [":focus-visible"])} {
 // Buttons inside list items, trees and menu bars (expand arrows in a table of contents, menu toggles) are
 // compact on purpose: making them 44px tall pushes their rows apart and the list stops lining up.
 const COMPACT = ":not(li *, [role=tree] *, [role=treeitem] *, [role=menubar] *, [role=menu] *)";
-const BUTTON_LIKE = ["button", "[role=button]", "input[type=submit]", "input[type=button]", "input[type=reset]"]
-  .map((b) => `${b}${COMPACT}`);
+// Links made to look like buttons ("Sign up", "Donate", <a class="usa-button">) get the same treatment.
+const LINK_BUTTONS = ["a[role=button]", 'a[class*="btn" i]', 'a[class*="button" i]'];
+const BUTTON_LIKE = ["button", "[role=button]", "input[type=submit]", "input[type=button]", "input[type=reset]",
+  ...LINK_BUTTONS].map((b) => `${b}${COMPACT}`);
 const FIELDS = [
   "select", "textarea", "input:not([type])", "input[type=text]", "input[type=search]", "input[type=email]",
   "input[type=tel]", "input[type=url]", "input[type=number]", "input[type=password]", "input[type=date]",
@@ -137,13 +139,27 @@ STEPS.text = {
   },
 };
 
+// Each label a little bigger than itself: 1.2x and at least 2px more (12px -> 14px, 16px -> 19px), never past 28px.
+// Text the text step enlarges (data-ally-text) keeps that bigger size, whichever step ran first.
+function labelSize(px) {
+  return Math.max(px, Math.min(Math.max(Math.round(px * 1.2), px + 2), Math.max(px, 28)));
+}
+
+function buttonLabelCss(sizes) {
+  return (sizes || [])
+    .map((px) => `${BUTTONS_PAUSE} [data-ally-buttons="${px}"]:not([data-ally-text]) { font-size: ${labelSize(px)}px !important; }`)
+    .join("\n");
+}
+
 STEPS.buttons = {
   async on(tabId) {
-    await layerOn(tabId, "ally_buttons", BUTTONS_CSS);
-    return { said: "made buttons and boxes bigger" };
+    const r = await inPage(tabId, "enlarge.markButtons", { selector: BUTTON_LIKE.join(", ") });
+    await layerOn(tabId, "ally_buttons", `${BUTTONS_CSS}\n${buttonLabelCss(r.sizes)}`);
+    return { said: "made buttons and boxes bigger", marked: r.marked };
   },
   async off(tabId) {
     const removed = await layerOff(tabId, "ally_buttons");
+    await inPage(tabId, "enlarge.clearButtons").catch(() => {});
     return { said: removed ? "put buttons back to normal" : "" };
   },
 };

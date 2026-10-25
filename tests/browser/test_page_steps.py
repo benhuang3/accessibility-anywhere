@@ -270,6 +270,33 @@ class StepAloneTests(PageCase):
         self.assertNotIn("ally_text", ally.styles(page))
         self.assertAlmostEqual(page.evaluate(size), before, delta=0.5)
 
+    def test_buttons_grow_labels_and_link_buttons(self):
+        self.need("buttons")
+        page = fresh()
+        probe = """() => [...['#save', '#donate']].map((s) => { const e = document.querySelector(s);
+            const r = e.getBoundingClientRect(); return [parseFloat(getComputedStyle(e).fontSize), r.width, r.height]; })"""
+        (save_px, save_w, save_h), (don_px, don_w, don_h) = page.evaluate(probe)
+        ally.action("stepOn", {"step": "buttons", "opts": {}})
+        (save_px2, save_w2, save_h2), (don_px2, don_w2, don_h2) = page.evaluate(probe)
+        self.assertGreaterEqual(save_px2, save_px + 2)            # label a little bigger
+        self.assertLessEqual(save_px2, max(save_px * 1.2, save_px + 2) + 0.5)
+        self.assertGreater(save_h2, save_h)                         # bigger button
+        self.assertGreaterEqual(don_px2, don_px + 2)                # link styled as a button: bigger label
+        self.assertGreater(don_w2 * don_h2, don_w * don_h)          # and a bigger box
+        ally.action("stepOff", {"step": "buttons", "opts": {}})
+        self.assertAlmostEqual(page.evaluate(probe)[0][0], save_px, delta=0.5)
+
+    def test_bigger_text_wins_over_button_labels_in_any_order(self):
+        self.need("buttons")
+        self.need("text")
+        sizes = []
+        for order in (("buttons", "text"), ("text", "buttons")):
+            fresh()
+            for step in order:
+                ally.action("stepOn", {"step": step, "opts": {"scale": 1.5} if step == "text" else {}})
+            sizes.append(ally.page().evaluate("() => parseFloat(getComputedStyle(document.querySelector('#save')).fontSize)"))
+        self.assertEqual(sizes[0], sizes[1])
+
     def test_buttons_adds_layer_without_zoom(self):
         self.need("buttons")
         page = fresh()

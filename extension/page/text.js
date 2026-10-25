@@ -44,7 +44,7 @@
   function apply({ scale: s = 1.25, goalPx = 20, maxPx = 72 } = {}) {
     const sizes = {};
     let marked = 0;
-    P.withPaused(["text"], () => {
+    P.withPaused(["text", "buttons"], () => { // the page's own sizes, not what another Ally step set
       P.unmark("text");
       const els = textElements();
       const measured = els.map((el) => [el, Math.round(sizeOf(el))]); // all reads before any write
