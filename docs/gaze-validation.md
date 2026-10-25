@@ -105,6 +105,8 @@ python -m ally.gaze_record --person ada --glasses yes --light dim
 
 `--camera N` picks the camera. `--run NAME` groups files under one folder. The default folder name is the time in UTC.
 
+`--cnn mobileone_s0,resnet18` also runs those gaze models on every frame, in memory. Each frame line then has `cnn` (the model name, then yaw and pitch in degrees) and `cnn_ms` (how many milliseconds that model took). Without `--cnn` the file is unchanged. The picture is still not saved. If a model file is missing, the command says to run `python scripts/get_gaze_models.py` and does not open the camera.
+
 Each session writes `state/gaze_runs/<run>/<alias>-<glasses>-<light>.jsonl`. One JSON object per line:
 
 - `meta`: alias, glasses, light, screen size, `screen_mm` (the screen's width and height in millimetres), camera, git commit, created time
