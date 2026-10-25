@@ -49,11 +49,22 @@ Clicks can improve the estimate after setup (`click_learning`, on by default). T
 numbers used on this computer. It is not saved as a picture and it is not sent anywhere. Set
 `click_learning = false` to turn that off.
 
-`features` is `v1` or `v2`. A new setup uses the one in config. The default stays `v1` until
-recordings show `v2` is better. An older calibration keeps the feature set it was fit with.
+`features` defaults to `v5`. v5 is the v4 head model (where the head is, plus an eye angle learned at
+setup) plus MobileGaze yaw and pitch in degrees from `mobileone_s0`. Download that model once. A file
+already in `state/models` is skipped:
+
+```
+python scripts/get_gaze_models.py
+```
+
+v5 also needs the ONNX runner: `pip install onnxruntime`. If `state/models/mobileone_s0_gaze.onnx` or
+onnxruntime is missing, calibration and tracking use v4, and the calibration result says so. A new
+setup uses the feature set in config (`v1`, `v2`, `v3`, `v4`, or `v5`). An older calibration keeps
+the set it was fit with.
 
 `python run.py doctor` prints how old the calibration is, the check (pixels and areas), the feature
-set, and whether `gaze.camera` still matches the camera the file was made for.
+set, whether `gaze.camera` still matches, and whether `mobileone_s0_gaze.onnx` is present and
+onnxruntime imports. The fix it names is `python scripts/get_gaze_models.py` and `pip install onnxruntime`.
 
 ## Calibrate
 
@@ -151,7 +162,9 @@ python -m ally.gaze_cnn evaluate state/gaze_runs
 Each model gets three rows:
 
 - `cnn`: the model's yaw and pitch, plus where the head is (from the face matrix), mapped onto the screen the way v4 maps an eye angle. A gain and an offset per axis are fit on the calibration dots.
-- `hybrid`: v4's eye terms and the model's two angles, in one fit of the eye angle the head would need.
+- `hybrid`: v4's eye terms and the model's two angles, in one fit of the eye angle the head would need. The live tracker is this fit, as feature set `v5`, using `mobileone_s0` only.
 - `v4`: our tracker, for reference.
+
+`python -m ally.gaze_eval report` adds a `v5` row, with the same columns as the other feature sets (including the per-frame and smoother numbers), when frames stored `mobileone_s0` angles. Older recordings skip `v5`, and the report says so.
 
 For each of those, on validation and on drift: how far the median of a dot is from that dot, and whether it fell in the right 3x3 area; the median and 90th percentile of the error on single frames; and the median and 90th percentile of the jump from one frame to the next. `ms` is the median time that model took on a frame. A CSV is written in the current folder as `gaze_cnn.csv`, or where `--out` says (a `.csv` path, or a folder).
