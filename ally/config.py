@@ -54,21 +54,27 @@ SPEC = {
              "features": ("v1", "v2", "v3", "v4", "v5"), "calibration_poses": int,
              "click_learning": bool, "max_radius_px": NUM, "answer_offers": bool},
     "senses": {"vision": bool, "input": bool, "fps": int, "calibrate_seconds": NUM, "solo": list,
+               "squint_method": ("v1", "relative", "geometric", "personal", "hybrid"), "lean_method": ("v1", "distance", "hybrid"),
+               "au_model": ("off", "libreface"), "raw_live": bool,
                "window_seconds": NUM, "cooldown_seconds": NUM, "min_confidence": NUM, "decline_seconds": NUM,
                "squint_delta": NUM, "squint_weak": NUM, "squint_hold": NUM, "squint_window": NUM, "wink_max": NUM,
                "smile_gate": NUM, "blink_gate": NUM, "blink_max": NUM, "blink_closed": NUM,
                "pose_gate": NUM, "light_floor": NUM, "lean_ratio": NUM,
                "lean_weak": NUM, "lean_release": NUM, "lean_hold": NUM, "rage_clicks": int, "rage_seconds": NUM,
                "rage_px": NUM, "retype_backspaces": int, "retype_seconds": NUM, "hesitation_seconds": NUM,
-               "rearm_seconds": NUM, "post_url": str},
+               "rearm_seconds": NUM, "relative_squint_weak": NUM, "relative_squint_strong": NUM,
+               "geometric_aperture_drop": NUM, "geometric_lower_rise": NUM, "lean_distance_ratio": NUM,
+               "post_url": str},
     "proactive": {"enabled": bool, "offer_timeout_seconds": NUM, "cooldown_seconds": NUM,
                   "fusion_window_seconds": NUM, "min_confidence": NUM, "auto_apply_after": int,
                   "voice_confirm": bool, "overlay": bool, "senses_behavior": bool, "senses_vision": bool,
                   "camera_index": int, "context_poll_seconds": NUM},
-    "risk": {"screen_review": bool, "daily_calls": int, "hourly_calls": int, "trusted_contact": str,
-             "contact_topic": str, "contact_call_url": str, "auto_alert": bool},
+    "risk": {"screen_review": bool, "screen_share": bool, "daily_calls": int, "hourly_calls": int, "trusted_contact": str,
+             "contact_topic": str, "contact_call_url": str, "auto_alert": bool,
+             "call_service": ("meet", "spacecall"), "spacecall_url": str},
     "profile": {"page_zoom": NUM, "min_font_px": int, "page_styles": list, "screen_magnify": NUM,
-                "color_filter": ("none", "invert", "grayscale", "high_contrast")},
+                "color_filter": ("none", "invert", "grayscale", "high_contrast"),
+                "sync": ("off", "spacetimedb"), "host": str, "database": str},
     "page_enlarge": {"text_goal_px": NUM, "target_goal_px": NUM, "max_zoom": NUM, "max_text_scale": NUM,
                      "sticky_budget": NUM,
                      "ai_check": bool, "ai_background": bool},
@@ -193,6 +199,13 @@ def validate(cfg: dict, known_tools: set[str] | None = None) -> tuple[list[str],
                 rng = RANGES.get((section, key))
                 if rng and not (rng[0] <= v <= rng[1]):
                     errors.append(f"{section}.{key} = {v} is outside {rng[0]}..{rng[1]}")
+
+    risk = cfg.get("risk")
+    if isinstance(risk, dict) and isinstance(risk.get("spacecall_url"), str) and risk["spacecall_url"]:
+        from .risk.contact import valid_spacecall_url
+
+        if not valid_spacecall_url(risk["spacecall_url"]):
+            errors.append("risk.spacecall_url must use HTTPS without user info, a port, whitespace or #")
 
     gaze = cfg.get("gaze")
     if isinstance(gaze, dict):

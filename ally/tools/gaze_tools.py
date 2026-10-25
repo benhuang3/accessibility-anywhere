@@ -7,8 +7,7 @@ import sys
 from typing import Annotated, Literal
 
 from .. import gaze_model
-from ..gaze_helper import (likely_cause, pose_count, result_grade, result_lines, retune_check,
-                           retune_sentence, setup_duration)
+from ..gaze_helper import (likely_cause, result_grade, result_lines, retune_check, retune_sentence)
 from ..registry import ToolError, tool
 
 
@@ -20,6 +19,21 @@ def _quality(result: dict) -> tuple[str, list[str]]:
         cause = result.get("cause") or likely_cause(None)
         lines = result_lines(grade, validation, cause)
     return grade, [str(line) for line in lines if line]
+
+
+def say_result(ctx, text: str) -> None:
+    """Say a setup's result after anything still playing. The agent skips its own reply once a
+    tool has spoken (the setup's opening instructions count), so the result has to be said here."""
+    speaker = getattr(getattr(ctx, "agent", None), "speaker", None)
+    if speaker is None or not text:
+        return
+    try:
+        try:
+            speaker.say(text, interrupt=False)
+        except TypeError:  # a speaker without the interrupt option
+            speaker.say(text)
+    except Exception:
+        pass
 
 
 def calibration_words(result: dict) -> str:
@@ -34,6 +48,58 @@ def calibration_words(result: dict) -> str:
     if grade == "poor":
         return f"The eye tracker is set up, but the check was poor. {body}"
     return f"The eye tracker is ready. {body}"
+
+
+def face_setup_words(result: dict, senses: dict | None) -> str:
+    """Eyes result, then whether squint sensing is on for this person."""
+    eyes = calibration_words(result)
+    if not result.get("calibrated"):
+        return eyes
+    senses = senses or {}
+    if not senses.get("ok"):
+        why = senses.get("why") or "I didn't get a clear reading"
+        return f"{eyes} Face sensing needs another try: {why}"
+    if senses.get("squint_enabled"):
+        return f"{eyes} Squint sensing is on for you."
+    return f"{eyes} Squint sensing is off for you. Lean and the other signals still work."
+
+
+def _run_face_setup(ctx) -> str:
+    """The one-time face setup. calibrate_eye_tracker is the same flow."""
+    p = ctx.os
+    level = p.view()[0]
+    if level > 1.0 or p.other_magnifier_open():
+        p.magnify(1.0)
+    ctx.say("Face setup. About 90 seconds. You can press Esc to cancel.")
+    senses = getattr(ctx.agent, "senses", None)
+    try:
+        try:
+            result = dict(ctx.agent.gaze.calibrate(timeout=240) or {})
+        except Exception:
+            if senses is not None and hasattr(senses, "cancel_setup_intake"):
+                senses.cancel_setup_intake()
+            raise
+    finally:
+        if level > 1.0:
+            p.magnify(level)
+    if not result.get("calibrated"):
+        if senses is not None and hasattr(senses, "cancel_setup_intake"):
+            senses.cancel_setup_intake()
+        words = calibration_words(result)
+        say_result(ctx, words)
+        return words
+    senses_result = {"ok": False, "why": "face sensing is off"}
+    if senses is not None and hasattr(senses, "finish_setup_intake"):
+        try:
+            senses_result = senses.finish_setup_intake(result.get("lean")) or senses_result
+        except Exception:
+            senses_result = {"ok": False, "why": "face sensing didn't finish"}
+    from ..gaze import save_face_profile
+
+    save_face_profile(ctx.agent)
+    words = face_setup_words(result, senses_result)
+    say_result(ctx, words)
+    return words
 
 
 def check_words(result: dict) -> str:
@@ -168,29 +234,24 @@ def magnify_where_i_look(ctx, level: Annotated[float, "Magnification, e.g. 2 = 2
     return done
 
 
-@tool(timeout=210)
+@tool(timeout=300)
+def face_setup(ctx):
+    """One-time face setup: a face scan, the eye dots, sit back, lean in, a short reading, then a check.
+
+    Use for "set up my face", "face setup", "scan my face", "set up my eyes", "calibrate my eyes",
+    or "calibrate". About 90 seconds, once. Esc cancels. Quick calibrate is a separate short re-tune.
+    """
+    return _run_face_setup(ctx)
+
+
+@tool(timeout=300)
 def calibrate_eye_tracker(ctx):
-    """Set up the eye tracker: 9 dots, then sit back a little and lean in a little, then a check.
+    """Same as face setup. Kept so older phrases ("calibrate my eyes", "set up my eyes") still work.
 
     Use when the user asks to calibrate or set up eye tracking, or when "what I'm looking at"
-    doesn't land where they look. With calibration_poses = 1 it is the 9 dots only.
-    About 45 seconds with the head-position rounds, about 30 seconds without them.
+    doesn't land where they look. About 90 seconds. Esc cancels.
     """
-    p = ctx.os
-    level = p.view()[0]
-    if level > 1.0 or p.other_magnifier_open():
-        p.magnify(1.0)  # the dots must be shown unmagnified (this also closes Windows Magnifier)
-    poses = pose_count(ctx.agent.config.data.get("gaze", {}).get("calibration_poses", 3))
-    extra = "" if poses <= 1 else " Then sit back a little, and lean in a little."
-    takes = setup_duration(poses).rstrip(".").lower()
-    ctx.say("Eye tracker setup. Look at each dot. Move only your eyes, and keep your head still."
-            f"{extra} This takes {takes}.")
-    try:
-        result = ctx.agent.gaze.calibrate(timeout=180 if poses >= 3 else 120)
-    finally:
-        if level > 1.0:
-            p.magnify(level)
-    return calibration_words(result)
+    return _run_face_setup(ctx)
 
 
 @tool(timeout=60)
@@ -211,7 +272,9 @@ def check_eye_tracker(ctx):
     finally:
         if level > 1.0:
             p.magnify(level)
-    return check_words(_save_check_retune(ctx, result))
+    words = check_words(_save_check_retune(ctx, result))
+    say_result(ctx, words)
+    return words
 
 
 @tool(timeout=60)

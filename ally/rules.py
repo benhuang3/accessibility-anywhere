@@ -60,6 +60,11 @@ RULES = [
               r"make (?:what|where) (?:i'm|i am|im) looking at (?:bigger|larger)|"
               r"help me read(?: (?:this|that|it|the (?:text|page|screen)))?",
          loose=r"\b(?:i'm|i am|im) (?:looking|staring|gazing)\b|\bwhere i look\b|\b(?:magnify|zoom(?: in)?) here\b"),
+    # Face setup before calibrate. "set up my eyes" and "calibrate" stay on calibrate_eye_tracker,
+    # which runs the same flow, so older phrases keep their tool name.
+    Rule("face_setup", [("face_setup", {})],
+         full=r"(?:please )?(?:set up|setup|scan) (?:my )?face|face (?:setup|set up|scan)|scan my face",
+         loose=r"\b(?:set up|setup|scan) (?:my )?face\b|\bface (?:setup|set up)\b|\bscan my face\b"),
     # Quick calibrate comes before calibrate, whose loose pattern would take any "calibrate".
     Rule("quick_calibrate", [("check_eye_tracker", {})],
          full=r"(?:do a )?(?:quick|quickly|fast)(?: re)? ?(?:calibrat(?:e|ion)|check|setup|set up)(?: (?:my|the))?"
@@ -328,7 +333,7 @@ def match(text: str, strict: bool = True) -> Match | None:
 
 HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the selection, stop, high contrast, "
              "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, "
-             "what am I looking at, check my eye tracker, set up my eyes, "
+             "what am I looking at, check my eye tracker, set up my face, set up my eyes, "
              "follow my eyes slower, follow my eyes faster, show where I am looking, hide the eye dot, "
              "invert colors, scroll down, go back, simple mode, bigger buttons, hide pop-ups, simplify the menu, "
              "check the page, zoom in on the picture, describe the picture, show numbers, click 3, click sign in, "

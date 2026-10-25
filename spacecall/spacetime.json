@@ -1,0 +1,6 @@
+{
+  "database": "ally-call",
+  "module-path": "./server",
+  "server": "maincloud",
+  "generate": [{ "language": "typescript", "out-dir": "./src/module_bindings" }]
+}

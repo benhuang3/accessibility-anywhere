@@ -498,10 +498,18 @@ const ACTIONS = {
     else await chrome.tabs.update((await activeTab()).id, { url });
     return url;
   },
-  async openCall({ url, name }) {
+  async openCall({ url, name, service = "meet", spacecallOrigin = "" }) {
     const parsed = new URL(url);
-    if (parsed.protocol !== "https:" || parsed.hostname !== "meet.google.com" || parsed.username || parsed.password) {
-      throw new Error("Ally calls need an https://meet.google.com address.");
+    const allowedOrigins = new Set(["https://meet.google.com"]);
+    if (service === "spacecall") {
+      if (!/^https:\/\/[^/?#:@\\\s]+$/i.test(spacecallOrigin)) throw new Error("Ally Call needs its configured HTTPS origin.");
+      allowedOrigins.clear();
+      allowedOrigins.add(new URL(spacecallOrigin).origin);
+    } else if (service !== "meet") {
+      throw new Error("Unknown Ally call service.");
+    }
+    if (parsed.protocol !== "https:" || !allowedOrigins.has(parsed.origin) || parsed.username || parsed.password || parsed.port) {
+      throw new Error("Ally calls need an allowed HTTPS address.");
     }
     // Info requests and load events wait until the new popup's identity is saved.
     const opening = callCreation.then(async () => {
@@ -509,14 +517,16 @@ const ACTIONS = {
       const tab = win.tabs && win.tabs[0];
       try {
         if (!tab || typeof tab.id !== "number") throw new Error("The call tab did not open.");
-        await chrome.storage.session.set({ [callKey(tab.id)]: {
+        const key = service === "spacecall" ? `allySpacecall:${tab.id}` : callKey(tab.id);
+        await chrome.storage.session.set({ [key]: {
           tabId: tab.id, windowId: win.id, name: String(name || "your trusted person").slice(0, 30),
+          service,
         } });
       } catch (e) {
         await chrome.windows.remove(win.id).catch(() => {});
         throw e;
       }
-      if (tab.status === "complete") await insertCallCSS(tab.id);
+      if (service === "meet" && tab.status === "complete") await insertCallCSS(tab.id);
       return { opened: true, windowId: win.id };
     });
     callCreation = opening.catch(() => {});
@@ -778,10 +788,14 @@ async function insertCallCSS(tabId) {
 
 chrome.windows.onRemoved?.addListener(async (windowId) => {
   try {
+    const closing = chrome.storage.session.get(null); // capture records before the End call handler removes them
     await callCreation;
-    const saved = await chrome.storage.session.get(null);
-    const keys = Object.keys(saved).filter((key) => key.startsWith("allyCall:") && saved[key].windowId === windowId);
-    if (keys.length) await chrome.storage.session.remove(keys);
+    const saved = { ...await closing, ...await chrome.storage.session.get(null) };
+    const keys = Object.keys(saved).filter((key) => (key.startsWith("allyCall:") || key.startsWith("allySpacecall:")) && saved[key].windowId === windowId);
+    if (keys.length) {
+      await chrome.storage.session.remove(keys);
+      send({ type: "event", name: "risk_call_ended", service: saved[keys[0]].service === "spacecall" ? "spacecall" : "meet" });
+    }
   } catch { /* the browser may be shutting down */ }
 });
 

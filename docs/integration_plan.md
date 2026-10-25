@@ -211,6 +211,97 @@ that checks `bridge.chrome_focused` during a popup command now gets True. Also: 
 buttons. Issues 3 (small list/menu toggles) and 4 (buttons already 44px tall) are on hold by decision.
 Tests: new browser checks for label growth, link-buttons and order independence; both browser suites pass on
 Windows. **Ganesh:** your risk banner's own buttons aren't touched (Ally hosts are skipped).
+### Oct 25, 03:01 PT — Hayden (via Claude Code) — branch `hayden/face-setup`, commit `6cc3023`
+
+**Added: a one-time face setup and a face profile, optionally saved in SpacetimeDB.** 973 tests pass.
+- **Face setup (about 90 s):** "set up my face" or "calibrate my eyes" runs one flow:
+  1. a face scan with a ring that fills as you turn your head (it also checks light, distance and glare);
+  2. the 9 gaze dots;
+  3. sit back, then lean in, which also sets the lean range;
+  4. reading at the middle, top and bottom, a smile and squints, which set the senses baseline and
+     the personal squint model;
+  5. 5 check dots.
+  The old calibrate tool is an alias, and quick calibrate is unchanged.
+- **Face profile (`ally/face_profile.py`, `ally/profile_store.py`):**
+  - Numbers only (model coefficients and baseline statistics), never images.
+  - Always saved in `state/face_profile.json`, and restored at startup when nothing local exists.
+  - `[profile] sync = spacetimedb` (off by default) also saves it to the `ally-call` database.
+  - `python run.py profile show|delete`.
+- **Ganesh:** `spacecall/server/src/profile.ts` adds a private `face_profile` table, the
+  `save_face_profile` and `delete_face_profile` reducers, and an owner-only `own_face_profile` view.
+  None of your call tables change. To deploy, from `spacecall/`: `npm test`, `npm run check:server`,
+  then `spacetime publish ally-call --server maincloud --module-path server`. Do **not** use
+  `--delete-data`.
+- **Others:** this branch also contains `main`, `hayden/senses-v2`, `hayden/voice-calibration`
+  (the Cartesia WAV fix) and `risk-branch`.
+
+### Oct 25, 02:10 PT — Hayden (via Claude Code) — branch `hayden/senses-v2`, merges `908ad74`, `26775c9`
+
+**Added (opt-in, defaults unchanged, live behavior unchanged):** senses round 2. 899 tests pass.
+- **Squint and lean:** a personal squint model (calibration of about 35 s: read normally, top,
+  bottom, smile, squint), a hybrid squint method, and distance-based lean. They are selected with
+  `[senses] squint_method` and `lean_method`, which stay `v1`.
+- **LibreFace action units, off by default:** `[senses] au_model = libreface`. Weights come from
+  `scripts/get_au_models.py`. The license is USC research and non-profit only.
+- **Live raw numbers:** `[senses] raw_live` sends live raw face numbers for the new methods.
+- **Benchmark:** `python -m ally.senses.bench`.
+- **Result on the first raw recording (1 person):** the new squint methods are not ready yet.
+  The personal model turned itself off for that person. `v1` stays the default.
+
+### Oct 25, 01:03 PT — Hayden (via Claude Code) — branch `hayden/senses-v2` (from `main` `77dd943`), merge `dab3c61`
+
+**Added, not on `main`, and live behavior unchanged:** groundwork for fairer squint and lean detection. 872 tests pass.
+- **Senses recorder v2 (`ally/senses/matrix.py`, camera helper `raw` option):**
+  - Saves raw face numbers (landmarks, blendshapes, face matrix), never pictures.
+  - New script parts: top and bottom of the screen, fast blinks, tired eyes, wink, soft squint, long
+    natural small-text reading, soft lean, sit back.
+  - Optional `--eyes` and `--age`, plus `--repeat` and `--parts`.
+- **`ally/senses/features.py`, `ally/senses/bench.py`, and new detector classes in `detectors.py`:**
+  - Squint and lean candidate detectors and an offline benchmark that reports per person and per group.
+  - `[senses] squint_method` and `lean_method` default to `v1`, today's detectors.
+- **Fairness evidence so far:**
+  - On the London Face Set (CC BY 4.0), a fixed squint threshold flags East Asian faces at rest
+    far more often than others.
+  - The open-source LibreFace AU7 reads more resting "squint" on Black faces (15% vs 3% white,
+    n=13/69).
+  - So the design compares each person only with their own calibration.
+- **Next on this branch:** the personal squint model, LibreFace as an optional off-by-default vote
+  (USC research and non-profit license only), and volunteer recordings.
+
+**Others:** nothing to do. Ganesh and Ben H: the senses `Struggle` shape on the bus is unchanged.
+### Oct 25, 01:56 PT — Hayden (via Claude Code) — branch `hayden/voice-calibration`, commit `d578f76`
+
+**Fixed a Windows bug that affects anyone with a Cartesia key: Ally was silent and ignored voice commands.**
+867 tests pass.
+- **Cause:** Cartesia's `/tts/bytes` WAV is streamed, so its RIFF and data sizes are `0xFFFFFFFF`.
+  - Windows `PlaySound` refuses it. `_Sound` plays asynchronously, so nothing is heard and there is
+    no error.
+  - Python's `wave` reads it as about 25 hours long. The Speaker then believed it was still saying
+    the greeting, and the listener treated everything as Ally's own voice (only "Ally, stop"
+    worked).
+  - `doctor` showed this as "89478.5 s of audio".
+- **Fix:** `speech.fix_wav_sizes` writes the real sizes into every Cartesia clip, and into cached
+  prompt files saved before the fix. New `StreamingWavTests`.
+- **Ben W and Ben H:** please merge this branch, or at least `d578f76`, into `main` soon. On Windows
+  with `CARTESIA_API_KEY` set, voice is broken without it. Delete `state/voice_cache` once if you
+  like; the old files are repaired on read either way.
+
+### Oct 25, 01:31 PT — Hayden (via Claude Code) — branch `hayden/voice-calibration` (from `main` `77dd943`), commit `bc5b13f`
+
+**Fixed:** the eye-tracker setup's spoken prompts no longer get cut off mid-word. 865 tests pass.
+- **Queued prompts:** setup prompts queue behind the sentence already playing
+  (`speaker.say(text, interrupt=False)`).
+- **Quiet during setup:** while a calibration or check is on screen, and for 5 s after, the "position
+  changed" re-tune line is held, and the senses report no lean or squint. The setup asks people to
+  lean in and sit back, so no offer talks over it.
+- **Pacing:** each head-position round starts only after its prompt has had 2.5 s to be said.
+- **Results spoken:** calibration and quick calibrate now say their result. `agent.handle_text`
+  skips the reply once a tool has spoken, so voice requests never heard it.
+
+**Others:**
+- **Ben H and Ben W:** `GazeManager.busy()` says when the setup is on screen, if voice or offers should
+  hold too.
+- **Ben W:** there are no changes to `speech.py`. It already queues with `interrupt=False`.
 
 ### Oct 25, 00:11 PT — Hayden (via Claude Code) — branch `hayden/start-fixes` (from `main` `35b7608`), commit `d1dbe07`
 

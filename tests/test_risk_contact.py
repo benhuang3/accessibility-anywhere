@@ -104,6 +104,14 @@ class TrustedContactTests(unittest.TestCase):
             self.assertNotIn("paid", text.lower())
             self.assertTrue(text.endswith("Ally asked them to stop and wait. Please contact them now."))
 
+    def test_auto_alert_with_a_call_available_promises_a_later_invitation(self):
+        for kind in ("remote_access", "scam_popup", "untrusted_site", "payment_field", "unknown"):
+            text = contact.message_for(kind, call_available=True)
+            self.assertTrue(text.startswith("Ally safety alert:"))
+            self.assertIn("Ally asked them to stop and wait.", text)
+            self.assertTrue(text.endswith("If they tap Call, you'll get a second alert with a link to join."))
+            self.assertNotRegex(text, r"https?://|\d")
+
 
 class CatalogueCloseTests(unittest.TestCase):
     def test_closing_works_for_a_catalogue_tool_and_only_its_processes(self):
@@ -233,15 +241,48 @@ class AutoAlertTests(unittest.TestCase):
         self.warn(wire)
         self.assertEqual(self.sent, [])
 
-    def test_only_high_alerts_send_and_publish_auto_true_with_the_join_link(self):
-        wire = self.make_wire(url=self.MEET)
+    def test_only_high_alerts_send_without_a_join_link_or_opening_the_call(self):
+        opened = []
+        wire = self.make_wire(url=self.MEET, call=lambda *args: opened.append(args) or {"opened": True})
         self.warn(wire, MEDIUM)
         self.assertEqual(self.sent, [])
         self.warn(wire)
         self.assertTrue(self.delivered.wait(2))
-        self.assertEqual(self.sent, [(contact.message_for(JOINED.kind) + " Tap to join the video call.", self.MEET)])
+        self.assertEqual(self.sent, [(contact.message_for(JOINED.kind, call_available=True),)])
+        self.assertEqual(opened, [])
         self.assertEqual(self.events, [{"name": "Priya", "kind": "remote_access", "ok": True,
                                        "call_opened": False, "auto": True}])
+
+    def test_auto_alert_has_no_join_headers_and_call_sends_a_second_push(self):
+        offers, opened, requests, asked = [], [], [], threading.Event()
+
+        def ask(offer):
+            offers.append(offer)
+            asked.set()
+            return "timeout"
+
+        def post(req, timeout):
+            requests.append(req)
+            return contextlib.nullcontext(SimpleNamespace(status=200))
+
+        wire = self.make_wire(send=contact.ntfy_sender("ally-priya-7f3k29qx"), url=self.MEET,
+                              ask=ask, call=lambda *args: opened.append(args) or {"opened": True})
+        with patch("urllib.request.urlopen", post):
+            self.warn(wire)
+            self.assertTrue(self.delivered.wait(2))
+            self.assertTrue(asked.wait(2))
+            self.assertEqual(len(requests), 1)
+            self.assertIsNone(requests[0].get_header("Click"))
+            self.assertIsNone(requests[0].get_header("Actions"))
+            self.assertNotIn(self.MEET, requests[0].data.decode())
+            self.assertEqual(opened, [])
+            self.assertEqual(offers[0].extra_action[1](),
+                             "Opening a call with Priya. Hang up on the other caller first.")
+        self.assertEqual(opened, [("openCall", {"url": self.MEET, "name": "Priya"})])
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[1].get_header("Click"), self.MEET)
+        self.assertIn(self.MEET, requests[1].get_header("Actions"))
+        self.assertEqual(requests[1].data.decode(), "They're calling you through Ally. Tap to join.")
 
     def test_rate_limit_is_global_and_allows_an_alert_again_after_five_minutes(self):
         now = [0]
@@ -284,9 +325,9 @@ class AutoAlertTests(unittest.TestCase):
             release.set()
             self.assertTrue(self.delivered.wait(2))
 
-    def test_call_after_auto_alert_only_opens_the_call_for_this_warning(self):
+    def test_call_after_auto_alert_opens_the_call_and_sends_an_invitation_for_this_warning(self):
         for risk, note in ((JOINED, "Hang up on the other caller first."),
-                           (Risk("scam_popup", "high", "A fake warning page."), "They already got the alert.")):
+                           (Risk("scam_popup", "high", "A fake warning page."), "I've asked them to join.")):
             with self.subTest(kind=risk.kind):
                 offers, opened, asked = [], [], threading.Event()
 
@@ -300,13 +341,15 @@ class AutoAlertTests(unittest.TestCase):
                 self.warn(wire, risk)
                 self.assertTrue(asked.wait(2))
                 self.assertTrue(self.delivered.wait(2))
+                self.assertEqual(opened, [])
                 self.assertEqual(offers[0].extra_action[0], "Call Priya")
                 self.assertEqual(offers[0].extra_action[1](), f"Opening a call with Priya. {note}")
-                self.assertEqual(len(self.sent), 1)
+                self.assertEqual(len(self.sent), 2)
+                self.assertEqual(self.sent[1], ("They're calling you through Ally. Tap to join.", self.MEET))
                 self.assertEqual(opened, [("openCall", {"url": self.MEET, "name": "Priya"})])
                 # A later, rate-limited warning still has its own manual delivery.
                 self.assertIn("Opening a call", wire._tell(risk))
-                self.assertEqual(len(self.sent), 2)
+                self.assertEqual(len(self.sent), 3)
 
     def test_sent_auto_alert_without_a_call_link_has_no_extra_button(self):
         offers, asked = [], threading.Event()
@@ -322,7 +365,7 @@ class AutoAlertTests(unittest.TestCase):
         self.assertTrue(asked.wait(2))
         self.assertIsNone(offers[0].extra_action)
 
-    def test_call_while_auto_alert_is_pending_opens_first_and_does_not_send_twice(self):
+    def test_call_while_auto_alert_is_pending_opens_first_then_sends_an_invitation(self):
         release, entered, asked, opened, finished = (threading.Event() for _ in range(5))
         offers, attempts, notes = [], [], []
 
@@ -346,6 +389,8 @@ class AutoAlertTests(unittest.TestCase):
             self.warn(wire)
             self.assertTrue(entered.wait(2))
             self.assertTrue(asked.wait(2))
+            self.assertFalse(opened.is_set())
+            self.assertEqual(attempts, [(contact.message_for(JOINED.kind, call_available=True),)])
 
             def tap():
                 try:
@@ -360,7 +405,8 @@ class AutoAlertTests(unittest.TestCase):
             release.set()
         self.assertTrue(finished.wait(2))
         self.assertTrue(self.delivered.wait(2))
-        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts, [(contact.message_for(JOINED.kind, call_available=True),),
+                                    ("They're calling you through Ally. Tap to join.", self.MEET)])
         self.assertEqual(notes, ["Opening a call with Priya. Hang up on the other caller first."])
 
     def test_failed_auto_alert_can_be_retried_manually(self):

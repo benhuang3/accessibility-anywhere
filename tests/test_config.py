@@ -19,6 +19,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(warnings, [])
         self.assertIn("high_contrast", DEFAULTS["page_styles"])
 
+    def test_personal_squint_method_is_allowed_and_v1_stays_default(self):
+        self.assertEqual(DEFAULTS["senses"]["squint_method"], "v1")
+        config = merge({"senses": {"squint_method": "personal"}})
+        errors, _warnings = validate(config, set())
+        self.assertFalse([error for error in errors if "senses.squint_method" in error])
+
     def test_syntax_error_reported(self):
         cfg, errors, _ = check("[agent\nname = 'x'")
         self.assertIsNone(cfg)

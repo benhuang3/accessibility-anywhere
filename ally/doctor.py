@@ -105,6 +105,22 @@ def describe_gaze_cnn(state_dir) -> tuple[str, str, str]:
         "; ".join(missing) + ". Fix: python scripts/get_gaze_models.py, pip install onnxruntime")
 
 
+def describe_au(state_dir) -> tuple[str, str, str]:
+    """Whether the LibreFace files are present and onnxruntime imports. Does not open the camera."""
+    from .senses.au import LICENSE, au_readiness
+
+    ready = au_readiness(state_dir)
+    if ready["files"] and ready["onnxruntime"]:
+        return "ok", "Action units", f"LibreFace AU models are present, and onnxruntime imports. {LICENSE}"
+    missing = []
+    if not ready["files"]:
+        missing.append("LibreFace AU models are missing")
+    if not ready["onnxruntime"]:
+        missing.append("onnxruntime is not installed")
+    detail = "; ".join(missing) + ". Fix: python scripts/get_au_models.py, pip install onnxruntime. " + LICENSE
+    return "warn", "Action units", detail
+
+
 def voice_checks(cfg: dict, online: bool = True) -> list[tuple[str, str, str]]:
     """Cartesia voice, the fallback voice, and how spoken yes/no answers will be heard."""
     out = []
@@ -262,12 +278,28 @@ def run_checks(home=None, online: bool = True) -> list[tuple[str, str, str]]:
         has_base = (paths.state_dir / "senses_baseline.json").exists()
         out.append(("ok", "Face sensing", "on, baseline saved" if has_base else
                     "on; learns your resting face in the first 20 s (or say \"Ally, set up face sensing\")"))
+    from .profile_store import ProfileStore
+    profile_status = ProfileStore(paths, cm.data).status()
+    saved = profile_status["saved"]
+    if isinstance(saved, (int, float)):
+        saved_text = time.strftime("%Y-%m-%d", time.localtime(saved))
+        local_text = f"saved locally ({saved_text})"
+    else:
+        local_text = "not saved locally"
+    if profile_status["sync_enabled"]:
+        sync_text = "synced" if profile_status["synced"] else "not synced"
+        if profile_status["last_error"]:
+            sync_text += f"; last sync error: {profile_status['last_error']}"
+    else:
+        sync_text = "sync off"
+    out.append(("ok", "Face profile", f"{local_text}; {sync_text}"))
     if s.get("input"):
         ok, why = importable("pynput")
         out.append(("ok" if ok else "warn", "Mouse and keyboard sensing",
                     "on (counts clicks and backspaces, never which keys)" if ok else "pip install pynput"))
     else:
         out.append(("ok", "Mouse and keyboard sensing", "off (senses.input = false)"))
+    out.append(describe_au(paths.state_dir))
     out.append(("ok" if autostart.installed() else "warn", "Start at login",
                 "on" if autostart.installed() else "off: python run.py install"))
     try:

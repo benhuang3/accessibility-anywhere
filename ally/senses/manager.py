@@ -26,9 +26,12 @@ from ..platforms.base import NO_WINDOW
 from ..registry import ToolError
 from ..state import atomic_write
 from .detectors import (Baseline, HesitationDetector, LeanDetector, RageClickDetector, RetypeDetector, Signal,
-                        SquintDetector, Tuning, gate)
+                        SquintDetector, Tuning, gate, RelativeSquintDetector, GeometricSquintDetector,
+                        PersonalSquintDetector, HybridSquintDetector, DistanceLeanDetector,
+                        HybridLeanDetector)
 from .fusion import Fuser, Struggle
 from .contract import validate_struggle
+from .features import extract as extract_face_features
 
 log = logging.getLogger("ally.senses")
 
@@ -52,6 +55,10 @@ class Senses:
         self._auto: list[dict] = []
         self._calib: list[dict] | None = None
         self._calib_until = 0.0
+        self._calib_parts: dict[str, list[dict]] = {}
+        self._calib_phase = ""
+        self._calib_mode = False
+        self._setup_intake = False
         self._calib_done = threading.Event()
         self._calib_result: dict | None = None
         self._last_struggle_t = -1e9
@@ -84,16 +91,27 @@ class Senses:
     def _build(self) -> None:
         cfg = self.cfg
         self.tune = Tuning.from_config(cfg)
-        self.squint, self.lean = SquintDetector(self.tune), LeanDetector(self.tune)
+        self._methods = (cfg.get("squint_method", "v1"), cfg.get("lean_method", "v1"))
+        method = cfg.get("squint_method")
+        if method in (None, "v1") and self._saved_personal().get("enabled"):
+            method = "personal"  # this person's face setup produced a squint model
+        self.squint = {"relative": RelativeSquintDetector, "geometric": GeometricSquintDetector,
+                       "personal": PersonalSquintDetector, "hybrid": HybridSquintDetector}.get(
+                           method, SquintDetector
+                       )(self.tune)
+        self.lean = {"distance": DistanceLeanDetector, "hybrid": HybridLeanDetector}.get(
+            cfg.get("lean_method"), LeanDetector)(self.tune)
         self.rage, self.retype = RageClickDetector(self.tune), RetypeDetector(self.tune)
         self.hesitation = HesitationDetector(self.tune)
         self.fuser.configure(float(cfg.get("window_seconds", 4)), float(cfg.get("cooldown_seconds", 30)),
                              cfg.get("solo") or [], float(cfg.get("min_confidence", 0.5)))
+        self._apply_saved_lean()
 
     def apply(self) -> None:
         """Match config: rebuild detectors with new thresholds and start or stop the input watcher."""
         with self.lock:
-            if Tuning.from_config(self.cfg) != self.tune:
+            if Tuning.from_config(self.cfg) != self.tune or self._methods != (
+                    self.cfg.get("squint_method", "v1"), self.cfg.get("lean_method", "v1")):
                 self._build()
             else:
                 self.fuser.configure(float(self.cfg.get("window_seconds", 4)),
@@ -153,8 +171,8 @@ class Senses:
             log.warning("couldn't save the face baseline: %s", e)
 
     def calibrate(self, seconds: float | None = None) -> dict:
-        """Collect face numbers while the user reads normally; returns {"ok", "baseline"} or {"ok": False, "why"}."""
-        seconds = float(seconds or self.cfg.get("calibrate_seconds", 15))
+        """Collect labelled reading and expression samples for a personal baseline."""
+        requested = float(seconds or self.cfg.get("calibrate_seconds", 15))
         if not self.vision_wanted():
             self.set_vision(True)
         end = time.monotonic() + 20
@@ -165,25 +183,210 @@ class Senses:
                        "Face the screen and the camera, with light on your face.")
                 raise ToolError(why)
             time.sleep(0.2)
+        gaze = getattr(self.agent, "gaze", None)
+        if self.cfg.get("squint_method", "v1") not in ("personal", "hybrid"):
+            return self._calibrate_quick(requested, gaze)
+        if seconds is not None and requested <= 5:
+            return self._calibrate_quick(requested, gaze)
+        phases = [
+            ("neutral", 15, "Read normally with the card in the middle.", "middle"),
+            ("top", 5, "Read while looking at the top of the screen.", "top"),
+            ("bottom", 5, "Read while looking at the bottom of the screen.", "bottom"),
+            ("smile", 3, "Smile naturally while you read.", "middle"),
+            ("squint", 3, "Squint at the small text.", "middle"),
+            ("rest", 2, "Relax your eyes for a moment.", "middle"),
+            ("squint", 3, "Squint at the small text once more.", "middle"),
+        ]
+        with self.lock:
+            self._calib_parts = {}
+            self._calib_result = None
+            self._calib_mode = True
+        try:
+            for name, duration, prompt, place in phases:
+                phase_name = name[0] if isinstance(name, tuple) else name
+                if phase_name == "rest":
+                    time.sleep(duration)
+                    continue
+                self._begin_calibration_phase(phase_name, duration)
+                if gaze is not None:
+                    gaze.send("card " + json.dumps({
+                        "title": "Face setup",
+                        "text": prompt,
+                        "size": "normal",
+                        "place": "center" if place == "middle" else place,
+                        "seconds": duration,
+                    }))
+                if not self._calib_done.wait(duration + 10):
+                    raise ToolError("I lost sight of your face during setup. Try again facing the screen.")
+            return self._finish_personal_calibration()
+        finally:
+            with self.lock:
+                self._calib = None
+                self._calib_phase = ""
+                self._calib_mode = False
+            if gaze is not None:
+                gaze.send("card off")
+
+    def _calibrate_quick(self, seconds: float, gaze) -> dict:
+        """Keep the short explicit calibration hook used by tests and scripted setup."""
         with self.lock:
             self._calib_done.clear()
             self._calib_result = None
-            self._calib, self._calib_until = [], self._face_t + seconds
-        gaze = getattr(self.agent, "gaze", None)
+            self._calib_phase = "neutral"
+            self._calib_mode = False
+            self._calib = []
+            self._calib_until = self._face_t + seconds
         if gaze is not None:
-            gaze.send('card ' + json.dumps({"title": "Face setup", "text": "Read this paragraph normally. Keep your usual posture and relaxed face while you read. This helps Ally learn how your eyes and face look when reading comfortably.", "size": "normal", "seconds": seconds}))
+            gaze.send("card " + json.dumps({"title": "Face setup", "text": "Read normally.",
+                                             "size": "normal", "seconds": seconds}))
         try:
             if not self._calib_done.wait(seconds + 10):
-                with self.lock:
-                    self._calib = None
-                raise ToolError("I lost sight of your face during the setup. Try again facing the screen.")
+                raise ToolError("I lost sight of your face during setup. Try again facing the screen.")
         finally:
             if gaze is not None:
                 gaze.send("card off")
         return self._calib_result or {"ok": False, "why": "the camera stopped"}
 
+    def _begin_calibration_phase(self, name: str, seconds: float) -> None:
+        with self.lock:
+            self._calib_done.clear()
+            self._calib_phase = name
+            self._calib = []
+            self._calib_until = self._face_t + seconds
+
+    def _finish_personal_calibration(self) -> dict:
+        with self.lock:
+            parts = dict(self._calib_parts)
+        neutral = parts.get("neutral", [])
+        try:
+            self.baseline = Baseline.from_samples(neutral, time.time(), "calibrated")
+        except ValueError as error:
+            return {"ok": False, "why": str(error)}
+        model_parts = {
+            "neutral": parts.get("neutral", []),
+            "top": parts.get("top", []),
+            "bottom": parts.get("bottom", []),
+            "smile": parts.get("smile", []),
+            "squint": parts.get("squint", []),
+        }
+        model = PersonalSquintDetector.fit(model_parts)
+        if self.baseline.feature_stats is None:
+            self.baseline.feature_stats = {}
+        self.baseline.feature_stats["personal_model"] = model
+        self._save_baseline()
+        self._reset_vision()
+        message = "Face baseline set."
+        if not model.get("enabled"):
+            message = ("Squint sensing is off for you because the deliberate squint was not distinct. "
+                       "Lean and other signals still work.")
+        self._calib_result = {"ok": True, "baseline": self.baseline.to_dict(),
+                              "squint_enabled": bool(model.get("enabled")), "why": model.get("why", "")}
+        self.agent.events.add("senses", message)
+        return self._calib_result
+
+    def _saved_personal(self) -> dict:
+        base = self.baseline
+        stats = getattr(base, "feature_stats", None) if base is not None else None
+        if not isinstance(stats, dict):
+            return {}
+        model = stats.get("personal_model")
+        return model if isinstance(model, dict) else {}
+
+    def _apply_saved_lean(self) -> None:
+        """Use the lean ratio from face setup, when one was saved on the baseline."""
+        base = self.baseline
+        stats = getattr(base, "feature_stats", None) if base is not None else None
+        saved = stats.get("lean_ratio") if isinstance(stats, dict) else None
+        if not isinstance(saved, dict):
+            return
+        width = saved.get("width")
+        if isinstance(width, (int, float)) and not isinstance(width, bool) and float(width) > 1.02:
+            ratio = max(1.05, min(1.6, float(width)))
+            self.tune.lean_ratio = round(ratio, 3)
+            weak = min(self.tune.lean_ratio - 0.01, max(1.03, ratio - 0.04))
+            self.tune.lean_weak = round(weak, 3)
+            release = min(self.tune.lean_weak - 0.01, max(1.01, self.tune.lean_weak - 0.02))
+            self.tune.lean_release = round(release, 3)
+        dist = saved.get("distance")
+        if isinstance(dist, (int, float)) and not isinstance(dist, bool) and 0 < float(dist) < 1:
+            self.tune.lean_distance_ratio = round(max(1.05, min(1.6, 1.0 / float(dist))), 3)
+
+    def begin_setup_intake(self) -> None:
+        """Start collecting labelled face-setup samples. Frames are numbers, not pictures."""
+        with self.lock:
+            self._calib_parts = {}
+            self._setup_intake = True
+            self._calib_result = None
+
+    def intake_label(self, phase: str, sample: dict, t: float | None = None) -> None:
+        """One labelled frame from the camera helper. Unknown phases are ignored."""
+        name = str(phase or "")
+        if name not in ("neutral", "top", "bottom", "smile", "squint") or not isinstance(sample, dict):
+            return
+        clean = {}
+        for key, value in sample.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            try:
+                num = float(value)
+            except (TypeError, ValueError):
+                continue
+            clean[str(key)] = num
+        if not clean:
+            return
+        with self.lock:
+            self._calib_parts.setdefault(name, []).append(clean)
+
+    def cancel_setup_intake(self) -> None:
+        with self.lock:
+            self._setup_intake = False
+            self._calib_parts = {}
+            self._calib = None
+            self._calib_phase = ""
+
+    def finish_setup_intake(self, lean: dict | None = None) -> dict:
+        """Fit the personal squint model from the labelled samples and store the lean ratio."""
+        result = self._finish_personal_calibration()
+        if result.get("ok") and not result.get("squint_enabled") and self.baseline is not None:
+            self.baseline.squint_reliable = False
+            self.baseline.squint_why = str(result.get("why") or "the deliberate squint was not distinct")
+        if lean and result.get("ok"):
+            self._remember_lean(lean)
+        elif result.get("ok"):
+            self._save_baseline()
+        with self.lock:
+            self._setup_intake = False
+        return result
+
+    def _remember_lean(self, lean: dict) -> None:
+        if self.baseline is None or not isinstance(lean, dict):
+            return
+        saved = {}
+        for key in ("width", "distance", "normal_width", "near_width", "far_width",
+                    "normal_distance", "near_distance", "far_distance"):
+            value = lean.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                saved[key] = round(float(value), 4)
+        if not saved:
+            return
+        if not isinstance(self.baseline.feature_stats, dict):
+            self.baseline.feature_stats = {}
+        self.baseline.feature_stats["lean_ratio"] = saved
+        self._apply_saved_lean()
+        self._save_baseline()
+
     def _finish_calibration(self, t: float) -> None:
         samples, self._calib = self._calib or [], None
+        if self._calib_mode:
+            self._calib_parts.setdefault(self._calib_phase, []).extend(samples)
+            self._calib_phase = ""
+            self._calib_done.set()
+            return
+        if self._calib_phase and self._calib_phase != "neutral":
+            self._calib_parts.setdefault(self._calib_phase, []).extend(samples)
+            self._calib_phase = ""
+            self._calib_done.set()
+            return
         try:
             self.baseline = Baseline.from_samples(samples, t, "calibrated")
             self._save_baseline()
@@ -196,7 +399,7 @@ class Senses:
         self._calib_done.set()
 
     def _reset_vision(self) -> None:
-        self.squint, self.lean = SquintDetector(self.tune), LeanDetector(self.tune)
+        self._build()
 
     def forget_baseline(self) -> None:
         with self.lock:
@@ -211,6 +414,17 @@ class Senses:
         """One frame's face numbers from the camera helper (on its reader thread)."""
         if not self.vision_wanted():
             return
+        if isinstance(sig.get("lm"), list) and len(sig["lm"]) >= 478:
+            try:
+                sig = {**sig, **extract_face_features(sig["lm"], sig.get("bs"), sig.get("mat"),
+                                                     sig.get("w", 1), sig.get("h", 1))}
+            except (IndexError, TypeError, ValueError):
+                pass
+        au = sig.get("au")
+        if isinstance(au, list) and len(au) > 6:
+            sig["au6"] = float(au[3])
+            sig["au7"] = float(au[4])
+            sig["au12"] = float(au[6])
         fired = []
         with self.lock:
             dt = t - self._face_t if self._face_t else 0.0
@@ -221,18 +435,21 @@ class Senses:
                 if t >= self._calib_until:
                     self._finish_calibration(t)
             elif self.baseline is None:
-                self._auto.append(sig)
-                fps = max(1, int(self.cfg.get("fps", 10)))
-                if len(self._auto) >= AUTO_BASELINE_SECONDS * fps:
-                    try:
-                        self.baseline = Baseline.from_samples(self._auto, t, "auto")
-                        self._save_baseline()
-                        self.agent.events.add("senses", "Learned your resting face from the first 20 seconds. "
-                                                        "Say 'set up face sensing' for a better baseline.")
-                    except ValueError:
-                        del self._auto[: len(self._auto) // 2]  # keep trying with fresher frames
+                if not self._setup_intake:
+                    self._auto.append(sig)
+                    fps = max(1, int(self.cfg.get("fps", 10)))
+                    if len(self._auto) >= AUTO_BASELINE_SECONDS * fps:
+                        try:
+                            self.baseline = Baseline.from_samples(self._auto, t, "auto")
+                            self._save_baseline()
+                            self.agent.events.add("senses", "Learned your resting face from the first 20 seconds. "
+                                                            "Say 'set up face sensing' for a better baseline.")
+                        except ValueError:
+                            del self._auto[: len(self._auto) // 2]  # keep trying with fresher frames
             else:
-                squint_signal = self.squint.feed(sig, t, self.baseline) if self.baseline.squint_reliable else None
+                method = self.cfg.get("squint_method", "v1")
+                reliable = self.baseline.squint_reliable or method != "v1"
+                squint_signal = self.squint.feed(sig, t, self.baseline) if reliable else None
                 for s in (squint_signal, self.lean.feed(sig, t, self.baseline)):
                     if s is not None:
                         fired.append(s)
@@ -375,6 +592,12 @@ class Senses:
         return target
 
     def _emit(self, struggle: Struggle) -> dict:
+        gaze = getattr(self.agent, "gaze", None)
+        if gaze is not None and callable(getattr(gaze, "busy", None)) and gaze.busy():
+            # The eye-tracker setup asks people to lean in and sit back: that is not a struggle,
+            # and an offer would talk over the setup's spoken prompts.
+            log.info("eye-tracker setup on screen; not reporting %s", struggle.kind)
+            return None
         struggle.target = self.target(struggle)
         d = struggle.to_dict()
         problems = validate_struggle(d)

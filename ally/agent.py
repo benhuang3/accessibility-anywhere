@@ -390,6 +390,12 @@ class Agent:
                 words = self.config.data["voice"].get("wake_words") or ["ally"]
                 hint = f" Say {str(words[0]).title()}, then what you need."
             self.speaker.say(f"{name} is ready{mode}.{hint}")
+        try:
+            from .gaze import restore_face_profile
+
+            restore_face_profile(self)
+        except Exception:
+            log.debug("face profile restore failed", exc_info=True)
 
     def _housekeeping(self) -> None:
         n = 0
