@@ -53,7 +53,7 @@ engine = "auto"            # "auto" = Cartesia when CARTESIA_API_KEY and a voice
 rate = 1.0                 # 0.5 = slow, 2.0 = fast
 voice = ""                 # optional system voice, e.g. "Microsoft Zira Desktop" or "Microsoft David Desktop"
 max_chars = 4000           # longest text read in one go
-cartesia_voice_id = ""     # a Cartesia voice ID or name, e.g. "Tessa". List them: python run.py voices
+cartesia_voice_id = "Michelle"     # a Cartesia voice ID or name, e.g. "Tessa". List them: python run.py voices
 cartesia_model = "sonic-3.6"
 cartesia_fallback_model = "sonic-3"  # tried when cartesia_model is rejected; then the built-in voice
 emotion = "calm"           # Cartesia emotion for ordinary speech ("" = let the voice decide)
@@ -99,7 +99,8 @@ whisper_model = "base.en"  # offline speech-to-text: "tiny.en" (fastest), "base.
 enabled = true             # needs: pip install mediapipe opencv-python. The camera light stays on while Ally runs.
 camera = 0                 # which camera (0 = the built-in one)
 fps = 20                   # frames per second; lower saves battery
-pan_speed = 1.0            # magnifier following your eyes: how fast looking near an edge moves the view
+pan_speed = 0.7            # magnifier following your eyes: how fast looking near an edge moves the view
+show_dot = true
 
 # Global keyboard shortcuts (work in every app).
 # <mod> = Ctrl+Alt. Other keys: <ctrl> <alt> <shift> <cmd> <f1>...
@@ -119,6 +120,7 @@ pan_speed = 1.0            # magnifier following your eyes: how fast looking nea
 
 # Applied when Ally starts and on every page you open in Chrome.
 [profile]
+sync = "spacetimedb"         # face profile also saved in SpacetimeDB (ally-call), numbers only
 page_zoom = 0              # e.g. 1.25 = 125% on every site; 0 = leave Chrome's zoom alone
 min_font_px = 0            # e.g. 18 = no text smaller than 18px in Chrome; 0 = off
 page_styles = []           # styles from [page_styles] for every page, e.g. ["focus_ring"]
@@ -214,3 +216,29 @@ phrases = ["open calculator", "open the calculator"]
 steps = [
   { shell = { windows = "calc", linux = "gnome-calculator" } },
 ]
+
+[page_enlarge]
+ai_check = false           # demo: skip the Claude look-over after Simplified mode (Ganesh's demo notes)
+
+# ---- Demo video (local only): Ganesh's demo sites served from demo/ on http://localhost:8000 ----
+[commands.demo_facebook]
+description = "Demo: open the Fakebook home feed."
+phrases = ["open facebook", "open my facebook", "open facebook please"]
+steps = [{ tool = "open_website", args = { url = "http://social.localhost:8000/fakebook/" } }, { say = "Opening Facebook." }]
+
+[commands.demo_news]
+description = "Demo: open the cluttered Ledger News page for Simplified mode."
+phrases = ["open the news", "open my news", "open ledger news"]
+steps = [{ tool = "open_website", args = { url = "http://localhost:8000/simple-mode/news.html" } }, { say = "Opening the news." }]
+
+[commands.demo_scam_lab]
+description = "Demo: open the Scam Lab landing page."
+phrases = ["open the scam lab", "open scam lab"]
+steps = [{ tool = "open_website", args = { url = "http://localhost:8000/" } }, { say = "Opening the scam lab." }]
+
+# Demo: call Priya when Ally stops a scam (Ally Call over SpacetimeDB, alerts via ntfy)
+[risk]
+trusted_contact = "Priya"
+contact_topic = ""              # set your own private ntfy topic (anyone who knows it can read the alerts)
+call_service = "spacecall"
+spacecall_url = "https://ganeshkar1.github.io/ally-call/"
