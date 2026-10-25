@@ -121,6 +121,21 @@ class Platform:
         """True if the system's own magnifier app is zooming the screen (not Ally)."""
         return False
 
+    def read_focused_box(self) -> tuple | None:
+        """Screen rectangle (x, y, w, h) of the focused text element in the front app, or None.
+
+        Lets a magnifier center on exactly what the user is editing or reading. The default
+        can't see other apps' focus, so it returns None and callers magnify the whole screen."""
+        return None
+
+    def show_text_overlay(self, box, text: str) -> str:
+        """Show `text` big on a reading card (optionally near screen rectangle `box`), for apps
+        whose own text can't be edited. The default has no overlay and says so."""
+        raise ToolError(f"Showing replacement text isn't supported on {self.label} yet.")
+
+    def clear_text_overlays(self) -> None:
+        """Remove any reading cards shown by show_text_overlay. Default: nothing to clear."""
+
     def set_gaze_source(self, latest, pan_speed: float = 1.0) -> None:
         """latest() -> where the eyes are on the screen (or None); a magnifier can pan with it."""
 
