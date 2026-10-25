@@ -156,6 +156,15 @@ to know or do. Agents: read the newest entries before starting work.
 7. Since `hayden/eye-tracker`, Ally doesn't start without numpy (`ally/gaze_model.py` imports it at the top) - Hayden.
 8. `test_senses` `test_calibration` fails now and then in the VM (timing) - Hayden.
 
+### Oct 24, 23:20 PT — Ben H (via Claude Code) — branch `worktree-voice`, streaming speech-to-text (unwired)
+
+**Changed:** new `ally/ws_client.py` (stdlib WebSocket client, ws:// and wss://), new `ally/stt_stream.py`
+(`StreamingSTT`, `transcribe_blocks`: Cartesia ink-2 turn detection over
+`wss://api.cartesia.ai/stt/turns/websocket`, `X-API-Key` header), new `tests/fake_cartesia_ws.py` and
+`tests/test_stt_stream.py` (28 tests). Built by a helper agent, reviewed here.
+**For everyone:** nothing uses it yet; voice still uses the batch `/stt` call. Unverified without a real
+key: how a bad key is refused, whether `close` always ends an open turn, real TLS to Cartesia.
+
 ### Oct 24, 22:55 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `d0f8158`
 
 **Committed (local, not pushed yet).** Product decision (Ben H): **bigger text means bigger fonts; Ally never
@@ -168,6 +177,34 @@ zooms unless the user says "zoom".**
 - **Known:** CNN's "Legal Terms and Privacy" consent dialog isn't recognised as clutter, so Simplified mode
   refuses CNN ("a pop-up is open"). The `<mod>+=`/`<mod>+-` hotkeys and the extension's own Alt+Shift
   shortcuts still zoom (they are zoom keys).
+
+### Oct 24, 22:50 PT — Ben H (via Claude Code) — branch `worktree-voice`, speech queueing
+
+**Changed:** `ally/speech.py`, `tests/test_voice_confirm.py`. `say(..., interrupt=False)` now waits for
+the sound already playing instead of playing over it (read-aloud lead-in, then the text); `stop()`
+stops both. No change for normal (interrupting) speech.
+
+### Oct 24, 22:40 PT — Ben H (via Claude Code) — branch `worktree-voice`, voice in the proactive loop
+
+**Changed:** new `ally/voice_bus.py` (`BusVoice`), `ally/voice_confirm.py`, `ally/voice.py` (one line),
+new `tests/test_voice_bus.py`, new `tests/voice_fakes.py` (shared fakes), `tests/test_voice_confirm.py`,
+`tests/voice_phrases.py`. Not wired in yet: `agent.py` still passes `NullVoice`.
+- `BusVoice` is the Coordinator's `voice=`: it asks the Offer out loud and resolves it, says "Done. Say
+  undo to put it back." after an accepted fix (or "Sorry, that didn't work."), then listens 6 s for
+  "undo" (runs `reset_all`; anything else heard goes on to the listener). Lines said during a question
+  wait for it to end.
+- Risk Offers (`context="risk"`, as RiskWire on `risk-branch` makes them): calm, slower voice; the
+  question waits up to 1 s for its warning and says both together.
+- Labelled choices (RiskWire's "Are you sure?" with "Close it" / "Keep it open"): asked as "Should I close
+  it, or keep it open?"; a bare "yes" / "I'm sure" is unclear, never a close.
+- `offer.pause_seconds`: "no" isn't accepted before the pause ends. `created + timeout`: no re-ask that
+  can't finish. "Stop asking me" is its own no (snoozes struggle offers; a plain no for risk).
+- While a helper video call is open (`risk_contact` with `call_opened`) voice asks nothing for 10 min.
+**For Ben H (integration):** in `agent.py`, `voice=BusVoice(self.confirm, self.bus, call_tool,
+snooze=getattr(self.proactive, "snooze", None))`; do it on `benh/os-layer` (its gaze lines sit there).
+Consider `offer_timeout_seconds` ~20 (gaze cards use `offer.timeout` too, so with Hayden).
+**For Ganesh:** please publish a "call ended" event (voice goes quiet for a fixed 10 min until then), and
+check the spoken wording for labelled choices.
 
 ### Oct 24, 22:20 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `30e80b2`
 
@@ -193,6 +230,20 @@ zooms unless the user says "zoom".**
   only 28 frames"): it depends on machine speed. It passes on re-run.
 - Privacy: with a key, a screenshot of the visible tab goes to Claude after page changes (never on excluded
   pages such as sign-in or payments). Turn off with `[page_enlarge] ai_check = false`.
+
+### Oct 24, 22:01 PT — Ben H (via Claude Code) — branch `worktree-voice`, voice fixes
+
+**Changed:** `ally/voice_confirm.py`, `ally/speech.py`, `ally/listener.py`, `tests/test_voice_confirm.py`,
+one comment line in `config.toml` / `ally/default_config.toml`.
+- `voice_confirm.py` loads on Python 3.11 again (an f-string needed 3.12).
+- Re-asks use the last question ("Having trouble clicking? Want me to ...?").
+- Risk questions: "stop them" / "get me out of here" mean yes (the protective action); a bare "stop",
+  "cancel" or "go back" is unclear and re-asked, never a silent no.
+- "Ally, stop" (an explicit `Speaker.stop()`) ends an open question; other speech doesn't.
+- A yes/no from `run.py answer`, the dashboard or the API now resolves the Offer too.
+- Voice-name lookups use the 4 s speech timeout; unknown names aren't looked up again for 60 s.
+**For everyone:** `/api/stop`, `stop_speaking` and `reset_all` now end an open spoken question.
+**For Ganesh:** please check the risk-answer rule above.
 
 ### Oct 24, 20:30 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `68e4150`
 
@@ -434,3 +485,4 @@ dropped from the spoken statement so a "yes" can only mean the action the `Offer
   - Let `choose_by_looking` answer an `Offer` (`offer.resolve(choice, by="eyes")`).
 - **Merge with `main`:** conflicts only in `ally/doctor.py`.
 - **Spec:** `docs/eye-tracker-plan.md`.
+

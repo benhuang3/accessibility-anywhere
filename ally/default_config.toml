@@ -91,6 +91,7 @@ language = "en"
 beep = true                # short beeps when listening starts and stops
 always_listen = true       # hands-free: say "Ally, make it bigger" any time. Transcribed on this computer
                            # (needs: pip install faster-whisper). Windows shows the microphone as in use.
+                           # Answers to spoken yes/no questions go to Cartesia when CARTESIA_API_KEY is set.
 wake_words = ["ally"]      # start (or end) a request with one; "hey ally" and "okay ally" work too
 follow_up_seconds = 6      # after Ally answers, short follow-ups ("a bit more") need no wake word; 0 = off
 whisper_model = "base.en"  # offline speech-to-text: "tiny.en" (fastest), "base.en", "small.en" (most accurate)
