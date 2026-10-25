@@ -138,8 +138,23 @@ class Overlay:
             pass
         except Exception:
             log.exception("overlay command failed")
+        self._ticks = getattr(self, "_ticks", 0) + 1
+        if self._ticks % 25 == 0:
+            self._keep_on_top()
         if self._root is not None:
             self._root.after(20, self._poll)
+
+    def _keep_on_top(self) -> None:
+        """A full-screen browser window can end up above our windows, which would hide a warning from the
+        person it is for. Re-assert 'always on top' about twice a second while anything is showing."""
+        for win in (self._card_win, self._offer_win, *self._hl_wins):
+            if win is None:
+                continue
+            try:
+                win.attributes("-topmost", True)
+                win.lift()
+            except Exception:
+                pass
 
     def _handle(self, cmd: tuple[Any, ...]) -> None:
         kind = cmd[0]

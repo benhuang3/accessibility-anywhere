@@ -150,6 +150,7 @@
   `;
 
   function showBanner(text) {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     const old = document.getElementById("ally-risk-banner");
     if (old) old.remove();
     const host = document.createElement("div");

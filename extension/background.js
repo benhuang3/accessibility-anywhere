@@ -327,6 +327,11 @@ const ACTIONS = {
     let shown = 0;
     for (const t of tabs) {
       if (t.url === url) {
+        // A scam page that took over the screen would hide Ally's warning: leave full screen first.
+        try {
+          const w = await chrome.windows.get(t.windowId);
+          if (w.state === "fullscreen") await chrome.windows.update(t.windowId, { state: "normal" });
+        } catch { /* window already gone */ }
         await chrome.tabs.sendMessage(t.id, { kind: "allyRiskBanner", text }).then(() => { shown += 1; }, () => {});
       }
     }
