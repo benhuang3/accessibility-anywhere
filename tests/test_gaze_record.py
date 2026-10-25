@@ -14,10 +14,11 @@ from pathlib import Path
 
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
-from ally.gaze_helper import (CAL_COLLECT, CAL_SETTLE, CLOSER, CENTER_HEAD, FARTHER, NEED_LIGHT,
-                              NO_FACE, TWO_FACES, Setup, calibration_points, cell_index, grid_points,
-                              kept_model, likely_cause, readiness_issue, result_grade, validation_points,
-                              validation_score, with_check)
+from ally.gaze_helper import (CAL_COLLECT, CAL_SETTLE, CLOSER, CENTER_HEAD, EYES_ONLY, FARTHER,
+                              HEAD_MOVE_DEG, HEAD_RETRY_LINE, NEED_LIGHT, NO_FACE, STEADY_SECONDS,
+                              TWO_FACES, VAL_COLLECT, Setup, calibration_points, cell_index, grid_points,
+                              intro_lines, kept_model, likely_cause, readiness_issue, result_grade,
+                              validation_points, validation_score, with_check)
 from ally.gaze_record import (BLENDSHAPES, READING_SECONDS, RunLog, click_record, frame_record,
                               gaze_run_path, meta_record, record, target_record)
 from ally.paths import Paths
@@ -97,6 +98,35 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(setup.step(4, _feat(), face, 4), "running")
         self.assertEqual(setup.stage, "targets")
 
+    def test_the_head_must_stay_steady_for_a_second(self):
+        setup = Setup((1920, 1080), rng=random.Random(0), ready_seconds=0)
+        t = 0.0
+        # Width swings the way a person does while sitting down (about 40 cm, then 32 cm).
+        while t < 2.0:
+            width = 0.24 if int(t * 4) % 2 == 0 else 0.36
+            self.assertEqual(setup.step(t, _feat(), _face(width=width), t), "running")
+            t += 0.05
+        self.assertEqual(setup.stage, "ready")
+        still = _face()
+        t0 = t
+        setup.step(t, _feat(), still, t)  # lock the reference pose
+        t += 0.05
+        while t < t0 + STEADY_SECONDS:
+            self.assertEqual(setup.step(t, _feat(), still, t), "running")
+            self.assertEqual(setup.stage, "ready")
+            t += 0.05
+        self.assertEqual(setup.step(t0 + STEADY_SECONDS, _feat(), still, t0 + STEADY_SECONDS), "running")
+        self.assertEqual(setup.stage, "targets")
+        self.assertEqual(setup.banners[0], EYES_ONLY)
+        self.assertEqual(intro_lines()[1], EYES_ONLY)
+        self.assertIn(EYES_ONLY, intro_lines("move a little closer"))
+
+    def test_a_small_pose_change_does_not_reset_the_wait(self):
+        setup = Setup((1920, 1080), rng=random.Random(0), ready_seconds=0)
+        self.assertEqual(setup.step(0, _feat(), _face(yaw=0), 0), "running")
+        self.assertEqual(setup.step(STEADY_SECONDS, _feat(), _face(yaw=HEAD_MOVE_DEG), STEADY_SECONDS), "running")
+        self.assertEqual(setup.stage, "targets")
+
 
 class RetryTests(unittest.TestCase):
     def test_a_weak_dot_is_shown_once_more(self):
@@ -124,7 +154,8 @@ class RetryTests(unittest.TestCase):
             self.assertLess(event["start"], event["end"])
             settle = CAL_SETTLE if event["phase"] == "calibration" else 0.5
             self.assertAlmostEqual(event["start"] - event["shown"], settle)
-            self.assertAlmostEqual(event["end"] - event["start"], CAL_COLLECT if event["phase"] == "calibration" else 1.0)
+            self.assertAlmostEqual(event["end"] - event["start"],
+                                   CAL_COLLECT if event["phase"] == "calibration" else VAL_COLLECT)
 
         setup.accept_fit({"version": 1})
         _drive(setup, lambda _setup: _feat(), _face(), {"score"})
@@ -158,6 +189,60 @@ class RetryTests(unittest.TestCase):
         for event in drift:
             self.assertLess(event["shown"], event["start"])
             self.assertLess(event["start"], event["end"])
+            self.assertAlmostEqual(event["end"] - event["start"], VAL_COLLECT)
+
+    def test_collection_is_one_and_a_half_seconds(self):
+        self.assertEqual(CAL_COLLECT, 1.5)
+        self.assertEqual(VAL_COLLECT, 1.5)
+        setup = Setup((1920, 1080), rng=random.Random(3), ready_seconds=0)
+        _drive(setup, lambda _setup: _feat(), _face(), {"fit"})
+        windows = [event["end"] - event["start"] for event in setup.events if event["phase"] == "calibration"]
+        self.assertTrue(windows)
+        self.assertTrue(all(abs(window - 1.5) < 1e-9 for window in windows))
+
+    def test_a_turned_head_shows_that_dot_once_more(self):
+        turned = 4
+        wobble = 7
+
+        def feat_fn(setup: Setup):
+            cur = setup.current
+            if cur is not None and cur.phase == "calibration" and cur.id == turned and not cur.retried:
+                return ([1.0] + [0.0] * 8, 0.4)  # marker for the frames taken while the head was turned
+            return _feat()
+
+        def face_fn(setup: Setup):
+            cur = setup.current
+            if cur is None or cur.phase != "calibration":
+                return _face()
+            if cur.id == turned and not cur.retried:
+                return _face(yaw=8)  # away from the first dot
+            if cur.id == wobble and not cur.retried:
+                # More than 3 degrees of turn while this dot is collected.
+                yaw = 0.0 if len(cur.poses) % 2 == 0 else 4.0
+                return _face(yaw=yaw)
+            if cur.id == 2:
+                return _face(yaw=2)  # under the limit: not shown again
+            return _face()
+
+        setup = Setup((1920, 1080), rng=random.Random(4), ready_seconds=0)
+        t = 0.0
+        state = "running"
+        for _ in range(20000):
+            state = setup.step(t, feat_fn(setup), face_fn(setup), 1_000_000.0 + t)
+            t += 0.05
+            if state == "fit":
+                break
+        else:
+            raise AssertionError(setup.stage)
+        ids = [event["id"] for event in setup.events if event["phase"] == "calibration"]
+        self.assertEqual(ids.count(turned), 2)
+        self.assertEqual(ids.count(wobble), 2)
+        self.assertEqual(ids.count(2), 1)
+        self.assertEqual(HEAD_RETRY_LINE, "Keep your head still, look with your eyes only.")
+        self.assertEqual(setup.banners.count(HEAD_RETRY_LINE), 2)
+        self.assertGreaterEqual(setup.targets[turned].good, 10)
+        self.assertTrue(all(row[0][0] != 1.0 for row in setup.usable()))
+        self.assertEqual(ids.count(turned), 2)  # not a third time
 
 
 class ScoreTests(unittest.TestCase):

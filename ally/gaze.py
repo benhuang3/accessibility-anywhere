@@ -498,7 +498,7 @@ class GazeManager:
         except (TypeError, ValueError):
             return 250.0
 
-    def calibrate(self, timeout: float = 90) -> dict:
+    def calibrate(self, timeout: float = 120) -> dict:
         """Show the dots and wait for the result: {"calibrated": bool, "error_px" or "why"}."""
         if not self.wanted():
             self.set_enabled(True)

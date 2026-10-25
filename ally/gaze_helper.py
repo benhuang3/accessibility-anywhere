@@ -48,10 +48,15 @@ HUD_FOOTER = "Nothing is saved."
 GRID_X = (0.08, 0.50, 0.92)
 GRID_Y = (0.10, 0.50, 0.90)
 READY_SECONDS = 3.0
-CAL_SETTLE, CAL_COLLECT = 0.8, 1.0
-VAL_SETTLE, VAL_COLLECT = 0.5, 1.0  # 1.5 s on screen for each check dot
+STEADY_SECONDS = 1.0  # face width and head pose must hold still this long before the first dot
+CAL_SETTLE, CAL_COLLECT = 0.8, 1.5
+VAL_SETTLE, VAL_COLLECT = 0.5, 1.5  # 1.5 s kept per dot, so a 10 fps camera still beats the 10-frame minimum
 VAL_COUNT = 5
 MIN_GOOD = 10  # fewer good frames than this, and that dot is shown once more
+HEAD_MOVE_DEG = 3.0  # yaw or pitch change that means the head turned instead of the eyes
+WIDTH_STEADY = 0.05  # relative face-width change; 40 cm to 32 cm is much larger than this
+EYES_ONLY = "Move only your eyes, keep your head still."
+HEAD_RETRY_LINE = "Keep your head still, look with your eyes only."
 RESULT_SECONDS = 4.0
 MIN_OPEN = 0.12  # eye openness below this is a blink: skip the frame
 JUMP = 0.08  # change in iris position (eye widths) that means the eye jumped: skip that frame
@@ -197,6 +202,22 @@ def validation_points(rng: random.Random | None = None, n: int = VAL_COUNT,
         if point is not None:
             picked.append(point)
     return picked
+
+
+def _pose_summary(poses: list[tuple[float, float]]) -> tuple[float, tuple[float, float]] | None:
+    """Range of yaw/pitch during a dot, and the median pose. None when the head was never seen."""
+    if not poses:
+        return None
+    yaws = [p[0] for p in poses]
+    pitches = [p[1] for p in poses]
+    span = max(max(yaws) - min(yaws), max(pitches) - min(pitches))
+    return span, (statistics.median(yaws), statistics.median(pitches))
+
+
+def intro_lines(instruction: str = "") -> list[str]:
+    """The words on the setup screen before the first dot."""
+    third = instruction if instruction else "Next, look at each dot until it moves."
+    return ["Eye tracker setup", EYES_ONLY, third, "Esc cancels."]
 
 
 def readiness_issue(face: dict | None) -> str | None:
@@ -413,6 +434,10 @@ class _Dot:
         self.settle, self.collect = settle, collect
         self.good = 0
         self.samples: list[tuple[list[float], tuple[float, float]]] = []
+        self.poses: list[tuple[float, float]] = []  # yaw, pitch in degrees, from the face matrix
+        self.head_moved = False
+        self.retried = False  # shown again once already
+        self.warn_head = False  # this showing is the retry after the head turned
         self.shown = self.start = self.end = None
 
 
@@ -436,12 +461,18 @@ class Setup:
         self.pos = 0
         self.t0: float | None = None
         self.events: list[dict] = []
-        self._retry_done = False
+        self._retried_stages: set[str] = set()
         self._fit_sent = False
         self._score_sent = False
         self.model = None
         self.result_at = 0.0
         self.prev = None
+        self.line = ""
+        self.banners: list[str] = []
+        self._eyes_announced = False
+        self._steady_ref: tuple[float, float, float] | None = None
+        self._steady_since: float | None = None
+        self.anchor_pose: tuple[float, float] | None = None
         self._lights: list[float] = []
         self._widths: list[float] = []
         self._glare_frames = 0
@@ -489,14 +520,46 @@ class Setup:
         if issue:
             self.instruction = issue
             self.good_since = None
+            self._steady_ref = None
+            self._steady_since = None
+            return "running"
+        # In range is not enough: width and pose have to stay put, or the first dots
+        # are taken while the person is still sitting down.
+        if not self._update_steady(now, face):
+            self.instruction = ""
+            self.good_since = None
             return "running"
         if self.good_since is None:
-            self.good_since = now
+            self.good_since = self._steady_since
         self.instruction = ""
-        if now - self.good_since < self.ready_seconds:
+        need = max(self.ready_seconds, STEADY_SECONDS)
+        if self.good_since is None or now - self.good_since < need:
             return "running"
         self._start_targets(now, wall)
         return "running"
+
+    def _update_steady(self, now: float, face) -> bool:
+        """True once width, yaw, and pitch have stayed within tolerance for STEADY_SECONDS."""
+        try:
+            width = float(face.get("width"))
+            yaw = float(face.get("yaw"))
+            pitch = float(face.get("pitch"))
+        except (TypeError, ValueError, AttributeError):
+            self._steady_ref = None
+            self._steady_since = None
+            return False
+        if self._steady_ref is None or self._steady_since is None:
+            self._steady_ref = (width, yaw, pitch)
+            self._steady_since = now
+            return False
+        base_w, base_yaw, base_pitch = self._steady_ref
+        width_jump = abs(width - base_w) > WIDTH_STEADY * max(abs(base_w), 1e-6)
+        pose_jump = abs(yaw - base_yaw) > HEAD_MOVE_DEG or abs(pitch - base_pitch) > HEAD_MOVE_DEG
+        if width_jump or pose_jump:
+            self._steady_ref = (width, yaw, pitch)
+            self._steady_since = now
+            return False
+        return now - self._steady_since >= STEADY_SECONDS
 
     def _start_targets(self, now: float, wall: float) -> None:
         self.targets = [_Dot("calibration", i, x, y, CAL_SETTLE, CAL_COLLECT)
@@ -506,7 +569,6 @@ class Setup:
                             for i, (x, y) in enumerate(checks)]
         self.order = list(self.targets)
         self.pos = 0
-        self._retry_done = False
         self.stage = "targets"
         self._begin(now, wall)
 
@@ -520,6 +582,15 @@ class Setup:
         event = {"phase": target.phase, "id": target.id, "x": x, "y": y,
                  "shown": target.shown, "start": target.start, "end": target.end}
         self.events.append(event)
+        if target.warn_head:
+            self.line = HEAD_RETRY_LINE
+        elif not self._eyes_announced:
+            self.line = EYES_ONLY
+            self._eyes_announced = True
+        else:
+            self.line = ""
+        if self.line:
+            self.banners.append(self.line)
         if self.on_target is not None:
             self.on_target(dict(event))
 
@@ -527,10 +598,36 @@ class Setup:
         target = self.order[self.pos]
         elapsed = 0.0 if self.t0 is None else now - self.t0
         if target.settle <= elapsed < target.settle + target.collect:
+            self._watch_head(target, face)
             self._consider(target, feat, face)
         if elapsed >= target.settle + target.collect:
             return self._advance(now, wall)
         return "running"
+
+    def _watch_head(self, target: _Dot, face) -> None:
+        """Yaw and pitch, in degrees, from the face snapshot (the face matrix when the camera has one)."""
+        if not face or not face.get("present"):
+            return
+        try:
+            target.poses.append((float(face["yaw"]), float(face["pitch"])))
+        except (KeyError, TypeError, ValueError):
+            return
+
+    def _mark_head(self, target: _Dot) -> None:
+        """Flag a dot whose head turned during the collection, or away from the first dot's pose."""
+        if target.retried:
+            return
+        summary = _pose_summary(target.poses)
+        if summary is None:
+            return
+        span, median = summary
+        if self.anchor_pose is None:
+            self.anchor_pose = median
+            target.head_moved = span > HEAD_MOVE_DEG
+            return
+        turned = abs(median[0] - self.anchor_pose[0]) > HEAD_MOVE_DEG
+        turned = turned or abs(median[1] - self.anchor_pose[1]) > HEAD_MOVE_DEG
+        target.head_moved = span > HEAD_MOVE_DEG or turned
 
     def _consider(self, target: _Dot, feat, face) -> None:
         if face and face.get("present"):
@@ -563,16 +660,17 @@ class Setup:
         target.good += 1
 
     def _advance(self, now: float, wall: float) -> str:
+        self._mark_head(self.order[self.pos])
         self.pos += 1
         self.t0 = None
         if self.pos < len(self.order):
             self._begin(now, wall)
             return "running"
-        if self.stage == "targets" and not self._retry_done:
-            self._retry_done = True
-            weak = [t for t in self.targets if t.good < self.min_good]
-            if weak:
-                self.order.extend(weak)
+        if self.stage not in self._retried_stages:
+            self._retried_stages.add(self.stage)
+            again = self._again()
+            if again:
+                self.order.extend(again)
                 self._begin(now, wall)
                 return "running"
         if self.stage == "targets":
@@ -585,6 +683,27 @@ class Setup:
             return "score"
         self.stage = "done"
         return "done"
+
+    def _again(self) -> list[_Dot]:
+        """Dots to show once more: too few frames (calibration only), or the head turned."""
+        dots = {"targets": self.targets, "validate": self.val_targets, "drift": self.drift_targets}
+        again = []
+        for target in dots.get(self.stage, []):
+            if target.retried:
+                continue
+            weak = self.stage == "targets" and target.good < self.min_good
+            if not weak and not target.head_moved:
+                continue
+            target.retried = True
+            if target.head_moved:
+                # The turned frames would teach the model the wrong pose. Keep the still attempt.
+                target.warn_head = True
+                target.samples.clear()
+                target.good = 0
+                target.poses.clear()
+                target.head_moved = False
+            again.append(target)
+        return again
 
     def _px(self, target: _Dot) -> tuple[int, int]:
         return int(target.nx * self.w), int(target.ny * self.h)
@@ -722,13 +841,11 @@ class Calibration:
         stage = self.setup.stage
         target = self.setup.current
         if stage == "ready":
-            self._text(img, "Eye tracker setup", 0.34, 1.4)
-            if self.setup.instruction:
-                self._text(img, self.setup.instruction, 0.50, 1.0)
-            else:
-                self._text(img, "Hold still.", 0.46)
-                self._text(img, "Next, look at each dot until it moves.", 0.56, 0.8)
-            self._text(img, "Esc cancels.", 0.68, 0.7)
+            title, eyes, third, cancel = intro_lines(self.setup.instruction)
+            self._text(img, title, 0.32, 1.3)
+            self._text(img, eyes, 0.44, 0.75)
+            self._text(img, third, 0.56, 0.85)
+            self._text(img, cancel, 0.68, 0.7)
         elif target is not None and self.setup.t0 is not None:
             x, y = self.setup._px(target)
             elapsed = now - self.setup.t0
@@ -737,7 +854,9 @@ class Calibration:
                 cv2.circle(img, (x, y), int(14 + 40 * (1 - frac)), (230, 230, 230), 3, cv2.LINE_AA)
             cv2.circle(img, (x, y), 12, (0, 140, 255), -1, cv2.LINE_AA)
             cv2.circle(img, (x, y), 3, (255, 255, 255), -1, cv2.LINE_AA)
-            if stage == "validate":
+            if self.setup.line:
+                self._text(img, self.setup.line, 0.90, 0.65)
+            elif stage == "validate":
                 self._text(img, "Checking. Keep looking at the dot.", 0.90, 0.7)
             elif stage == "drift":
                 self._text(img, "Checking again. Keep looking at the dot.", 0.90, 0.7)

@@ -116,7 +116,7 @@ def magnify_where_i_look(ctx, level: Annotated[float, "Magnification, e.g. 2 = 2
 
 @tool(timeout=150)
 def calibrate_eye_tracker(ctx):
-    """Set up the eye tracker: about 35 seconds of dots, then a check the user was not trained on.
+    """Set up the eye tracker: about a minute of dots, then a check the user was not trained on.
 
     Use when the user asks to calibrate or set up eye tracking, or when "what I'm looking at"
     doesn't land where they look.
@@ -125,7 +125,7 @@ def calibrate_eye_tracker(ctx):
     level = p.view()[0]
     if level > 1.0 or p.other_magnifier_open():
         p.magnify(1.0)  # the dots must be shown unmagnified (this also closes Windows Magnifier)
-    ctx.say("Eye tracker setup. Look at each dot. This takes about half a minute.")
+    ctx.say("Eye tracker setup. Look at each dot. Move only your eyes, and keep your head still. This takes about a minute.")
     try:
         result = ctx.agent.gaze.calibrate()
     finally:
@@ -136,7 +136,7 @@ def calibrate_eye_tracker(ctx):
 
 @tool(timeout=60)
 def check_eye_tracker(ctx):
-    """Check eye-tracker accuracy with 5 dots (about 8 seconds), without a full setup.
+    """Check eye-tracker accuracy with 5 dots (about 10 seconds), without a full setup.
 
     Use when the user asks to check the eye tracker. Updates the saved validation numbers.
     """
