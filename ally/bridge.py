@@ -65,6 +65,10 @@ class Bridge:
 
     @property
     def chrome_focused(self) -> bool:
+        # A command typed in a browser's popup is about that browser, even though the popup took the focus
+        # from its window (Chrome then reports the window as unfocused, and "zoom in" would zoom the screen).
+        if self._asking is not None and not self._asking.ws.closed:
+            return True
         c = self.best()
         return bool(c and c.focused)
 
