@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import tempfile
 import time
 import types
@@ -18,7 +19,7 @@ from ally.gaze_helper import RecentFeatures, adopt_model, apply_click, classify_
 from ally.registry import ToolError
 from ally.senses import clickable
 from ally.senses.manager import Senses
-from ally.platforms.base import ease_pan, edge_speed
+from ally.platforms.base import ReadingPan, ease_pan, edge_speed
 from ally.rules import match
 from ally.tools.gaze_tools import (calibration_words, check_eye_tracker, check_words, choose_by_looking,
                                    eye_follow_speed, looking_text, replace_toml_key, resolve_pan_speed,
@@ -440,6 +441,115 @@ class PanSpeedTests(unittest.TestCase):
         self.assertEqual(match("follow my eyes slower").actions, [("eye_follow_speed", {"speed": "slower"})])
         self.assertEqual(match("follow my eyes faster").actions, [("eye_follow_speed", {"speed": "faster"})])
         self.assertEqual(match("follow my eyes").actions, [("magnifier_follow", {"target": "eyes"})])
+
+
+class ReadingPanTests(unittest.TestCase):
+    """The magnifier as a reading aid, driven by a simulated reader. Screen 1920x1080."""
+
+    W, H = 1920, 1080
+
+    def run_reader(self, level=2.0, rate=150, bias=(80, 40), jitter=10, speed=0.35, lines=3,
+                   start=150, end=1750):
+        """A reader moves along each line in 0.25 s fixations at `rate` px/s (unmagnified), then
+        looks for the start of the next line. The tracker adds a fixed bias and jitter."""
+        rnd = random.Random(7)
+        vw, vh = self.W / level, self.H / level
+        pan = ReadingPan()
+        x, y = start + 100 - vw / 2, 300 - vh / 2
+        cx, line, fix, t = float(start), 0, 0.0, 0.0
+        seeking = False
+        out = {"frames": 0, "outside": 0, "returns": 0, "starts": [], "pace": []}
+        while line < lines and t < 60:
+            if not seeking:
+                fix += 1 / 30
+                if fix >= 0.25:
+                    fix, cx = 0.0, cx + rate * 0.25
+                if cx >= end:
+                    line, seeking = line + 1, True
+            if seeking:
+                if start >= x:
+                    cx, seeking = float(start), False
+                    out["starts"].append(x)
+                else:
+                    cx = x + 0.08 * vw  # waits at the left of the view
+            if not seeking:
+                out["frames"] += 1
+                out["outside"] += not 0.1 <= (cx - x) / vw <= 0.92
+            gx = (cx - x) * level + bias[0] + rnd.gauss(0, jitter)
+            gy = (300 + 28 * line - y) * level + bias[1] + rnd.gauss(0, jitter)
+            was = pan.returning
+            x2, y2 = pan.step((gx / self.W, gy / self.H), (x, y), (vw, vh), (self.W - vw, self.H - vh), 1 / 30, speed)
+            out["returns"] += was is None and pan.returning is not None
+            if not seeking and pan.returning is None and 0.45 <= (cx - start) / (end - start) <= 0.75:
+                out["pace"].append((x2 - x) * 30)
+            x, y, t = x2, y2, t + 1 / 30
+        return out
+
+    def test_follows_a_reader_at_their_pace(self):
+        for level, rate in ((1.5, 100), (2.0, 150), (3.0, 200)):
+            got = self.run_reader(level=level, rate=rate)
+            self.assertLess(got["outside"] / got["frames"], 0.02, (level, rate))
+            pace = sorted(got["pace"])[len(got["pace"]) // 2]
+            self.assertAlmostEqual(pace, rate, delta=0.25 * rate)
+
+    def test_tracker_bias_and_speed_setting_do_not_lose_the_reader(self):
+        for bias in ((0, 0), (150, 80), (-150, -60)):
+            got = self.run_reader(bias=bias, jitter=30)
+            self.assertLess(got["outside"] / got["frames"], 0.02, bias)
+        for speed in (0.1, 0.35, 2.0):
+            got = self.run_reader(level=3.0, rate=200, speed=speed)
+            self.assertLess(got["outside"] / got["frames"], 0.02, speed)
+
+    def test_looking_back_left_returns_to_the_start_of_the_line(self):
+        got = self.run_reader(lines=3)
+        self.assertEqual(got["returns"], 2)
+        first = got["starts"][0] if got["starts"] else None
+        self.assertIsNotNone(first)
+
+    def test_the_return_eases_in(self):
+        pan = ReadingPan()
+        pan.line_start, pan.read_at, pan.t = 0.0, 0.0, 0.5
+        pan.returning = (900.0, 300.0, 0.0, 300.0, pan.t)
+        x, _ = pan.step((0.1, 0.5), (900.0, 300.0), (960, 540), (960, 540), 1 / 30)
+        self.assertGreater(x, 890.0)  # barely moved in the first frame
+        for _ in range(40):
+            x, _ = pan.step((0.1, 0.5), (x, 300.0), (960, 540), (960, 540), 1 / 30)
+        self.assertEqual(x, 0.0)
+        self.assertIsNone(pan.returning)
+
+    def step_many(self, pan, points, pos=(400.0, 200.0), level=2.0):
+        vw, vh = self.W / level, self.H / level
+        x, y = pos
+        for nx, ny in points:
+            x, y = pan.step((nx, ny), (x, y), (vw, vh), (self.W - vw, self.H - vh), 1 / 30, 0.35)
+        return x - pos[0], y - pos[1]
+
+    def test_staring_or_one_glance_right_does_not_pan(self):
+        self.assertEqual(self.step_many(ReadingPan(), [(0.75, 0.5)] * 150), (0.0, 0.0))
+        glance = [(0.4, 0.5)] * 20 + [(0.7, 0.5)] * 15 + [(0.4, 0.5)] * 40
+        self.assertEqual(self.step_many(ReadingPan(), glance), (0.0, 0.0))
+
+    def test_looking_around_without_reading_leaves_the_view_still(self):
+        rnd = random.Random(1)
+        moved = 0.0
+        for seed in range(4):
+            rnd.seed(seed)
+            points = []
+            while len(points) < 1800:  # one minute of fixations anywhere in the middle
+                p = (rnd.uniform(0.2, 0.8), rnd.uniform(0.25, 0.75))
+                points += [p] * rnd.randint(8, 27)
+            dx, dy = self.step_many(ReadingPan(), points[:1800])
+            moved += abs(dx) + abs(dy)
+        self.assertLess(moved, 100)
+
+    def test_an_edge_still_pans(self):
+        dx, dy = self.step_many(ReadingPan(), [(0.02, 0.5)] * 60)
+        self.assertLess(dx, -50)
+        self.assertEqual(dy, 0.0)
+
+    def test_help_me_read_magnifies_where_i_look(self):
+        for text in ("help me read", "help me read this", "Ally, help me read the page"):
+            self.assertEqual(match(text).actions, [("magnify_where_i_look", {})], text)
 
 
 class DoctorTests(unittest.TestCase):

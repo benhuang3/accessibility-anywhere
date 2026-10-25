@@ -142,8 +142,9 @@ def magnify_where_i_look(ctx, level: Annotated[float, "Magnification, e.g. 2 = 2
     """Magnify the part of the screen the user is looking at, in any app, using the webcam eye tracker.
 
     Use for "magnify what I'm looking at", "zoom in where I'm looking", "make this bigger" when the
-    user means the spot their eyes are on, or "magnify here". Afterwards the magnified view follows
-    their eyes: looking near an edge pans that way.
+    user means the spot their eyes are on, "magnify here", or "help me read this". Afterwards the
+    magnified view is a reading aid: as they read along a line it pans at their pace, looking back
+    to the left after a line returns to where the line began, and looking near an edge pans that way.
     """
     looked = ctx.agent.gaze.target()
     x, y = int(looked["x"]), int(looked["y"])
@@ -243,7 +244,7 @@ def eye_tracking(ctx, on: bool):
 
 @tool
 def magnifier_follow(ctx, target: Literal["eyes", "mouse"]):
-    """Choose what the screen magnifier follows: the user's eyes (look near an edge to pan) or the mouse."""
+    """Choose what the screen magnifier follows: the user's eyes (it moves along as they read; look near an edge to pan) or the mouse."""
     if target == "eyes" and ctx.agent.gaze.status() != "tracking":
         raise ctx.agent.gaze.problem()
     return ctx.os.set_follow(target)
@@ -336,7 +337,7 @@ def _fmt_speed(value: float) -> str:
 
 @tool
 def eye_follow_speed(ctx, speed: Annotated[str, "slower, faster, slow, medium, fast, or a number from 0.1 to 2.0."]):
-    """Set how fast the magnified view pans when the user looks toward an edge.
+    """Set how fast the magnified view pans when the user looks toward an edge, and how eagerly it keeps up while they read.
 
     Use for "follow my eyes slower", "follow my eyes faster", or when they name a speed.
     Applies immediately and is saved, so it stays after Ally restarts.
