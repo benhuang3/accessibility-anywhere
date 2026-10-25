@@ -140,6 +140,19 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 22:55 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `d0f8158`
+
+**Committed (local, not pushed yet).** Product decision (Ben H): **bigger text means bigger fonts; Ally never
+zooms unless the user says "zoom".**
+- `enlarge_text` in Chrome now enlarges the page's own font sizes (new `ally_text` layer, one rule per original
+  size; fixed-height boxes the bigger text overflows may grow). `goal="smaller"` steps down. Zoom untouched.
+- Phrases: "bigger", "make the text bigger", "too small", "I can't read this" -> bigger text; "smaller", "too
+  big" -> smaller text; only "zoom"/"zoom in"/"zoom out" zoom. The AI fixer can change text size, not zoom.
+- `[page_enlarge] max_text_scale` (default 2.0). Tests updated (rules, pagekit, browser); all pass on Windows.
+- **Known:** CNN's "Legal Terms and Privacy" consent dialog isn't recognised as clutter, so Simplified mode
+  refuses CNN ("a pop-up is open"). The `<mod>+=`/`<mod>+-` hotkeys and the extension's own Alt+Shift
+  shortcuts still zoom (they are zoom keys).
+
 ### Oct 24, 22:20 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `30e80b2`
 
 **Committed (local, not pushed yet). Not merged.** Windows only from now on (Mac abandoned).
