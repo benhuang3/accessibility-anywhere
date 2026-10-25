@@ -197,3 +197,23 @@ An unchanged screen sends only its five-second keyframes, reducing that example 
 these are estimates, not measured call performance or a guarantee of free-tier eligibility.
 No server changes are required for these frame-rate changes; live two-device and iOS checks
 remain necessary before publishing.
+
+## Helping on the shared screen
+
+Once both people have joined and screen sharing is on, the helper has three controls:
+**Close this page**, **Point**, and **Make it bigger**. Point mode sends the next tap on
+the displayed screen, including when zoomed; it does not click the elder's page.
+There is no remote typing, clicking or scrolling. Each action is announced by Ally.
+The helper sees a brief success or failure note, with one request per kind at a time.
+
+Actions and results are transient, recipient-filtered SpacetimeDB events. The elder
+page relays actions to the extension and reports failure if it gets no reply in five
+seconds. Only an extension-created call tab with its saved `allySpacecall:<tabId>`
+session record is authorized. Close and zoom target the active tab of the most
+recent normal browser window, excluding the call window and restricted pages.
+The bridge event keeps `name: "helper_action"` as its discriminator and carries the
+saved person's name separately as `helper_name`.
+
+Regenerate the mirrored bindings with `spacetime generate` and publish the module
+before trying this on Maincloud. Local tests do not publish anything. Live Maincloud,
+a real phone, physical display pointing and a real Chrome tab close still need checking.

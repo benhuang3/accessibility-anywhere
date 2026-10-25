@@ -937,7 +937,41 @@ async function handlePopup(msg) {
   }
 }
 
+// Only an Ally-created Spacecall tab may request these three announced actions.
+async function handleHelperAction(msg, sender) {
+  await callCreation;
+  const tabId = sender.tab && sender.tab.id;
+  if (!Number.isInteger(tabId) || (sender.frameId !== undefined && sender.frameId !== 0)) return { ok: false };
+  const saved = (await chrome.storage.session.get(`allySpacecall:${tabId}`))[`allySpacecall:${tabId}`];
+  if (!saved || saved.tabId !== tabId || saved.windowId !== sender.tab.windowId) return { ok: false };
+  const { seq, action, x, y } = msg;
+  if (!Number.isInteger(seq) || seq < 0 || seq > 0xffffffff ||
+      !["close_tab", "point", "bigger"].includes(action) ||
+      !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1 ||
+      (action !== "point" && (x !== 0 || y !== 0))) return { ok: false };
+  let ok = false, target;
+  try {
+    const win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
+    if (win && win.type === "normal" && win.id !== saved.windowId) {
+      [target] = await chrome.tabs.query({ active: true, windowId: win.id });
+      if (target && target.id !== tabId && /^https?:\/\//i.test(target.url || "")) {
+        if (action === "close_tab") await chrome.tabs.remove(target.id);
+        else if (action === "bigger") await chrome.tabs.setZoom(target.id, stepZoom(await chrome.tabs.getZoom(target.id), 1));
+        ok = true;
+      }
+    }
+  } catch { /* closed windows and restricted tabs fail without changing another tab */ }
+  const announced = send({ type: "event", name: "helper_action", action, ok,
+    x, y, helper_name: saved.name, tab_id: target && target.id });
+  if (action === "point") ok = ok && announced;
+  return { ok };
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.kind === "allyHelperAction") {
+    handleHelperAction(msg, sender).then(sendResponse, () => sendResponse({ ok: false }));
+    return true;
+  }
   if (msg && (msg.kind === "allyCallInfo" || msg.kind === "allyCallEnd")) {
     (async () => {
       await callCreation;

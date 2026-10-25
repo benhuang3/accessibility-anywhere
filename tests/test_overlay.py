@@ -63,6 +63,23 @@ class CompanionLayoutTests(unittest.TestCase):
         self.assertEqual(card_tone(None, OfferContent(2, "browser:x", "Make this bigger?")).bear, "listening")
         self.assertIsNone(card_tone(CardContent("Hello.", ("OK",), "info"), None).badge)
 
+    def test_done_kind_has_a_check_and_toast_for_any_wording(self):
+        for message in ("Priya closed that page for you.", "Priya is pointing here.", "Priya made the page bigger."):
+            tone = card_tone(CardContent(message, ("OK",), "done"), None)
+            self.assertEqual((tone.badge, tone.icon, tone.bear, tone.toast), (None, "check", "happy", True))
+
+    def test_done_can_replace_risk_but_info_still_cannot(self):
+        panel, display, view = PanelState(), DisplayState(), CommandView()
+        panel.card("Warning.", kind="risk")
+        display.note_card("risk")
+        view.apply(make_card_command("Warning.", ("OK",), "risk"))
+        self.assertFalse(display.may_show_card("info"))
+        self.assertTrue(display.may_show_card("done"))
+        panel.card("Priya closed that page for you.", kind="done")
+        self.assertEqual(panel.current_card.kind, "done")
+        self.assertTrue(view.apply(make_card_command("Done.", ("OK",), "done")))
+        self.assertEqual(view.card_kind, "done")
+
     def test_every_button_has_a_verb(self):
         self.assertEqual(button_text("OK"), "Got it")
         self.assertEqual(button_text("Close it"), "Close it")
@@ -321,6 +338,22 @@ class PanelInteractionTests(unittest.TestCase):
                 ov._handle(ov._q.get_nowait())
                 self.assertEqual(ov._panel.view[0], "none")
 
+    def test_done_note_removes_a_cancelled_question_before_rendering(self):
+        ov = self.overlay()
+        offer = Offer("Close it?", context="risk")
+        ov.show_card("Warning.", kind="risk")
+        ov.offer(offer)
+        while not ov._q.empty():
+            ov._handle(ov._q.get_nowait())
+        offer.resolve("dismissed", "helper")
+        ov.show_card("Priya closed that page for you.", kind="done")
+        ov._handle(ov._q.get_nowait())
+        self.assertIsNone(ov._panel.current_offer)
+        self.assertEqual(ov._panel.current_card.kind, "done")
+        ov.clear()
+        ov._handle(ov._q.get_nowait())
+        self.assertEqual(ov._panel.current_card.kind, "done")
+
     def test_voice_answer_then_clear_returns_to_card(self):
         ov = self.overlay()
         offer = Offer("Close it?", context="risk")
@@ -522,7 +555,7 @@ class PanelRenderingTests(unittest.TestCase):
 
     def test_done_note_dismisses_itself_but_not_a_newer_card(self):
         ov = self.overlay()
-        ov.show_card("Closed the page.", kind="risk")
+        ov.show_card("Priya closed that page for you.", kind="done")
         ov._handle(ov._q.get_nowait())
         card = ov._panel.current_card
         ov._root.after.assert_called_once_with(6000, ov._dismiss_toast, card)

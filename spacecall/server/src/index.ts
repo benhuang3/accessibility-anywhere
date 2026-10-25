@@ -54,8 +54,27 @@ const screenFrameEvent = table({ name: 'screen_frame_event', public: true, event
   server_at: t.timestamp()
 });
 
+const helperActionEvent = table({ name: 'helper_action_event', public: true, event: true }, {
+  room_id: t.string(),
+  recipient: t.identity(),
+  seq: t.u32(),
+  action: t.string(),
+  x: t.f32(),
+  y: t.f32(),
+  server_at: t.timestamp()
+});
+
+const actionResultEvent = table({ name: 'action_result_event', public: true, event: true }, {
+  room_id: t.string(),
+  recipient: t.identity(),
+  seq: t.u32(),
+  ok: t.bool(),
+  server_at: t.timestamp()
+});
+
 const faceProfile = profileTable();
 const spacetime = schema({ incident, presence, audioFrameEvent, videoFrameEvent, screenFrameEvent,
+  helperActionEvent, actionResultEvent,
   face_profile: faceProfile });
 export default spacetime;
 type Context = ReducerCtx<typeof spacetime.schemaType>;
@@ -286,3 +305,42 @@ export const screen_share_ready = spacetime.reducer({ room_id: t.string() }, (ct
   if (!row) throw new SenderError('Call ended');
   if (!row.screen_sharing) throw new SenderError('Screen sharing paused');
 });
+
+function actionPeer(ctx: Context, roomId: string, role: 'helper' | 'elder') {
+  const row = liveIncident(ctx, roomId);
+  if (!row || row.status !== 'connected') throw new SenderError('Call is not connected');
+  const me = member(ctx, roomId);
+  if (me.role !== role || !me.joined) throw new SenderError(`Only the joined ${role} can do that`);
+  const peer = ctx.db.presence.slot.find(`${roomId}:${role === 'helper' ? 'elder' : 'helper'}`);
+  if (!peer?.joined) throw new SenderError('Call is not connected');
+  return { row, peer: peer.identity };
+}
+
+export const send_helper_action = spacetime.reducer({
+  room_id: t.string(), seq: t.u32(), action: t.string(), x: t.f32(), y: t.f32()
+}, (ctx, args) => {
+  const { row, peer } = actionPeer(ctx, args.room_id, 'helper');
+  if (!row.screen_sharing) throw new SenderError('Screen sharing is off');
+  if (!['close_tab', 'point', 'bigger'].includes(args.action) ||
+      !Number.isFinite(args.x) || !Number.isFinite(args.y) ||
+      args.x < 0 || args.x > 1 || args.y < 0 || args.y > 1) {
+    throw new SenderError('Invalid helper action');
+  }
+  ctx.db.helperActionEvent.insert({ ...args,
+    x: args.action === 'point' ? args.x : 0, y: args.action === 'point' ? args.y : 0,
+    recipient: peer, server_at: ctx.timestamp });
+});
+
+export const report_action_result = spacetime.reducer({
+  room_id: t.string(), seq: t.u32(), ok: t.bool()
+}, (ctx, args) => {
+  const { peer } = actionPeer(ctx, args.room_id, 'elder');
+  ctx.db.actionResultEvent.insert({ ...args, recipient: peer, server_at: ctx.timestamp });
+});
+
+export const helper_action_visibility = spacetime.clientVisibilityFilter.sql(
+  'SELECT * FROM helper_action_event WHERE recipient = :sender'
+);
+export const action_result_visibility = spacetime.clientVisibilityFilter.sql(
+  'SELECT * FROM action_result_event WHERE recipient = :sender'
+);

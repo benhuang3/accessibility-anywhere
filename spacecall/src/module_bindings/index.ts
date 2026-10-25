@@ -34,13 +34,17 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import DeleteFaceProfileReducer from "./delete_face_profile_reducer";
 import EndCallReducer from "./end_call_reducer";
 import HeartbeatReducer from "./heartbeat_reducer";
 import HelperRespondingReducer from "./helper_responding_reducer";
 import JoinCallReducer from "./join_call_reducer";
 import OpenIncidentReducer from "./open_incident_reducer";
+import ReportActionResultReducer from "./report_action_result_reducer";
+import SaveFaceProfileReducer from "./save_face_profile_reducer";
 import ScreenShareReadyReducer from "./screen_share_ready_reducer";
 import SendAudioFrameReducer from "./send_audio_frame_reducer";
+import SendHelperActionReducer from "./send_helper_action_reducer";
 import SendScreenFrameReducer from "./send_screen_frame_reducer";
 import SendVideoFrameReducer from "./send_video_frame_reducer";
 import SetScreenSharingReducer from "./set_screen_sharing_reducer";
@@ -48,8 +52,11 @@ import SetScreenSharingReducer from "./set_screen_sharing_reducer";
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import ActionResultEventRow from "./action_result_event_table";
 import AudioFrameEventRow from "./audio_frame_event_table";
 import CallIncidentRow from "./call_incident_table";
+import HelperActionEventRow from "./helper_action_event_table";
+import OwnFaceProfileRow from "./own_face_profile_table";
 import ScreenFrameEventRow from "./screen_frame_event_table";
 import VideoFrameEventRow from "./video_frame_event_table";
 
@@ -57,6 +64,14 @@ import VideoFrameEventRow from "./video_frame_event_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  actionResultEvent: __table({
+    name: 'action_result_event',
+    indexes: [
+    ],
+    constraints: [
+    ],
+    event: true,
+  }, ActionResultEventRow),
   audioFrameEvent: __table({
     name: 'audio_frame_event',
     indexes: [
@@ -65,6 +80,14 @@ const tablesSchema = __schema({
     ],
     event: true,
   }, AudioFrameEventRow),
+  helperActionEvent: __table({
+    name: 'helper_action_event',
+    indexes: [
+    ],
+    constraints: [
+    ],
+    event: true,
+  }, HelperActionEventRow),
   screenFrameEvent: __table({
     name: 'screen_frame_event',
     indexes: [
@@ -88,17 +111,28 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, CallIncidentRow),
+  ownFaceProfile: __table({
+    name: 'own_face_profile',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, OwnFaceProfileRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("delete_face_profile", DeleteFaceProfileReducer),
   __reducerSchema("end_call", EndCallReducer),
   __reducerSchema("heartbeat", HeartbeatReducer),
   __reducerSchema("helper_responding", HelperRespondingReducer),
   __reducerSchema("join_call", JoinCallReducer),
   __reducerSchema("open_incident", OpenIncidentReducer),
+  __reducerSchema("report_action_result", ReportActionResultReducer),
+  __reducerSchema("save_face_profile", SaveFaceProfileReducer),
   __reducerSchema("screen_share_ready", ScreenShareReadyReducer),
   __reducerSchema("send_audio_frame", SendAudioFrameReducer),
+  __reducerSchema("send_helper_action", SendHelperActionReducer),
   __reducerSchema("send_screen_frame", SendScreenFrameReducer),
   __reducerSchema("send_video_frame", SendVideoFrameReducer),
   __reducerSchema("set_screen_sharing", SetScreenSharingReducer),
@@ -112,6 +146,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
   tables: typeof tablesSchema.schemaType.tables & {
     /** @deprecated Use `callIncident` instead. This alias will be removed in the next major version. */
     readonly "call_incident": Omit<typeof tablesSchema.schemaType.tables["callIncident"], "accessorName"> & { readonly accessorName: "call_incident" };
+    /** @deprecated Use `ownFaceProfile` instead. This alias will be removed in the next major version. */
+    readonly "own_face_profile": Omit<typeof tablesSchema.schemaType.tables["ownFaceProfile"], "accessorName"> & { readonly accessorName: "own_face_profile" };
   };
 };
 
@@ -131,6 +167,7 @@ const REMOTE_MODULE = {
 
 const tableAccessorAliases = {
   "call_incident": "callIncident",
+  "own_face_profile": "ownFaceProfile",
 } as const;
 
 function __withTableAccessorAliases<T extends object>(target: T, freeze = false): T {
@@ -153,12 +190,16 @@ type __DbViewBase = __DbConnectionImpl<typeof REMOTE_MODULE>["db"];
 export type DbView = __DbViewBase & {
   /** @deprecated Use `callIncident` instead. This alias will be removed in the next major version. */
   readonly "call_incident": __DbViewBase["callIncident"];
+  /** @deprecated Use `ownFaceProfile` instead. This alias will be removed in the next major version. */
+  readonly "own_face_profile": __DbViewBase["ownFaceProfile"];
 };
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
 export type Tables = __TablesBase & {
   /** @deprecated Use `callIncident` instead. This alias will be removed in the next major version. */
   readonly "call_incident": __TablesBase["callIncident"];
+  /** @deprecated Use `ownFaceProfile` instead. This alias will be removed in the next major version. */
+  readonly "own_face_profile": __TablesBase["ownFaceProfile"];
 };
 
 /** The tables available in this remote SpacetimeDB module. Each table reference doubles as a query builder. */

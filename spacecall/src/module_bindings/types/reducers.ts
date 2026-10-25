@@ -6,24 +6,32 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import DeleteFaceProfileReducer from "../delete_face_profile_reducer";
 import EndCallReducer from "../end_call_reducer";
 import HeartbeatReducer from "../heartbeat_reducer";
 import HelperRespondingReducer from "../helper_responding_reducer";
 import JoinCallReducer from "../join_call_reducer";
 import OpenIncidentReducer from "../open_incident_reducer";
+import ReportActionResultReducer from "../report_action_result_reducer";
+import SaveFaceProfileReducer from "../save_face_profile_reducer";
 import ScreenShareReadyReducer from "../screen_share_ready_reducer";
 import SendAudioFrameReducer from "../send_audio_frame_reducer";
+import SendHelperActionReducer from "../send_helper_action_reducer";
 import SendScreenFrameReducer from "../send_screen_frame_reducer";
 import SendVideoFrameReducer from "../send_video_frame_reducer";
 import SetScreenSharingReducer from "../set_screen_sharing_reducer";
 
+export type DeleteFaceProfileParams = __Infer<typeof DeleteFaceProfileReducer>;
 export type EndCallParams = __Infer<typeof EndCallReducer>;
 export type HeartbeatParams = __Infer<typeof HeartbeatReducer>;
 export type HelperRespondingParams = __Infer<typeof HelperRespondingReducer>;
 export type JoinCallParams = __Infer<typeof JoinCallReducer>;
 export type OpenIncidentParams = __Infer<typeof OpenIncidentReducer>;
+export type ReportActionResultParams = __Infer<typeof ReportActionResultReducer>;
+export type SaveFaceProfileParams = __Infer<typeof SaveFaceProfileReducer>;
 export type ScreenShareReadyParams = __Infer<typeof ScreenShareReadyReducer>;
 export type SendAudioFrameParams = __Infer<typeof SendAudioFrameReducer>;
+export type SendHelperActionParams = __Infer<typeof SendHelperActionReducer>;
 export type SendScreenFrameParams = __Infer<typeof SendScreenFrameReducer>;
 export type SendVideoFrameParams = __Infer<typeof SendVideoFrameReducer>;
 export type SetScreenSharingParams = __Infer<typeof SetScreenSharingReducer>;
