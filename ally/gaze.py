@@ -44,6 +44,8 @@ _FACE_OFFER_FILE = "face_setup_suggested"
 # During a setup or check, and this long after it, Ally keeps its other voices quiet: the person is
 # moving on purpose (sit back, lean in), and an offer or a re-tune line would talk over the setup.
 SETUP_QUIET_AFTER = 5.0
+# Longest a helper video call keeps the camera if its end is never reported (seconds).
+CALL_CAMERA_MAX = 45 * 60
 
 FACE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/"
                   "float16/latest/face_landmarker.task")
@@ -173,6 +175,8 @@ class GazeManager:
         self.setting_up = False  # a calibration or check is on screen
         self._setup_ended = -1e9
         self._view_sent = None  # last "view LEVEL LEFT TOP" sent to the camera helper
+        self.call_paused = False  # a helper video call has the camera
+        self._call_timer = None
 
     @property
     def cfg(self) -> dict:
@@ -195,7 +199,8 @@ class GazeManager:
         return bool(senses is not None and senses.vision_wanted())
 
     def camera_wanted(self) -> bool:
-        return self.wanted() or self.senses_wanted()
+        # A video call needs the webcam, and Windows gives a camera to one program at a time.
+        return not self.call_paused and (self.wanted() or self.senses_wanted())
 
     @property
     def running(self) -> bool:
@@ -654,8 +659,45 @@ class GazeManager:
 
     # ------------------------------------------------------------ answering offers by looking
     def attach_bus(self, bus) -> None:
-        """Let the user answer the proactive layer's yes/no offers (ally.contracts.Offer) by looking."""
+        """Let the user answer the proactive layer's yes/no offers (ally.contracts.Offer) by looking,
+        and hand the camera to a helper video call while it is open."""
         bus.subscribe("offer", self._on_offer)
+        bus.subscribe("risk_call_starting", self._on_call_starting)
+        bus.subscribe("risk_contact", self._on_contact)
+        bus.subscribe("risk_call_ended", self._on_call_ended)
+
+    def _on_call_starting(self, msg=None) -> None:
+        self.pause_for_call()
+
+    def _on_contact(self, msg) -> None:
+        if isinstance(msg, dict) and msg.get("call_opened"):
+            self.pause_for_call()
+
+    def _on_call_ended(self, msg=None) -> None:
+        self.resume_after_call()
+
+    def pause_for_call(self) -> None:
+        """Close the camera now (eye tracking and face sensing) so the call page can use it."""
+        if self.call_paused:
+            return
+        self.call_paused = True
+        log.info("helper call: camera handed to the call")
+        self.apply()  # stops the camera helper right away, before the call page asks for the camera
+        timer = threading.Timer(CALL_CAMERA_MAX, self.resume_after_call)
+        timer.daemon = True
+        self._call_timer = timer
+        timer.start()
+
+    def resume_after_call(self) -> None:
+        """The call ended (or never said so for CALL_CAMERA_MAX): eye tracking takes the camera back."""
+        if not self.call_paused:
+            return
+        self.call_paused = False
+        timer, self._call_timer = self._call_timer, None
+        if timer is not None:
+            timer.cancel()
+        log.info("helper call over: camera back for eye tracking")
+        self.apply()
 
     def _on_offer(self, offer) -> None:
         # Runs on the coordinator's thread, which waits for the answer: never block it here.

@@ -318,6 +318,10 @@ class RiskWire:
     def _open_call(self, url) -> bool:
         if not url:
             return False
+        try:  # the eye tracker gives up the webcam first, so the call page can open it
+            self.bus.publish("risk_call_starting", {"name": self.contact[0] if self.contact else ""})
+        except Exception:
+            log.debug("couldn't announce the call")
         try:
             if self.call is not None:
                 args = {"url": url, "name": self.contact[0]}

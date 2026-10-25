@@ -1192,3 +1192,50 @@ class SetupVoiceTests(unittest.TestCase):
                 round_at = t
         self.assertIsNotNone(round_at)
         self.assertGreaterEqual(round_at - said_at, PROMPT_SECONDS - 0.06)
+
+
+class CallCameraTests(unittest.TestCase):
+    """Windows gives the webcam to one program at a time: a helper call gets it, then eye tracking."""
+
+    def setup_gaze(self):
+        from ally.contracts import EventBus
+        gaze, agent = manager()
+        applied = []
+        gaze.apply = lambda: applied.append(gaze.camera_wanted())
+        gaze.wanted = lambda: True
+        bus = EventBus()
+        gaze.attach_bus(bus)
+        return gaze, bus, applied
+
+    def test_the_camera_is_handed_to_the_call_and_back(self):
+        gaze, bus, applied = self.setup_gaze()
+        bus.publish("risk_call_starting", {"name": "Priya"})
+        self.assertTrue(gaze.call_paused)
+        self.assertEqual(applied, [False])  # the helper is stopped before the call page opens
+        bus.publish("risk_contact", {"name": "Priya", "call_opened": True})
+        self.assertEqual(applied, [False])  # already handed over: no second restart
+        bus.publish("risk_call_ended", {"service": "spacecall"})
+        self.assertFalse(gaze.call_paused)
+        self.assertEqual(applied, [False, True])
+        self.assertIsNone(gaze._call_timer)
+
+    def test_a_tell_only_alert_keeps_the_camera(self):
+        gaze, bus, applied = self.setup_gaze()
+        bus.publish("risk_contact", {"name": "Priya", "call_opened": False})
+        self.assertFalse(gaze.call_paused)
+        self.assertEqual(applied, [])
+
+    def test_the_call_opener_announces_itself_first(self):
+        from ally.contracts import EventBus
+        from ally.risk.wire import RiskWire
+        order = []
+        bus = EventBus()
+        bus.subscribe("risk_call_starting", lambda msg: order.append("starting"))
+        wire = RiskWire.__new__(RiskWire)
+        wire.bus = bus
+        wire.contact = ("Priya", None, "", False, "spacecall", "")
+        wire.call = lambda action, args: order.append(action) or {"opened": True}
+        wire._spacecall_url = lambda: ""
+        self.assertTrue(wire._open_call("https://example.org/call"))
+        self.assertEqual(order[:2], ["starting", "openCall"])
+
