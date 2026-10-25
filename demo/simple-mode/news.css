@@ -81,7 +81,7 @@ main { flex: 1 1 auto; min-width: 0; }
 .hot { display: inline-block; margin-left: 6px; background: #ff6f00; color: #fff; padding: 1px 5px; animation: bounce 0.9s infinite; }
 .byline { font-size: 10px; color: #b5b5b5; margin-bottom: 6px; }
 .show-photo { font: 9px Arial; color: #b8b8b8; background: #f2f2f2; border: 1px solid #e6e6e6; border-radius: 8px; padding: 1px 6px; cursor: pointer; }
-.photo { margin: 10px 0 0; } .photo img { width: 100%; max-width: 640px; height: auto; display: block; background: #fff; } .photo figcaption { font-size: 10px; color: #999; }
+.photo { margin: 10px 0 0; } .photo img { width: auto; max-width: 100%; max-height: 300px; height: auto; display: block; background: #fff; } .photo figcaption { font-size: 10px; color: #999; }
 /* Once Ally has made the page simpler (it marks <html> with data-ally-text-scale), the story is dark and the button
    is the big, clear button the demo shows. The page's own styling, for the demo; Ally's steps do the rest. */
 html[data-ally-text-scale] .story { color: #1f1f1f; }
