@@ -332,6 +332,13 @@ const ACTIONS = {
     }
     return { shown };
   },
+  // Only after the user said yes in Ally: close the tab(s) showing exactly this address.
+  async closeTab({ url }) {
+    const tabs = await chrome.tabs.query({});
+    const ids = tabs.filter((t) => t.url === url).map((t) => t.id);
+    if (ids.length) await chrome.tabs.remove(ids);
+    return { closed: ids.length };
+  },
   async setZoom({ factor }) {
     const t = await activeTab();
     await chrome.tabs.setZoom(t.id, clamp(Number(factor) || 1, 0.25, 5));

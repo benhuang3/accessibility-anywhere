@@ -91,6 +91,7 @@ class Agent:
                                      ui=NullUI(self.events), voice=NullVoice(self.speaker), events=self.events)
         self.sensors: list = []  # Hayden's senses run as self.senses; the patch's own sensors are not used
         self.overlay = None      # Ganesh's overlay plugs in here when ally/overlay lands
+        self.risk = None         # ally.risk.wire attachment (page/process risk -> bus)
         self.hotkeys = HotkeyManager(self)
         self.start_hotkeys = start_hotkeys
         if not start_hotkeys:
@@ -333,6 +334,12 @@ class Agent:
             except Exception as e:
                 log.debug("overlay unavailable: %s", e)
         self.proactive.start()
+        try:
+            from .risk.wire import attach
+
+            self.risk = attach(self)
+        except Exception as e:
+            log.warning("risk protection unavailable: %s", e)
         self.events.add("start", "Proactive help is on.")
 
     def start(self) -> None:
@@ -407,7 +414,7 @@ class Agent:
     def close(self) -> None:
         self._stop.set()
         log.info("Ally stopping (code %s)", self.exit_code)
-        extra = [self.proactive.stop] + ([self.overlay.stop] if self.overlay else [])
+        extra = [self.proactive.stop] + ([self.overlay.stop] if self.overlay else []) + ([self.risk.stop] if self.risk else [])
         for step in (*extra, self.confirm.cancel, self.hotkeys.stop, self.listener.stop, self.senses.stop,
                      self.gaze.stop, self.speaker.stop, self.platform.shutdown, self.bridge.close_all):
             try:
