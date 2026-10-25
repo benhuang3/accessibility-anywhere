@@ -1,6 +1,6 @@
 """Record a scripted senses session, or run the live face self-check.
 
-    python -m ally.senses.matrix record --person ALIAS --glasses yes|no --light bright|dim [--free MINUTES] [--eyes SHAPE] [--age BAND]
+    python -m ally.senses.matrix record --person ALIAS --glasses yes|no --light bright|dim [--free MINUTES] [--eyes SHAPE] [--age BAND] [--repeat N] [--parts NAME,NAME]
     python -m ally.senses.matrix selfcheck
 
 The camera helper and the mouse/keyboard helper run as child processes. This writes numbers only
@@ -110,10 +110,41 @@ def ally_is_running(paths: Paths | None = None) -> bool:
         return False
 
 
+def parse_parts(spec: str | None) -> tuple[str, ...] | None:
+    """Part names to run, in the order given. None means the whole script.
+
+    Raises ValueError with the unknown name, or with an empty message when a comma is missing a name.
+    """
+    if spec is None or (isinstance(spec, str) and spec.strip() == ""):
+        return None
+    if not isinstance(spec, str):
+        raise ValueError("")
+    names = [part.strip() for part in spec.split(",")]
+    if any(not name for name in names):
+        raise ValueError("")
+    known = {task[0] for task in _TASKS}
+    ordered: list[str] = []
+    for name in names:
+        if name not in known:
+            raise ValueError(name)
+        if name not in ordered:
+            ordered.append(name)
+    return tuple(ordered)
+
+
+def _tasks_for(only: tuple[str, ...] | None):
+    if only is None:
+        return _TASKS
+    by_name = {task[0]: task for task in _TASKS}
+    return tuple(by_name[name] for name in only)
+
+
 def protocol(free_minutes: float = 0, rearm_seconds: float = Tuning.rearm_seconds,
-             cooldown_seconds: float = 30.0) -> list[dict]:
+             cooldown_seconds: float = 30.0, repeat: int = 1,
+             only: tuple[str, ...] | None = None) -> list[dict]:
     """The scripted parts, with a 3 s rest between them. Calibration is first and lasts 15 s.
 
+    `repeat` runs that block again after the same calibration. `only` is a subset, in that order.
     The rest before a struggle part outlasts rearm_seconds and cooldown_seconds: a detector that
     fired earlier waits rearm_seconds before it can fire again, and after any struggle no other is
     reported for cooldown_seconds. Either would hide the struggle.
@@ -127,13 +158,16 @@ def protocol(free_minutes: float = 0, rearm_seconds: float = Tuning.rearm_second
         "name": "gap", "title": "Rest", "text": "Relax your face and look at the screen.",
         "seconds": GAP_SECONDS, "expect": "gap", "size": "normal", "place": "center",
     }
-    for name, title, text, seconds, expect, size, place in _TASKS:
-        rest = dict(gap)
-        if expect == "struggle":
-            rest["seconds"] = max(GAP_SECONDS, float(rearm_seconds) + 2.0, float(cooldown_seconds) + 2.0)
-        parts.append(rest)
-        parts.append({"name": name, "title": title, "text": text, "seconds": float(seconds),
-                      "expect": expect, "size": size, "place": place or "center"})
+    tasks = _tasks_for(only)
+    times = repeat if isinstance(repeat, int) and not isinstance(repeat, bool) and repeat >= 1 else 1
+    for _ in range(times):
+        for name, title, text, seconds, expect, size, place in tasks:
+            rest = dict(gap)
+            if expect == "struggle":
+                rest["seconds"] = max(GAP_SECONDS, float(rearm_seconds) + 2.0, float(cooldown_seconds) + 2.0)
+            parts.append(rest)
+            parts.append({"name": name, "title": title, "text": text, "seconds": float(seconds),
+                          "expect": expect, "size": size, "place": place or "center"})
     if free_minutes > 0:
         parts.append(dict(gap))
         parts.append({
@@ -481,7 +515,8 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
            run: str = "", *, root: Path | None = None, model: Path | None = None, spawn=None,
            sleep=None, ally_running=None, now=None, commit: str | None = None,
            senses: dict | None = None, screen: tuple[int, int] | None = None,
-           paths: Paths | None = None, eyes: str | None = None, age: str | None = None) -> int:
+           paths: Paths | None = None, eyes: str | None = None, age: str | None = None,
+           repeat: int = 1, parts: str | None = None) -> int:
     """Walk one person through the protocol and write the JSONL. Returns a process exit code."""
     paths = paths or Paths()
     if not TOKEN.fullmatch(person or ""):
@@ -495,6 +530,17 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
         return 2
     if age is not None and age not in AGES:
         print("Age must be under40, 40to64, or 65plus.")
+        return 2
+    if isinstance(repeat, bool) or not isinstance(repeat, int) or repeat < 1:
+        print("--repeat must be a whole number, 1 or more.")
+        return 2
+    try:
+        chosen = parse_parts(parts)
+    except ValueError as err:
+        if str(err):
+            print(f"Unknown part: {err}.")
+        else:
+            print("--parts needs part names, separated by commas.")
         return 2
     if free_minutes < 0:
         print("--free minutes cannot be negative.")
@@ -563,7 +609,7 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
         if code != 0:
             return code
         parts = protocol(free_minutes, Tuning.from_config(senses_cfg).rearm_seconds,
-                         float(senses_cfg.get("cooldown_seconds", 30)))
+                         float(senses_cfg.get("cooldown_seconds", 30)), repeat, chosen)
         total = len(parts)
         for index, part in enumerate(parts, start=1):
             current = {"name": part["name"], "expect": part["expect"], "start": now(), "partial": False}
@@ -824,12 +870,16 @@ def main(argv: list[str] | None = None) -> int:
                      help="extra minutes of normal computer use, labeled as no struggle")
     rec.add_argument("--camera", type=int, default=None)
     rec.add_argument("--run", default="", help="folder name under state/senses_runs (default: a timestamp)")
+    rec.add_argument("--repeat", type=int, default=1, metavar="N",
+                     help="run the scripted block this many times after one calibration")
+    rec.add_argument("--parts", default="",
+                     help="comma-separated part names, in that order; default is the full script")
     chk = sub.add_parser("selfcheck", help="about 60 seconds of guided face checks")
     chk.add_argument("--camera", type=int, default=None)
     args = parser.parse_args(argv)
     if args.cmd == "record":
         return record(args.person, args.glasses, args.light, args.free, args.camera, args.run,
-                      eyes=args.eyes, age=args.age)
+                      eyes=args.eyes, age=args.age, repeat=args.repeat, parts=args.parts)
     if args.cmd == "selfcheck":
         return selfcheck(camera=args.camera)
     return 2
