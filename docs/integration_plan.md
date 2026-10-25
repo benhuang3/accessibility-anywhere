@@ -140,6 +140,27 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, ~03:45 PT — Ganesh (via Claude Code) — `risk-branch` -> `main`
+
+**Merged `risk-branch` into `main` (main merged into it first; clean). 1096 tests pass on Windows.**
+
+**New since the last risk merge:**
+- **Ally Call over SpacetimeDB** (`spacecall/`, adapted from SpaceChatDB with the author's permission):
+  - "Call Priya" opens our own call page (GitHub Pages) docked on the right of the screen.
+  - Ally streams the screen to the helper's phone at about 10 fps; the elder can stop sharing.
+  - Per-incident rooms; Meet stays the fallback.
+- **Risk behaviour:**
+  - The auto-alert only notifies; the call opens only on a tap.
+  - The cooldown follows the answer (Yes re-arms; No asks "Are you sure?", then mutes for 30 min).
+  - When Quick Assist can't be closed, Ally closes the bank page and says so.
+  - Fake-scan detection: Event Viewer, netstat and similar during a remote session.
+- **Other:** the Scam Lab demo site (`demo/`), the 40-page eval (rules+AI 38/40), the UI gallery (`handoff/tools/ui_gallery.py`), and the polar-bear mascot plus design tokens and the companion mock (`design/`).
+
+**For others:**
+- **Ben H:** `ally/bridge.py` still needs the 3-line `risk_call_ended` hook, so voice resumes when the call window closes. The exact lines are in `handoff/notes/to-ben-h.md` and `docs/RISK_HANDOFF.md`.
+- **New `[risk]` keys** (`ally/config.py`, `default_config.toml`), all optional with safe defaults: `call_service`, `spacecall_url`, `screen_share`, `auto_alert`.
+- **Everyone:** reload the extension. `background.js` changed: docked call window, `openCall` for spacecall.
+
 ### Oct 25, 03:22 PT — Hayden (via Claude Code) — `main`, merged `hayden/face-setup` (merge `e363c0f`)
 
 **Merged into `main`:** 1022 tests pass.
