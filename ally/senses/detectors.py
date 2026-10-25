@@ -42,8 +42,8 @@ class Tuning:
     retype_seconds: float = 3.0
     hesitation_seconds: float = 4.0  # pointer resting this long with no click (adapts after 20 rests)
     rearm_seconds: float = 20.0     # a detector that fired waits this long before firing again
-    relative_squint_weak: float = 0.45
-    relative_squint_strong: float = 0.75
+    relative_squint_weak: float = 0.20
+    relative_squint_strong: float = 0.35
     geometric_aperture_drop: float = 0.12
     geometric_lower_rise: float = 0.035
     lean_distance_ratio: float = 1.15
@@ -85,6 +85,7 @@ class Baseline:
     squint_reliable: bool = True
     squint_why: str = ""
     asym: float = 0.0  # resting eyeSquintLeft - eyeSquintRight; most faces read one eye narrower
+    feature_stats: dict = field(default_factory=dict)
 
     MIN_SAMPLES = 30
 
@@ -115,8 +116,14 @@ class Baseline:
         reliable = mad <= 0.06 and asymmetry <= 0.10 and light >= 40
         why = "" if reliable else "squint readings were unsteady, uneven, or too dim; squint sensing is off"
         asym = statistics.median(s["squint_l"] - s["squint_r"] for s in good)
+        feature_values={}
+        for key in set.intersection(*(set(s) for s in good)) if good else ():
+            vals=[s[key] for s in good if isinstance(s[key],(int,float))]
+            if vals:
+                med=statistics.median(vals)
+                feature_values[key]={"median":med,"mad":statistics.median(abs(v-med) for v in vals),"room":max(0.0,1-med)}
         return cls(round(squint, 4), round(width, 4), round(smile, 4), round(light, 1), len(good), source, t,
-                   reliable, why, round(asym, 4))
+                   reliable, why, round(asym, 4), feature_values)
 
     def drift(self, sig: dict, dt: float, tau: float = 300.0) -> None:
         """Follow slow posture and light changes (minutes), never a squint or lean in progress."""
@@ -130,14 +137,16 @@ class Baseline:
     def to_dict(self) -> dict:
         return {"squint": self.squint, "width": self.width, "smile": self.smile, "light": self.light,
                 "samples": self.samples, "source": self.source, "created": self.created,
-                "squint_reliable": self.squint_reliable, "squint_why": self.squint_why, "asym": self.asym}
+                "squint_reliable": self.squint_reliable, "squint_why": self.squint_why, "asym": self.asym,
+                "feature_stats": self.feature_stats}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Baseline | None":
         try:
             b = cls(float(d["squint"]), float(d["width"]), float(d.get("smile", 0)), float(d.get("light", -1)),
                     int(d.get("samples", 0)), str(d.get("source", "calibrated")), float(d.get("created", 0)),
-                    bool(d.get("squint_reliable", True)), str(d.get("squint_why", "")), float(d.get("asym", 0.0)))
+                    bool(d.get("squint_reliable", True)), str(d.get("squint_why", "")), float(d.get("asym", 0.0)),
+                    dict(d.get("feature_stats", {})))
         except (KeyError, TypeError, ValueError):
             return None
         return b if 0 <= b.squint <= 0.6 and 0.05 <= b.width <= 0.95 else None
@@ -324,8 +333,9 @@ class RelativeSquintDetector(_RawHeld):
         self.weak_threshold, self.strong_threshold = tune.relative_squint_weak, tune.relative_squint_strong
 
     def feed(self, sig, t, base):
-        med = base.get("eyeSquint", {}).get("median", base.squint) if isinstance(base, dict) else base.squint
-        mad = base.get("eyeSquint", {}).get("mad", .02) if isinstance(base, dict) else .02
+        stats=base if isinstance(base,dict) else base.feature_stats
+        med = stats.get("eyeSquint", {}).get("median", base.squint if isinstance(base,Baseline) else .1)
+        mad = stats.get("eyeSquint", {}).get("mad", .02)
         room = max(.05, 1-med)
         value = sig.get("eyeSquint", (sig.get("eyeSquintLeft", 0)+sig.get("eyeSquintRight", 0))/2)
         z = (value-med)/max(mad, .01)
@@ -342,8 +352,9 @@ class GeometricSquintDetector(_RawHeld):
         super().__init__(tune, "squint")
         self.weak_threshold, self.strong_threshold = .6, 1.0
     def feed(self, sig, t, base):
+        stats=base if isinstance(base,dict) else base.feature_stats
         def b(k, default=0):
-            return base.get(k, {}).get("median", default) if isinstance(base,dict) else default
+            return stats.get(k, {}).get("median", default)
         both=[]
         for side in ("l","r"):
             ap=sig.get("aperture_"+side, sig.get("aperture",0)); low=sig.get("lower_height_"+side,sig.get("lower_height",0))
@@ -360,7 +371,8 @@ class HybridSquintDetector(GeometricSquintDetector):
         g=super().feed(sig,t,base)
         if g is None: return None
         # Geometry is the harder gate; relative evidence must also be present.
-        value=sig.get("eyeSquint",0); med=base.get("eyeSquint",{}).get("median",0) if isinstance(base,dict) else base.squint
+        value=sig.get("eyeSquint",0); stats=base if isinstance(base,dict) else base.feature_stats
+        med=stats.get("eyeSquint",{}).get("median",base.squint if isinstance(base,Baseline) else 0)
         if value-med < .08: return None
         return g
 
@@ -368,19 +380,23 @@ class HybridSquintDetector(GeometricSquintDetector):
 class DistanceLeanDetector(LeanDetector):
     def feed(self,sig,t,base):
         ratio=sig.get("head_distance",0)
-        b=base.get("head_distance",{}).get("median",0) if isinstance(base,dict) else 0
-        if not ratio or not b: return super().feed(sig,t,base)
-        s=dict(sig); s["width"]=base.width*ratio/b if isinstance(base,Baseline) else ratio
-        return super().feed(s,t,base)
+        stats=base if isinstance(base,dict) else base.feature_stats
+        b=stats.get("head_distance",{}).get("median",0)
+        width=base.width if isinstance(base,Baseline) else base.get("face_width",{}).get("median",.3)
+        if not ratio or not b: return super().feed(sig,t,base if isinstance(base,Baseline) else Baseline(.1,width))
+        s=dict(sig); s["width"]=width*ratio/b
+        return super().feed(s,t,base if isinstance(base,Baseline) else Baseline(.1,width))
 
 
 class HybridLeanDetector(DistanceLeanDetector):
     def feed(self,sig,t,base):
-        bdist=base.get("head_distance",{}).get("median",0) if isinstance(base,dict) else 0
+        stats=base if isinstance(base,dict) else base.feature_stats
+        bdist=stats.get("head_distance",{}).get("median",0)
         dw=sig.get("head_distance",0)/bdist if bdist else 1.0
         wr=sig.get("width",0)/(base.width if isinstance(base,Baseline) else base.get("face_width",{}).get("median",1))
-        s=dict(sig); s["width"]=(max(dw,wr))*base.width if isinstance(base,Baseline) else max(dw,wr)
-        return super(DistanceLeanDetector,self).feed(s,t,base)
+        width=base.width if isinstance(base,Baseline) else base.get("face_width",{}).get("median",.3)
+        s=dict(sig); s["width"]=statistics.median((dw,wr))*width
+        return super(DistanceLeanDetector,self).feed(s,t,base if isinstance(base,Baseline) else Baseline(.1,width))
 
 
 # --------------------------------------------------------------------------- mouse and keyboard

@@ -30,6 +30,7 @@ from .detectors import (Baseline, HesitationDetector, LeanDetector, RageClickDet
                         HybridSquintDetector, DistanceLeanDetector, HybridLeanDetector)
 from .fusion import Fuser, Struggle
 from .contract import validate_struggle
+from .features import extract as extract_face_features
 
 log = logging.getLogger("ally.senses")
 
@@ -85,6 +86,7 @@ class Senses:
     def _build(self) -> None:
         cfg = self.cfg
         self.tune = Tuning.from_config(cfg)
+        self._methods = (cfg.get("squint_method", "v1"), cfg.get("lean_method", "v1"))
         self.squint = {"relative": RelativeSquintDetector, "geometric": GeometricSquintDetector,
                        "hybrid": HybridSquintDetector}.get(cfg.get("squint_method"), SquintDetector)(self.tune)
         self.lean = {"distance": DistanceLeanDetector, "hybrid": HybridLeanDetector}.get(
@@ -97,7 +99,8 @@ class Senses:
     def apply(self) -> None:
         """Match config: rebuild detectors with new thresholds and start or stop the input watcher."""
         with self.lock:
-            if Tuning.from_config(self.cfg) != self.tune:
+            if Tuning.from_config(self.cfg) != self.tune or self._methods != (
+                    self.cfg.get("squint_method", "v1"), self.cfg.get("lean_method", "v1")):
                 self._build()
             else:
                 self.fuser.configure(float(self.cfg.get("window_seconds", 4)),
@@ -215,6 +218,12 @@ class Senses:
         """One frame's face numbers from the camera helper (on its reader thread)."""
         if not self.vision_wanted():
             return
+        if isinstance(sig.get("lm"), list) and len(sig["lm"]) >= 478:
+            try:
+                sig = {**sig, **extract_face_features(sig["lm"], sig.get("bs"), sig.get("mat"),
+                                                     sig.get("w", 1), sig.get("h", 1))}
+            except (IndexError, TypeError, ValueError):
+                pass
         fired = []
         with self.lock:
             dt = t - self._face_t if self._face_t else 0.0

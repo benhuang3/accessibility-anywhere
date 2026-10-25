@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import statistics
+import math
 
 # MediaPipe Face Mesh eye contours and iris rings (478 point model).
 EYES = ((33, 133, (160, 158, 144, 153), (161, 159, 145, 154), 468),
@@ -53,7 +54,10 @@ def extract(landmarks, blendshapes=None, matrix=None, w=1, h=1):
                                             for i in (469,471,474,476))
     if matrix is not None and len(matrix) == 16:
         out["head_distance"] = sum(float(matrix[i])**2 for i in (3,7,11))**.5
-        out["head_yaw"], out["head_pitch"], out["head_roll"] = 0.0,0.0,0.0
+        m=[float(x) for x in matrix]
+        out["head_yaw"] = math.degrees(math.atan2(m[2],m[10]))
+        out["head_pitch"] = math.degrees(math.asin(max(-1.0,min(1.0,-m[6]))))
+        out["head_roll"] = math.degrees(math.atan2(m[4],m[5]))
     else:
         out.update(head_distance=0.0, head_yaw=0.0, head_pitch=0.0, head_roll=0.0)
     return out
