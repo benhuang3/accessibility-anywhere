@@ -470,7 +470,7 @@ def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int]
                 state = calib.step(seen["feat"], mono, seen["face"], wall)
                 if state == "fit":
                     try:
-                        calib.accept_fit(gaze_model.fit(calib.usable(), screen))
+                        calib.accept_fit(gaze_model.fit(calib.usable(), screen, screen_mm=screen_mm))
                     except Exception as e:
                         why = f"I {e}. Try again with more light on your face."
                         calib.finish({"calibrated": False, "why": why}, ["Calibration didn't work.", why])

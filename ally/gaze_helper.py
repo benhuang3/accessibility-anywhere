@@ -1994,7 +1994,8 @@ def main(argv: list[str]) -> int:
             state = calib.step(feat, time.monotonic(), face, now)
             if state == "fit":
                 try:
-                    fitted = attach_screen_mm(gaze_model.fit(calib.usable(), size, feature_set))
+                    mm = screen_mm()  # v4 needs the physical size while fitting, not just after
+                    fitted = attach_screen_mm(gaze_model.fit(calib.usable(), size, feature_set, screen_mm=mm or None), mm)
                     calib.accept_fit(fitted)
                 except (ValueError, np.linalg.LinAlgError) as e:
                     result = {"calibrated": False, "why": f"I {e}. Try again with more light on your face."}
