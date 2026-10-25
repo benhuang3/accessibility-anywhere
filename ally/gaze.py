@@ -24,7 +24,7 @@ import urllib.request
 from pathlib import Path
 
 from . import gaze_model
-from .gaze_helper import pose_count, sense_helper_args
+from .gaze_helper import sense_helper_args
 from .claude import ssl_context
 from .hotkeys import python_for_children
 from .paths import CODE_ROOT
@@ -39,6 +39,8 @@ FIXATION_RADIUS = 150
 UNSURE_OFFER_AFTER = 10.0
 RETUNE_OFFER_EVERY = 300.0
 RETUNE_OFFER = "Your position changed. Say check my eye tracker to re-tune it."
+FACE_SETUP_OFFER = "Nothing is set up yet. Say set up my face. It takes about 90 seconds, once."
+_FACE_OFFER_FILE = "face_setup_suggested"
 # During a setup or check, and this long after it, Ally keeps its other voices quiet: the person is
 # moving on purpose (sit back, lean in), and an offer or a re-tune line would talk over the setup.
 SETUP_QUIET_AFTER = 5.0
@@ -269,6 +271,15 @@ class GazeManager:
                 self.points.append(row)
                 self.face_at = time.time()
                 self._sync_view()
+            elif msg.get("label"):
+                self.face_at = time.time()
+                senses = getattr(self.agent, "senses", None)
+                if senses is not None and hasattr(senses, "intake_label"):
+                    try:
+                        sample = msg.get("f") if isinstance(msg.get("f"), dict) else {}
+                        senses.intake_label(str(msg.get("label") or ""), sample, msg.get("t"))
+                    except Exception:
+                        log.exception("labelled face sample failed")
             elif "f" in msg:
                 self.face_at = time.time()
                 senses = getattr(self.agent, "senses", None)
@@ -296,6 +307,8 @@ class GazeManager:
                     except (TypeError, ValueError):
                         pass
                 log.info("eye tracker on (%s)", "calibrated" if self.calibrated else "needs calibration")
+                if not self.calibrated:
+                    self.maybe_offer_face_setup()
             elif msg.get("camera_off"):
                 # The reader thread must not wait on the helper: closing stdin from here can deadlock.
                 threading.Thread(target=self._on_camera_off, daemon=True, name="gaze-off").start()
@@ -693,8 +706,41 @@ class GazeManager:
         self.setting_up = False
         self._setup_ended = time.monotonic()
 
-    def calibrate(self, timeout: float = 180) -> dict:
-        """Show the dots and wait for the result: {"calibrated": bool, "error_px" or "why"}."""
+    def maybe_offer_face_setup(self) -> None:
+        """Suggest the face setup once, when nothing is set up. A later start stays quiet."""
+        if getattr(self, "_face_offered", False) or self.busy() or self.calibrated:
+            return
+        try:
+            if self.calibration_path.exists():
+                return
+        except OSError:
+            return
+        senses = getattr(self.agent, "senses", None)
+        if senses is not None and getattr(senses, "baseline", None) is not None:
+            return
+        try:
+            flag = self.agent.paths.state_dir / _FACE_OFFER_FILE
+            if flag.exists():
+                self._face_offered = True
+                return
+        except (OSError, AttributeError):
+            return
+        self._face_offered = True
+        try:
+            flag.parent.mkdir(parents=True, exist_ok=True)
+            flag.write_text("1", encoding="utf-8")
+        except OSError:
+            pass
+        events = getattr(self.agent, "events", None)
+        if events is not None:
+            try:
+                events.add("gaze", FACE_SETUP_OFFER)
+            except Exception:
+                log.debug("couldn't record the face-setup offer", exc_info=True)
+        self._speak(FACE_SETUP_OFFER)
+
+    def calibrate(self, timeout: float = 240) -> dict:
+        """Run the one-time face setup and wait for the result."""
         if not self.wanted():
             self.set_enabled(True)
         end = time.monotonic() + 20
@@ -702,15 +748,20 @@ class GazeManager:
             if time.monotonic() > end or (self.error and not self.running):
                 raise self.problem()
             time.sleep(0.2)
+        senses = getattr(self.agent, "senses", None)
+        if senses is not None and hasattr(senses, "begin_setup_intake"):
+            try:
+                senses.begin_setup_intake()
+            except Exception:
+                log.debug("couldn't start face-setup intake", exc_info=True)
         self._calib_done.clear()
         self._calib_result = None
-        count = pose_count(self.cfg.get("calibration_poses", 3))
         self._setup_on()
         try:
-            if not self.send(f"calibrate {count}"):
+            if not self.send("face"):
                 raise ToolError("The eye tracker stopped. Try again in a few seconds.")
             if not self._calib_done.wait(timeout):
-                raise ToolError("Calibration took too long.")
+                raise ToolError("Face setup took too long.")
         finally:
             self._setup_off()
         return self._calib_result or {"calibrated": False, "why": "the eye tracker stopped"}
@@ -762,3 +813,81 @@ class GazeManager:
             return None
         finally:
             self.send("choose off")
+
+
+def _profile_store(agent):
+    """The face-profile modules, or None when the other branch has not landed yet."""
+    try:
+        from . import face_profile
+        from .profile_store import ProfileStore
+    except ImportError:
+        log.info("face profile store is not available yet; skipped the face profile")
+        return None
+    return face_profile, ProfileStore
+
+
+def save_face_profile(agent) -> bool:
+    """Build a face profile from the files just saved and store it. Skip if the modules are missing."""
+    found = _profile_store(agent)
+    if found is None:
+        return False
+    face_profile, store_cls = found
+    try:
+        gaze_path = agent.gaze.calibration_path
+        gaze = json.loads(gaze_path.read_text(encoding="utf-8")) if gaze_path.exists() else None
+    except (OSError, ValueError, AttributeError):
+        gaze = None
+    senses = None
+    baseline = getattr(getattr(agent, "senses", None), "baseline", None)
+    if baseline is not None and hasattr(baseline, "to_dict"):
+        try:
+            senses = baseline.to_dict()
+        except Exception:
+            senses = None
+    meta = None
+    stats = (senses or {}).get("feature_stats") if isinstance(senses, dict) else None
+    if isinstance(stats, dict) and isinstance(stats.get("lean_ratio"), dict):
+        meta = {"lean": stats["lean_ratio"]}
+    try:
+        profile = face_profile.build(gaze=gaze, senses=senses, au=None, meta=meta)
+        store_cls(agent.paths, agent.config).save(profile)
+    except Exception:
+        log.exception("couldn't save the face profile")
+        return False
+    return True
+
+
+def restore_face_profile(agent) -> bool:
+    """If nothing is saved locally and a profile exists, apply it and say so once."""
+    try:
+        state = agent.paths.state_dir
+        if (state / "gaze_calibration.json").exists() or (state / "senses_baseline.json").exists():
+            return False
+    except (OSError, AttributeError):
+        return False
+    found = _profile_store(agent)
+    if found is None:
+        return False
+    face_profile, store_cls = found
+    try:
+        profile = store_cls(agent.paths, agent.config).load()
+    except Exception:
+        log.exception("couldn't load the face profile")
+        return False
+    if not profile:
+        return False
+    try:
+        face_profile.apply(agent, profile)
+    except Exception:
+        log.exception("couldn't apply the face profile")
+        return False
+    speaker = getattr(agent, "speaker", None)
+    if speaker is not None:
+        try:
+            try:
+                speaker.say("Welcome back. I restored your face setup.", interrupt=False)
+            except TypeError:
+                speaker.say("Welcome back. I restored your face setup.")
+        except Exception:
+            log.debug("couldn't say the face restore line", exc_info=True)
+    return True

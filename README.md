@@ -104,11 +104,10 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
 
 ### Eye tracking
 
-1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About 45 seconds: Ally checks
-   that it can see your face, shows 9 dots, then asks you to sit back a little and lean in a little
-   (5 dots each, so head movement is part of the setup), then 5 check dots it did not train on.
-   Esc cancels. `[gaze] calibration_poses = 1` is the 9 dots only, about 30 seconds. Do this
-   again if you move your laptop or chair a lot.
+1. Say **"Ally, set up my face"** (or "set up my eyes", "calibrate my eyes"). About 90 seconds, once.
+   Ally shows a face guide and a ring: turn your head slowly in a circle. Then 9 dots, sit back a
+   little (5 dots), lean in a little (5 dots), read a short passage, smile, and squint at tiny text.
+   Five check dots finish it. Esc cancels. Do this again if you move your laptop or chair a lot.
 2. Say **"Ally, what am I looking at"** for the area of the screen. On Windows, Ally also names the
    button, link, or text under that spot. **"this"**, **"that"**, and **"here"** use the same tool.
 3. Say **"Ally, magnify what I'm looking at"** (or "magnify here"), or press `<mod>+G`. The screen
@@ -167,8 +166,9 @@ Ally watches for signs that you're having a hard time, so it can offer help befo
 
 - **Face** (webcam): squinting and leaning toward the screen, each measured against *your* resting face.
   Frames where you blink, smile or laugh, wink, turn away, or sit in the dark are ignored.
-  Calibration checks squint stability; if lighting, glare, or uneven readings make it unreliable,
-  squint sensing turns off while lean and input sensing stay available. Recalibrate with **Ctrl+Alt+Shift+C**.
+  The face setup checks squint. If the deliberate squint is not distinct, squint sensing turns off
+  for you while lean and the other signals still work. Recalibrate with **Ctrl+Alt+Shift+C** for a
+  short face-sensing pass, or say "set up my face" again for the full setup.
 - **Mouse and keyboard**: clicking the same spot again and again, deleting and retyping, and the pointer
   resting a long time without a click over a clickable control. Only *that* a key was pressed is counted,
   never which key.
@@ -178,8 +178,8 @@ plus leaning in) become one **struggle** event, `{kind, confidence, target {app,
 box}, source, detail, ts}`, that goes to the event log, to `agent.on_struggle(dict)` and to
 `agent.senses.subscribe(callback)`. Code is in `ally/senses/`.
 
-- Say **"Ally, set up face sensing"** once: 15 seconds of reading normally. Without it, Ally learns
-  your resting face from the first 20 seconds it sees you.
+- Say **"Ally, set up my face"** once. That same setup learns your resting face, your lean, and a
+  personal squint model. Without it, Ally learns your resting face from the first 20 seconds it sees you.
 - If Ally offers help and you say no, it quiets those signal types for `decline_seconds` (default 90,
   configurable from 30 to 600 seconds). Call `agent.senses.answer(struggle, "yes" or "no")` to record feedback.
 - Set `[senses].post_url` to an endpoint to opt in to POSTing struggle events to `/api/event`; it is
