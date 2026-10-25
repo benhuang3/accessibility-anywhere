@@ -43,13 +43,20 @@ def build(gaze=None, senses=None, au=None, meta=None) -> dict:
             baseline = senses.to_dict()
         if isinstance(baseline, dict) and personal is None:
             personal = (baseline.get("feature_stats") or {}).get("personal_model")
+    au_baseline = None
+    if isinstance(au, dict):
+        au_baseline = au.get("baseline") if isinstance(au.get("baseline"), dict) else au
+    elif au is not None and hasattr(au, "baseline"):
+        au_baseline = au.baseline
+    elif au is not None:
+        au_baseline = au
     if not gaze_data and not baseline and not au:
         raise ValueError("nothing usable to save in the face profile")
     now = time.time()
     result = {"version": 1, "created": now, "updated": now,
               "meta": {k: (meta or {}).get(k) for k in ("camera", "screen", "screen_mm", "app_version")},
               "gaze": gaze_data, "senses": {"baseline": baseline, "personal": personal},
-              "au": {"baseline": au.get("baseline") if isinstance(au, dict) else au},
+              "au": {"baseline": au_baseline},
               "setup": {"seconds": (meta or {}).get("seconds"), "steps": (meta or {}).get("steps", [])}}
     result = _numbers(result)
     if not result["gaze"] and not result["senses"]["baseline"] and not result["au"]["baseline"]:
@@ -88,7 +95,8 @@ def apply(agent, profile) -> list[str]:
                 if hasattr(agent.senses, "reload_baseline"):
                     agent.senses.reload_baseline()
                 else:
-                    agent.senses.baseline = obj
+                    reload_baseline = getattr(agent.senses, "_load_baseline", None)
+                    agent.senses.baseline = reload_baseline() if callable(reload_baseline) else obj
                     if hasattr(agent.senses, "_build"):
                         agent.senses._build()
                 restored.append("Face sensing baseline restored.")

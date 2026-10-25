@@ -88,7 +88,7 @@ class ProfileStore:
         raw = json.dumps(profile, separators=(",", ":"), allow_nan=False)
         if len(raw.encode("utf-8")) >= MAX_BYTES:
             raise ValueError("face profile must be smaller than 64 KB")
-        atomic_write(self.path, json.dumps(profile, indent=2, allow_nan=False))
+        atomic_write(self.path, raw)
         self._set_sync(False)
         if self.enabled:
             try:
@@ -143,7 +143,7 @@ class ProfileStore:
             if isinstance(raw, str) and len(raw.encode("utf-8")) < MAX_BYTES:
                 data = json.loads(raw)
                 if isinstance(data, dict):
-                    atomic_write(self.path, json.dumps(data, indent=2, allow_nan=False))
+                    atomic_write(self.path, raw)
                     self._set_sync(True)
                     return data
         except Exception as exc:

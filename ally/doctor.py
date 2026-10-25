@@ -278,6 +278,21 @@ def run_checks(home=None, online: bool = True) -> list[tuple[str, str, str]]:
         has_base = (paths.state_dir / "senses_baseline.json").exists()
         out.append(("ok", "Face sensing", "on, baseline saved" if has_base else
                     "on; learns your resting face in the first 20 s (or say \"Ally, set up face sensing\")"))
+    from .profile_store import ProfileStore
+    profile_status = ProfileStore(paths, cm.data).status()
+    saved = profile_status["saved"]
+    if isinstance(saved, (int, float)):
+        saved_text = time.strftime("%Y-%m-%d", time.localtime(saved))
+        local_text = f"saved locally ({saved_text})"
+    else:
+        local_text = "not saved locally"
+    if profile_status["sync_enabled"]:
+        sync_text = "synced" if profile_status["synced"] else "not synced"
+        if profile_status["last_error"]:
+            sync_text += f"; last sync error: {profile_status['last_error']}"
+    else:
+        sync_text = "sync off"
+    out.append(("ok", "Face profile", f"{local_text}; {sync_text}"))
     if s.get("input"):
         ok, why = importable("pynput")
         out.append(("ok" if ok else "warn", "Mouse and keyboard sensing",
