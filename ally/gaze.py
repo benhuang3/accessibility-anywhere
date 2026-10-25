@@ -88,11 +88,15 @@ def ongoing_choice(points, screen, n: int, now: float, hold: float = 0.8, gap: f
     if len(rows) < 2 or now - rows[-1][0] > gap:
         return None
     idx = choice_index(rows[-1][1], rows[-1][2], screen, n)
-    last = rows[-1][0]
-    window = [p for p in rows if p[0] >= last - float(hold)]
-    if not window or last - window[0][0] + 1e-9 < float(hold):
-        return None
-    if any(choice_index(p[1], p[2], screen, n) != idx for p in window):
+    # The unbroken run of looks in this area that ends at the newest point. Frames arrive about
+    # every 50-100 ms, so a run that started `hold` seconds ago spans up to one frame less than
+    # `hold`; allow that much (cutting the window at `hold` first made a dwell almost never count).
+    start = rows[-1][0]
+    for prev, cur in zip(reversed(rows[:-1]), reversed(rows[1:])):
+        if cur[0] - prev[0] > gap or choice_index(prev[1], prev[2], screen, n) != idx:
+            break
+        start = prev[0]
+    if rows[-1][0] - start + 0.1 < float(hold):
         return None
     return idx
 
@@ -532,6 +536,30 @@ class GazeManager:
         found = cursor_pos()
         return found if found is not None else (0, 0)
 
+    # ------------------------------------------------------------ answering offers by looking
+    def attach_bus(self, bus) -> None:
+        """Let the user answer the proactive layer's yes/no offers (ally.contracts.Offer) by looking."""
+        bus.subscribe("offer", self._on_offer)
+
+    def _on_offer(self, offer) -> None:
+        # Runs on the coordinator's thread, which waits for the answer: never block it here.
+        if not self.cfg.get("answer_offers", True) or self._eyes_blocked():
+            return
+        if self.error_px and float(self.error_px) > self._max_radius():
+            return  # the saved check says the eyes aren't reliable enough to answer with
+        threading.Thread(target=self._answer_offer, args=(offer,), name="gaze-offer", daemon=True).start()
+
+    def _answer_offer(self, offer) -> None:
+        options = [str(o).capitalize() for o in getattr(offer, "options", ("yes", "no"))]
+        try:
+            picked = self.choose(options, timeout=float(getattr(offer, "timeout", 8.0)),
+                                 stop=lambda: bool(getattr(offer, "done", False)))
+        except Exception:
+            log.debug("couldn't show the offer for a look-to-answer", exc_info=True)
+            return
+        if picked and offer.resolve(picked.lower(), by="eyes"):  # first answer wins
+            self.agent.events.add("gaze", f"answered {picked} by looking")
+
     def _max_radius(self) -> float:
         try:
             return float(self.cfg.get("max_radius_px", 250))
@@ -572,8 +600,12 @@ class GazeManager:
             raise ToolError("The eye tracker check took too long.")
         return self._calib_result or {"calibrated": False, "why": "the eye tracker stopped"}
 
-    def choose(self, options, timeout: float = 8.0, hold: float = 0.8, clock=None, sleep=None):
-        """Show the options and return the one the gaze stays on for `hold` seconds, or None."""
+    def choose(self, options, timeout: float = 8.0, hold: float = 0.8, clock=None, sleep=None, stop=None):
+        """Show the options and return the one the gaze stays on for `hold` seconds, or None.
+
+        stop: optional callable; when it returns True (the question was answered another way), the
+        cards close and None is returned.
+        """
         options = [" ".join(str(item).split()) for item in options]
         if not 2 <= len(options) <= 4 or not all(options):
             raise ToolError("Choose two, three, or four options.")
@@ -582,7 +614,7 @@ class GazeManager:
         self.send("choose " + json.dumps({"options": options, "seconds": float(timeout)}))
         deadline = clock() + float(timeout)
         try:
-            while clock() < deadline:
+            while clock() < deadline and not (stop is not None and stop()):
                 idx = ongoing_choice(list(self.points), self.screen, len(options), clock(), hold)
                 if idx is not None:
                     return options[idx]

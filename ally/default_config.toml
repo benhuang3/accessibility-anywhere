@@ -104,6 +104,7 @@ pan_speed = 1.0            # magnifier following your eyes: how fast looking nea
 features = "v1"            # "v1" or "v2". A new setup uses this. v2 stays off until recordings show it is better.
 click_learning = true      # clicks quietly improve the estimate. Set false to turn that off. Clicks stay on this computer.
 max_radius_px = 250        # above this uncertainty, Ally uses the mouse pointer and says so
+answer_offers = true       # when Ally offers help, Yes and No cards appear; look at one to answer (if the tracker is reliable)
 
 # Noticing when you're struggling, so Ally can offer help before you ask.
 # Camera: squinting and leaning toward the screen (shares the camera with the eye tracker; frames are

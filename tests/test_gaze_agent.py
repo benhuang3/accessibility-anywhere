@@ -477,5 +477,67 @@ class UnknownElementTests(unittest.TestCase):
         self.assertEqual(clicked, ["init", ("lookup", 5, 6), "uninit"])
 
 
+class OfferByLookingTests(unittest.TestCase):
+    """The proactive layer's offers (ally.contracts) can be answered by looking at Yes or No."""
+
+    def setup(self, answer_offers=True, look_x=100):
+        from ally.contracts import EventBus, Offer
+
+        gaze, agent = manager()
+        agent.config.data["gaze"]["answer_offers"] = answer_offers
+        agent.events = types.SimpleNamespace(add=lambda *a, **k: None)
+        bus = EventBus()
+        gaze.attach_bus(bus)
+        now = time.time()
+        gaze.face_at = now
+        for i in range(30):  # 1.5 s on one half of the screen (left = Yes, right = No)
+            gaze.points.append((now - 1.5 + i * 0.05, look_x, 500, 40))
+        return gaze, bus, Offer("Want me to make this bigger?", timeout=2.0)
+
+    def test_dwell_counts_with_real_frame_timing(self):
+        # Irregular 15-20 fps timestamps: a 1 s look must count; 0.5 s must not; a look away resets it.
+        t, pts = 100.0, []
+        for i in range(18):
+            t += 0.05 + (i % 3) * 0.01
+            pts.append((t, 300, 400, 40))
+        self.assertEqual(ongoing_choice(pts, (1920, 1080), 2, t), 0)
+        self.assertIsNone(ongoing_choice(pts[-8:], (1920, 1080), 2, t))
+        mixed = pts[:-4] + [(p[0], 1500, 400, 40) for p in pts[-4:-2]] + pts[-2:]
+        self.assertIsNone(ongoing_choice(mixed, (1920, 1080), 2, t))
+
+    def test_looking_at_yes_answers_the_offer(self):
+        gaze, bus, offer = self.setup()
+        bus.publish("offer", offer)
+        self.assertEqual(offer.wait(3.0), "yes")
+        self.assertEqual(offer.answered_by, "eyes")
+
+    def test_off_when_answer_offers_is_false(self):
+        gaze, bus, offer = self.setup(answer_offers=False)
+        bus.publish("offer", offer)
+        self.assertEqual(offer.wait(0.6), "timeout")
+
+    def test_an_earlier_answer_wins(self):
+        gaze, bus, offer = self.setup(look_x=1500)
+        offer.resolve("no", by="voice")  # answered out loud before the eyes settle
+        bus.publish("offer", offer)
+        time.sleep(0.3)
+        self.assertEqual((offer.choice, offer.answered_by), ("no", "voice"))
+
+    def test_struggle_points_at_the_gaze_when_the_eyes_are_sure(self):
+        gaze, agent = manager()
+        now = time.time()
+        gaze.face_at = now
+        _cluster(gaze, now - 1.0, 640, 300, n=20)
+        agent.platform = types.SimpleNamespace(frontmost_app=lambda: "Notes")
+        agent.bridge = types.SimpleNamespace(chrome_focused=False, tab={})
+        agent.events = types.SimpleNamespace(add=lambda *a, **k: None)
+        agent.config.data["senses"] = dict(__import__("ally.config", fromlist=["DEFAULTS"]).DEFAULTS["senses"],
+                                          vision=True, input=False, cooldown_seconds=0)
+        s = Senses(agent)
+        s.simulate("squint", tier="weak")
+        d = s.simulate("lean", tier="weak")
+        self.assertEqual((d["target"]["x"], d["target"]["y"]), (640, 300))
+
+
 if __name__ == "__main__":
     unittest.main()

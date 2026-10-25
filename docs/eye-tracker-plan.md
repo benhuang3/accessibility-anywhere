@@ -83,13 +83,13 @@ New functions (exact names; the camera helper and agent will call them):
 
 ### 2. Calibration and setup (`ally/gaze_helper.py`)
 
-Said as "Ally, set up my eyes". About 35 seconds, voice and full-screen:
+Said as "Ally, set up my eyes". About 50 seconds, voice and full-screen:
 
 1. **Readiness check, about 3 s**: face found, distance (face width), light on the face, head
    roughly centered. If something is off, say exactly what to fix ("move a little closer", "turn
    on a light in front of you") and wait for it.
 2. **Calibration, 13 targets**: the 3x3 grid plus 4 between them. A ring shrinks onto each target
-   (0.8 s settle), then 1.0 s of frames are collected, skipping blinks and eye jumps. A target with
+   (0.8 s settle), then 1.5 s of frames are collected, skipping blinks and eye jumps. A target with
    fewer than 10 good frames is shown once more at the end.
 3. **Validation, 5 new targets** at random places inside different grid cells, 1.5 s each. They
    are not used for fitting. `validate()` gives the honest error and region score.
@@ -138,7 +138,7 @@ Clicks are optional (the reading part).
     this?". The name goes to Claude only as part of the user's own request.
   - `magnify_where_i_look` (exists): switch to `target()`.
   - `calibrate_eye_tracker` (exists): the new flow.
-  - `check_eye_tracker()`: the 5-target validation only (about 8 s), to check accuracy without a full
+  - `check_eye_tracker()`: the 5-target validation only (about 12 s), to check accuracy without a full
     setup.
   - `choose_by_looking(options, timeout)`: shows each option as a large card in its own area of the
     screen (2 options: left and right halves), returns the one the user looks at for 0.8 s, or none.

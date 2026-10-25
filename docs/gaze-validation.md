@@ -15,7 +15,7 @@ Recordings store numbers only (landmarks, blendshapes, the face matrix, dot time
 
 ## Set up
 
-With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This takes about 35 seconds.
+With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This takes about 50 seconds.
 
 ## What you can say
 

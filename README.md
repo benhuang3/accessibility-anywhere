@@ -104,7 +104,7 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
 
 ### Eye tracking
 
-1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About 35 seconds: Ally checks that it can
+1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About 50 seconds: Ally checks that it can
    see your face, shows 13 dots, then 5 check dots it did not train on. Esc cancels. Do this again if
    you move your laptop or chair a lot.
 2. Say **"Ally, what am I looking at"** for the area of the screen. On Windows, Ally also names the
@@ -115,7 +115,7 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
    / "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
 4. A yes or no can be answered by looking. Ally shows the choices as large cards (two choices: the
    left half and the right half). Look at one for a moment.
-5. Say **"Ally, check my eye tracker"** for the 5 check dots only (about 8 seconds), without a full setup.
+5. Say **"Ally, check my eye tracker"** for the 5 check dots only (about 12 seconds), without a full setup.
 
 The check uses plain words:
 
