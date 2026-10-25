@@ -94,10 +94,15 @@ _KNOWN_REPHRASES = {
 }
 
 
+def _last_sentence(text: str) -> str:
+    """The question is the last sentence: "Having trouble clicking? Want me to ...?" -> "Want me to ...?"."""
+    plain = strip_ssml(text or "").strip()
+    return re.split(r"(?<=[.!?])\s+", plain)[-1] if plain else ""
+
+
 def rephrase(prompt: str) -> str:
     """A different wording of a yes/no question, for the one re-ask (research: rephrase, don't repeat)."""
-    plain = strip_ssml(prompt).strip()
-    last = re.split(r"(?<=[.!])\s+", plain)[-1] if plain else ""  # the question is the last sentence
+    last = _last_sentence(prompt)
     known = _KNOWN_REPHRASES.get(last.lower())
     if known:
         return known
@@ -116,9 +121,7 @@ def rephrase(prompt: str) -> str:
 
 def action_word(question: str) -> str:
     """The verb a user may echo to say yes: 'Want me to close this page?' -> 'close'."""
-    plain = strip_ssml(question or "").strip()
-    last = re.split(r"(?<=[.!])\s+", plain)[-1] if plain else ""
-    body = _LEADS.sub("", last.rstrip("?").strip())
+    body = _LEADS.sub("", _last_sentence(question).rstrip("?").strip())
     words = normalize(body).split()
     return words[0] if words and words[0] not in _FILLERS and len(words[0]) > 2 else ""
 
@@ -158,6 +161,9 @@ _PHRASES = {
            "i don't want", "i don't want that", "don't want", "not interested", "no no"],
     "UNDO": ["undo", "undo that", "undo it", "put it back", "go back", "change it back", "revert", "too big",
              "too much", "turn it off", "back to normal", "make it smaller"],
+    # "Make it stop": no to an offer, but yes to a risk question, where yes is the protective action.
+    "STOP_IT": ["stop it", "stop them", "stop that", "stop this", "make it stop", "get rid of it",
+                "get me out", "get me out of here", "block it", "block them", "kick them out", "shut it down"],
     "SLOWER": ["slower", "slow down", "too fast", "speak slower", "talk slower", "more slowly", "slowly",
                "say it slower", "slower please"],
     "REPEAT": ["say that again", "say again", "say it again", "repeat", "repeat that", "what", "what was that",
@@ -182,7 +188,9 @@ def _phrase_regex() -> tuple[re.Pattern, list[str]]:
         for w in words:
             alts.append((len(w), w, cat))
     alts.sort(key=lambda t: -t[0])  # longest first: "no problem" before "no", "i'm okay" before "okay"
-    parts = [rf"(?P<g{i}>{re.escape(w).replace(r'\ ', ' ')})" for i, (_n, w, _c) in enumerate(alts)]
+    # Escaped outside the f-string: a backslash inside an f-string expression needs Python 3.12.
+    escaped = [re.escape(w).replace("\\ ", " ") for _n, w, _c in alts]
+    parts = [rf"(?P<g{i}>{e})" for i, e in enumerate(escaped)]
     rx = re.compile(r"(?<![a-z'])(?:" + "|".join(parts) + r")(?![a-z'])")
     return rx, [c for _n, _w, c in alts]
 
@@ -198,13 +206,16 @@ def normalize(text: str) -> str:
     return " ".join(t.split())
 
 
-def classify(text: str, question: str = "") -> Intent:
+def classify(text: str, question: str = "", protective: bool = False) -> Intent:
     """What a spoken answer to a yes/no question means.
 
     Rules: phrases are matched longest first, so "no problem" is YES and "I'm okay" is NO. Yes and
     no together ("yeah, no"), or a hedge ("maybe", "I guess"), is AMBIGUOUS. "uh-huh" is a
     low-confidence YES. Echoing the question's action ("close it" for "Close this page?") is YES.
     Anything not understood is AMBIGUOUS; nothing at all is EMPTY.
+
+    protective: the question is a risk warning, where yes means "take the protective action". There
+    "stop them" is YES, and a bare "stop", "cancel" or "go back" is AMBIGUOUS (it may mean either).
     """
     norm = normalize(text)
     if norm in _NOISE:
@@ -219,6 +230,11 @@ def classify(text: str, question: str = "") -> Intent:
     rest = [w for w in leftover.split() if w not in _FILLERS]
     has = set(cats)
     m = tuple(matched)
+    if "STOP_IT" in has:
+        has.discard("STOP_IT")
+        has.add("YES" if protective else "NO")
+    if protective and ("UNDO" in has or any(w in ("stop", "cancel") for w in matched)):
+        return Intent("AMBIGUOUS", 0.3, text, m)
     if "UNDO" in has:
         return Intent("AMBIGUOUS", 0.4, text, m) if "YES" in has else Intent("UNDO", 0.9, text, m)
     if "HEDGE" in has:
@@ -429,12 +445,17 @@ class VoiceConfirm:
         if not self.speaker.say(text, interrupt=True, style=style):
             return None
         gen = self.speaker.generation
+        stops = getattr(self.speaker, "stops", 0)
         while self.speaker.speaking:
             if pending.done():
                 if self.speaker.generation == gen:
                     self.speaker.stop()
                 break
             time.sleep(0.02)
+        if getattr(self.speaker, "stops", 0) != stops and not pending.done():
+            # Silenced on purpose ("Ally, stop" through the listener): stop asking, don't listen.
+            # Other speech that merely replaced the question doesn't count.
+            pending.set(Answer(TIMEOUT, by="voice", intent="STOPPED", prompt=pending.prompt))
         return self.speaker.audio_started.get(gen)
 
     # ------------------------------------------------------------ hearing
@@ -484,13 +505,16 @@ class VoiceConfirm:
         voice = self.settings().get("voice", {})
         seg = Segmenter(end_silence=max(0.6, float(voice.get("silence_seconds", 1.2)) * 0.7),
                         max_seconds=float(self.cfg.get("max_answer_seconds", 5)), eager_silence=self._eager())
+        tail = 0.0
         try:
             with sd.InputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=BLOCK) as stream:
                 ready.set()
                 while not stop.is_set():
                     data, _overflow = stream.read(BLOCK)
+                    if self.speaker.speaking:
+                        tail = time.monotonic() + 0.4  # the room still echoes Ally for a moment (as the listener)
                     level = float(np.sqrt(np.mean(data.astype(np.float32) ** 2)))
-                    utt = seg.feed(data.tobytes(), level, time.time(), self.speaker.speaking)
+                    utt = seg.feed(data.tobytes(), level, time.time(), time.monotonic() < tail)
                     flags["in_speech"] = seg.in_speech
                     if utt is not None:
                         try:
@@ -593,7 +617,7 @@ class VoiceConfirm:
                     self.last_error = str(e)
                     timing.update(no_stt=True, error=str(e))
                     return Intent("AMBIGUOUS", 0.0, ""), timing
-                intent = classify(text, pending.prompt)
+                intent = classify(text, pending.prompt, protective=pending.kind == "risk")
                 eager = bool(getattr(utt, "eager", False))
                 if eager and not eager_ok(text, intent):
                     continue  # not clear enough to cut the answer short: wait for the end
@@ -801,8 +825,10 @@ class VoiceConfirm:
     def confirm_offer(self, offer, background: bool = False):
         """Ask an Offer's question out loud and resolve it with the spoken answer.
 
-        offer: the foundation Offer (or a dict / any object) with .prompt, optional .timeout,
-        .reprompt and .resolve(answer, by). A button that resolves it first wins: we notice and stop.
+        offer: the foundation Offer (or a dict / any object) with .prompt, optional .reprompt and
+        .resolve(answer, by). A button that resolves it first wins: we notice and stop. The Offer's
+        own timer ends the question the same way; voice keeps no separate offer timeout.
+        A yes / no given through answer() (dashboard, CLI, API) resolves the Offer too, with its by.
         Returns the Answer, or the running Thread when background=True."""
         prompt = str(_get(offer, "prompt", "") or "")
 
@@ -813,13 +839,13 @@ class VoiceConfirm:
 
         def run() -> Answer:
             ans = self.ask(prompt, rephrased=_get(offer, "reprompt"), kind="offer", cancel=resolved)
-            if ans.value in (YES, NO) and ans.by == "voice" and not resolved():
+            if ans.value in (YES, NO) and ans.by not in ("offer", "none") and not resolved():
                 fn = _get(offer, "resolve")
                 if callable(fn):
                     try:
-                        fn(ans.value, by="voice")
+                        fn(ans.value, by=ans.by)
                     except TypeError:
-                        fn(ans.value, "voice")
+                        fn(ans.value, ans.by)
             return ans
 
         if background:

@@ -184,26 +184,33 @@ def cartesia_voices(language: str = "en", q: str = "", gender: str = "", limit: 
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _voice_names: dict[str, str] = {}
+_voice_misses: dict[str, float] = {}  # name -> monotonic time it was not found
 _voice_names_lock = threading.Lock()
+VOICE_MISS_SECONDS = 60.0  # don't look up an unknown name again for every sentence
 
 
-def resolve_voice(value: str) -> str:
+def resolve_voice(value: str, timeout: float = 15) -> str:
     """speech.cartesia_voice_id may be a voice ID or a voice name ("Tessa"). Names are looked up
     once in the Cartesia voice library (exact name first, then a name that starts with it)."""
     value = (value or "").strip()
     if not value or _UUID_RE.match(value):
         return value
     key = value.lower()
+    missing = CartesiaError(f"No Cartesia voice is named '{value}'. Run: python run.py voices", status=400)
     with _voice_names_lock:
         if key in _voice_names:
             return _voice_names[key]
-    found = cartesia_voices(q=value, language="")
+        if time.monotonic() - _voice_misses.get(key, -VOICE_MISS_SECONDS) < VOICE_MISS_SECONDS:
+            raise missing
+    found = cartesia_voices(q=value, language="", timeout=timeout)
     names = [(str(v.get("name") or "").strip().lower(), v.get("id")) for v in found if v.get("id")]
     pick = (next((i for n, i in names if n == key), None)
             or next((i for n, i in names if n.startswith(key)), None)
             or next((i for n, i in names if key in n), None))
     if not pick:
-        raise CartesiaError(f"No Cartesia voice is named '{value}'. Run: python run.py voices", status=400)
+        with _voice_names_lock:
+            _voice_misses[key] = time.monotonic()
+        raise missing
     with _voice_names_lock:
         _voice_names[key] = pick
     log.info("Cartesia voice '%s' is %s", value, pick)
@@ -307,6 +314,7 @@ class Speaker:
         self._down_until = 0.0  # after a network failure, skip Cartesia until then (no waiting per sentence)
         self.down_reason = ""
         self.audio_started: dict[int, float] = {}  # generation -> perf_counter() when sound began
+        self.stops = 0  # explicit stop() calls ("Ally, stop", a button), not new speech replacing old
         self._beeps: dict[str, str] = {}
 
     @property
@@ -351,7 +359,7 @@ class Speaker:
         if len(text) > limit:
             text = text[:limit].rsplit(" ", 1)[0] + "."
         if interrupt:
-            self.stop()
+            self._halt()
         with self._lock:
             self._gen += 1
             gen = self._gen
@@ -429,8 +437,8 @@ class Speaker:
                     return hit, "cartesia-cache"
         if time.monotonic() < self._down_until:
             raise CartesiaError(f"Cartesia skipped for a moment ({self.down_reason})")
-        try:
-            voice_id = resolve_voice(voice)
+        try:  # same timeout as speech itself: a hanging voice lookup must not hold up the sentence
+            voice_id = resolve_voice(voice, timeout=float(cfg.get("cartesia_timeout_seconds", 4)))
         except CartesiaError as e:
             self._trip(cfg, e)
             raise
@@ -480,9 +488,10 @@ class Speaker:
             except ToolError:
                 if i == 0:
                     raise  # nothing played yet: the whole text goes to the OS voice
-                self.last_engine = "system"  # finish the rest with the OS voice
+                self.last_engine = "system"  # finish the rest with the OS voice, at the same speed
                 rest = strip_ssml(" ".join(pieces[i:]))
-                self._play(gen, lambda: self.platform.tts_start(rest, self.rate(), cfg.get("voice", "")))
+                speed = self._style_values(cfg, style)[0]
+                self._play(gen, lambda: self.platform.tts_start(rest, speed, cfg.get("voice", "")))
                 return
             if not self._active(gen):
                 return
@@ -525,6 +534,10 @@ class Speaker:
                 "speaking": self.speaking, "rate": self.rate(), "error": self.last_error}
 
     def stop(self) -> None:
+        self.stops += 1
+        self._halt()
+
+    def _halt(self) -> None:
         with self._lock:
             self._gen += 1
             proc, self._proc = self._proc, None

@@ -104,3 +104,22 @@ delegated at freeze.
   + `proactive.py` land. That is Ben H's first move after the design decision.
 - **Tier B text replacement** waits on Ganesh's overlay.
 - **Windows text + magnify** waits on VM validation.
+
+## Change log (everyone: add an entry here with every push)
+
+Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
+to know or do. Agents: read the newest entries before starting work.
+
+### Oct 24, 22:01 PT — Ben H (via Claude Code) — branch `worktree-voice`, voice fixes
+
+**Changed:** `ally/voice_confirm.py`, `ally/speech.py`, `ally/listener.py`, `tests/test_voice_confirm.py`,
+one comment line in `config.toml` / `ally/default_config.toml`.
+- `voice_confirm.py` loads on Python 3.11 again (an f-string needed 3.12).
+- Re-asks use the last question ("Having trouble clicking? Want me to ...?").
+- Risk questions: "stop them" / "get me out of here" mean yes (the protective action); a bare "stop",
+  "cancel" or "go back" is unclear and re-asked, never a silent no.
+- "Ally, stop" (an explicit `Speaker.stop()`) ends an open question; other speech doesn't.
+- A yes/no from `run.py answer`, the dashboard or the API now resolves the Offer too.
+- Voice-name lookups use the 4 s speech timeout; unknown names aren't looked up again for 60 s.
+**For everyone:** `/api/stop`, `stop_speaking` and `reset_all` now end an open spoken question.
+**For Ganesh:** please check the risk-answer rule above.

@@ -165,6 +165,26 @@ class ClassifyTests(unittest.TestCase):
                 self.assertLessEqual(len(r.split()), 10)
         self.assertEqual(rephrase("Want me to turn on high contrast?"), "Should I turn on high contrast for you?")
 
+    def test_rephrase_uses_the_last_question(self):
+        # The Coordinator's prompts can lead with a question of their own.
+        q = "Having trouble clicking? Want me to make the buttons bigger?"
+        self.assertEqual(rephrase(q), "Should I make the buttons bigger for you?")
+        self.assertEqual(vcm.action_word(q), "make")
+
+    def test_risk_answers_mean_the_protective_action(self):
+        remote = "Someone may be trying to control your computer. Disconnect them?"
+        scam = "This pop-up may be a scam. Close it?"
+        page = "This website may not be safe. Close this page?"
+        self.assertEqual(classify("Stop them!", remote, protective=True).kind, "YES")
+        self.assertEqual(classify("stop it", scam, protective=True).kind, "YES")
+        self.assertEqual(classify("get me out of here", page, protective=True).kind, "YES")
+        for unclear in ("stop", "cancel it", "go back"):  # may mean either: re-ask, never a silent no
+            with self.subTest(text=unclear):
+                self.assertEqual(classify(unclear, page, protective=True).kind, "AMBIGUOUS")
+        self.assertNotEqual(classify("don't stop it", scam, protective=True).kind, "YES")
+        self.assertEqual(classify("no", scam, protective=True).kind, "NO")
+        self.assertEqual(classify("stop it", "Want me to make this bigger?").kind, "NO")  # offers unchanged
+
 
 # ----------------------------------------------------------------------------- asking
 class AskTests(unittest.TestCase):
@@ -268,6 +288,21 @@ class AskTests(unittest.TestCase):
         self.assertGreaterEqual(sp.stops, 1)
         self.assertFalse(vc.answer("no"))  # nothing open any more
 
+    def test_stopped_mid_question_does_not_listen(self):
+        vc, sp, ears = make([[(0.05, "Yes.")]], speaker=FakeSpeaker(seconds=1.0))
+        threading.Timer(0.15, sp.stop).start()  # what the listener does on "Ally, stop"
+        t0 = time.monotonic()
+        a = vc.ask("Want me to make this bigger?")
+        self.assertEqual((a.value, a.intent), ("timeout", "STOPPED"))
+        self.assertEqual(ears.opened, 0)
+        self.assertLess(time.monotonic() - t0, 0.8)
+
+    def test_other_speech_during_a_question_does_not_stop_it(self):
+        vc, sp, ears = make([[(0.05, "Yes.")]], speaker=FakeSpeaker(seconds=0.3))
+        threading.Timer(0.1, lambda: sp.say("I'll make this bigger, like last time.")).start()
+        self.assertEqual(vc.ask("Want me to make this bigger?").value, "yes")
+        self.assertEqual(ears.opened, 1)
+
     def test_voice_answer_then_button_is_ignored(self):
         vc, _, _ = make([[(0.05, "No.")]])
         a = vc.ask("Want me to make this bigger?")
@@ -364,6 +399,17 @@ class OfferAndRiskTests(unittest.TestCase):
         self.assertEqual((offer.answer, offer.by), ("yes", "button"))
         self.assertLess(time.monotonic() - t0, 1.0)
 
+    def test_button_answer_resolves_the_offer(self):
+        vc, _, _ = make([[(1.5, "No.")]], listen_seconds=3)
+        offer = FakeOffer()
+        threading.Timer(0.2, lambda: vc.answer("yes", by="cli")).start()  # run.py answer yes
+        a = vc.confirm_offer(offer)
+        self.assertEqual((a.by, offer.answer, offer.by), ("cli", "yes", "cli"))
+
+    def test_spoken_stop_them_answers_a_risk_question(self):
+        vc, _, _ = make([[(0.05, "Stop them!")]])
+        self.assertEqual(vc.warn({"kind": "remote_access", "severity": "high"}).value, "yes")
+
     def test_offer_as_dict_and_silence(self):
         vc, _, _ = make([[]])
         got = []
@@ -459,6 +505,7 @@ class CartesiaSpeechTests(unittest.TestCase):
         self.fake.set(tts="ok", stt="ok", reject_models=[], reject_emotion=False, tts_latency=0)
         self.fake.reset()
         speech._voice_names.clear()
+        speech._voice_misses.clear()
 
     def speaker(self, cache=None, **cfg):
         c = json.loads(json.dumps(DEFAULTS["speech"]))
@@ -549,6 +596,28 @@ class CartesiaSpeechTests(unittest.TestCase):
         with self.assertRaises(speech.CartesiaError):
             speech.resolve_voice("Nobody")
         self.assertEqual(speech.resolve_voice("leo"), "22222222-2222-4222-8222-222222222222")
+
+    def test_unknown_voice_name_is_not_looked_up_every_sentence(self):
+        before = self.fake.voice_requests
+        for _ in range(3):
+            with self.assertRaises(speech.CartesiaError):
+                speech.resolve_voice("Nobody")
+        self.assertEqual(self.fake.voice_requests - before, 1)
+
+    def test_partial_fallback_keeps_the_style_speed(self):
+        s, plat = self.speaker()
+        calls = []
+        real = s.render
+
+        def render(piece, cfg=None, style=None):
+            calls.append(piece)
+            if len(calls) > 1:
+                raise speech.CartesiaError("Can't reach Cartesia")
+            return real(piece, cfg, style)
+        s.render = render
+        s.say("First sentence here. " + "word " * 120 + "end.", wait=True, style={"speed": 0.8})
+        self.assertEqual(len(plat.wavs), 1)
+        self.assertEqual(plat.tts[0][1], 0.8)
 
     def test_voice_list(self):
         names = [v["name"] for v in speech.cartesia_voices()]
