@@ -505,6 +505,10 @@ class LayeredDot:
         user32, gdi32 = self.user32, self.gdi32
         user32.GetDC.argtypes = [wintypes.HWND]
         user32.GetDC.restype = wintypes.HDC
+        user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]  # 64-bit handles need the real types
+        user32.ReleaseDC.restype = ctypes.c_int
+        gdi32.DeleteDC.argtypes = [wintypes.HDC]
+        gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
         gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
         gdi32.CreateCompatibleDC.restype = wintypes.HDC
         screen = user32.GetDC(None)
