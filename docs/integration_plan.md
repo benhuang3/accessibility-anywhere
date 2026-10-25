@@ -140,6 +140,20 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 07:52 PT — Hayden (via Claude Code) — `main`, commit `5856a3e`
+
+**Changed `config.toml` (demo settings, for everyone):**
+- **Voice:** Cartesia voice "Michelle". It needs `CARTESIA_API_KEY` in `.env`; without it Ally uses
+  the Windows voice.
+- **Face profile:** `[profile] sync = "spacetimedb"`, so the face profile is saved to SpacetimeDB
+  (`ally-call`) as numbers only.
+- **Demo commands:** "open Facebook", "open the news" and "open the scam lab". They point to the
+  demo sites served by `cd demo; python -m http.server 8000 --bind 127.0.0.1`.
+- **Call Priya:** `[risk] trusted_contact = "Priya"`, `call_service = "spacecall"`.
+  `contact_topic` stays empty here; set your own private ntfy topic locally.
+- **Other:** `[page_enlarge] ai_check = false` for repeatable demos, `pan_speed = 0.7`,
+  `show_dot = true`.
+
 ### Oct 25, 07:35 PT — Ben H (via Claude Code) — `main`
 
 **Pushed to `main`:** `README.md` rewritten for the current project (page steps and simple mode, pictures, click by
