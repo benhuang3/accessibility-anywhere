@@ -110,6 +110,12 @@ delegated at freeze.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 22:50 PT — Ben H (via Claude Code) — branch `worktree-voice`, speech queueing
+
+**Changed:** `ally/speech.py`, `tests/test_voice_confirm.py`. `say(..., interrupt=False)` now waits for
+the sound already playing instead of playing over it (read-aloud lead-in, then the text); `stop()`
+stops both. No change for normal (interrupting) speech.
+
 ### Oct 24, 22:40 PT — Ben H (via Claude Code) — branch `worktree-voice`, voice in the proactive loop
 
 **Changed:** new `ally/voice_bus.py` (`BusVoice`), `ally/voice_confirm.py`, `ally/voice.py` (one line),

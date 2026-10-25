@@ -305,6 +305,7 @@ class Speaker:
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
         self._gen = 0
+        self._cut = 0  # speech of this generation or older was stopped (interrupt or stop())
         self._thread: threading.Thread | None = None
         self.last_error = ""
         self.last_engine = ""  # "cartesia", "cartesia-cache" or "system": what the last sentence used
@@ -363,7 +364,8 @@ class Speaker:
         with self._lock:
             self._gen += 1
             gen = self._gen
-        t = threading.Thread(target=self._run, args=(gen, text, engine, cfg, dict(style or {})),
+            prev = None if interrupt else self._thread  # queue behind it instead of talking over it
+        t = threading.Thread(target=self._run, args=(gen, text, engine, cfg, dict(style or {}), prev),
                              name="speech", daemon=True)
         self._thread = t
         t.start()
@@ -377,7 +379,7 @@ class Speaker:
             t.join(timeout)
 
     def _active(self, gen: int) -> bool:
-        return gen == self._gen
+        return gen > self._cut
 
     def _play(self, gen: int, start) -> None:
         """start() begins the sound and returns a Popen-like handle; this waits for it to end."""
@@ -396,7 +398,11 @@ class Speaker:
         volume = float(style.get("volume", 1.0))
         return speed, (emotion or ""), volume
 
-    def _run(self, gen: int, text: str, engine: str, cfg: dict, style: dict) -> None:
+    def _run(self, gen: int, text: str, engine: str, cfg: dict, style: dict, prev=None) -> None:
+        if prev is not None and prev is not threading.current_thread():
+            prev.join()
+        if not self._active(gen):
+            return
         try:
             if engine == "cartesia":
                 try:
@@ -540,6 +546,7 @@ class Speaker:
     def _halt(self) -> None:
         with self._lock:
             self._gen += 1
+            self._cut = self._gen
             proc, self._proc = self._proc, None
         if proc and proc.poll() is None:
             try:

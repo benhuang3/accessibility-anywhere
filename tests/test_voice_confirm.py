@@ -476,6 +476,38 @@ class CartesiaSpeechTests(unittest.TestCase):
             speech.resolve_voice("Nobody")
         self.assertEqual(speech.resolve_voice("leo"), "22222222-2222-4222-8222-222222222222")
 
+    def test_not_interrupting_waits_for_the_current_sound(self):
+        events = []
+
+        class Slow(_Done):
+            def __init__(self, text):
+                self.text, self.end = text, time.monotonic() + 0.2
+                events.append(("start", text))
+
+            def wait(self, timeout=None):
+                while time.monotonic() < self.end:
+                    time.sleep(0.01)
+                events.append(("end", self.text))
+                return 0
+
+        plat = RecPlatform()
+        plat.tts_start = lambda text, rate, voice: Slow(text)
+        c = json.loads(json.dumps(DEFAULTS["speech"]))
+        c["engine"] = "system"
+        s = speech.Speaker(plat, lambda: c)
+        s.say("Sure. Here it is.")
+        s.say("The letter says your statement is ready.", interrupt=False, wait=True)
+        self.assertEqual(events, [("start", "Sure. Here it is."), ("end", "Sure. Here it is."),
+                                  ("start", "The letter says your statement is ready."),
+                                  ("end", "The letter says your statement is ready.")])
+        events.clear()
+        s.say("One.")
+        s.say("Two.", interrupt=False)
+        time.sleep(0.05)
+        s.stop()  # stops what plays and what waits
+        time.sleep(0.4)
+        self.assertNotIn(("start", "Two."), events)
+
     def test_unknown_voice_name_is_not_looked_up_every_sentence(self):
         before = self.fake.voice_requests
         for _ in range(3):
