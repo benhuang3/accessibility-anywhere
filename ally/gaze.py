@@ -111,7 +111,7 @@ class GazeManager:
                 self.error = "eye tracking and face sensing need: pip install mediapipe opencv-python"
             return
         signature = (int(self.cfg.get("camera", 0)), int(self.cfg.get("fps", 20)), self.wanted(),
-                     self.senses_wanted(), self._senses_fps())
+                     self.senses_wanted(), self._senses_fps(), str(self.cfg.get("features", "v1")))
         if signature == self._signature and (self.running or self._gave_up):
             return
         self._signature, self._gave_up, self._crashes = signature, False, []
@@ -131,7 +131,8 @@ class GazeManager:
                     return
             args = {"model": str(self.model_path), "calibration": str(self.calibration_path),
                     "camera": int(self.cfg.get("camera", 0)), "fps": int(self.cfg.get("fps", 20)),
-                    "gaze": self.wanted(), "signals": self.senses_wanted(), "signals_fps": self._senses_fps()}
+                    "gaze": self.wanted(), "signals": self.senses_wanted(), "signals_fps": self._senses_fps(),
+                    "features": self.cfg.get("features", "v1")}
             try:
                 self.proc = subprocess.Popen(
                     [python_for_children(), "-m", "ally.gaze_helper", json.dumps(args)], cwd=str(CODE_ROOT),
@@ -151,7 +152,13 @@ class GazeManager:
             except ValueError:
                 continue
             if "x" in msg:
-                self.points.append((float(msg["t"]), int(msg["x"]), int(msg["y"])))
+                row = (float(msg["t"]), int(msg["x"]), int(msg["y"]))
+                if msg.get("r") is not None:
+                    try:
+                        row = row + (float(msg["r"]),)
+                    except (TypeError, ValueError):
+                        pass
+                self.points.append(row)
                 self.face_at = time.time()
             elif "f" in msg:
                 self.face_at = time.time()
@@ -303,12 +310,12 @@ class GazeManager:
         """The newest gaze point, if it's fresh (used by the magnifier to pan with the eyes)."""
         if not self.points:
             return None
-        t, x, y = self.points[-1]
+        t, x, y = self.points[-1][0], self.points[-1][1], self.points[-1][2]
         return (x, y) if time.time() - t <= max_age else None
 
     def point(self, t0: float, t1: float) -> tuple[int, int]:
         """Median gaze point between two wall-clock times (steady even if the eyes flicked away)."""
-        pts = [(x, y) for t, x, y in list(self.points) if t0 <= t <= t1]
+        pts = [(item[1], item[2]) for item in list(self.points) if t0 <= item[0] <= t1]
         if len(pts) < 3:
             raise self.problem() if self.status() != "tracking" else ToolError(
                 "I couldn't follow your eyes just then. Look at the spot and try again.")

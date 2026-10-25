@@ -1,7 +1,7 @@
 """Separate process: webcam eye tracking. Prints one JSON object per line:
 
     {"ready": true, "calibrated": false}         camera and face model work
-    {"t": 1730000000.1, "x": 812, "y": 403}      where the user looks (screen pixels; when calibrated)
+    {"t": 1730000000.1, "x": 812, "y": 403, "r": 140}  where the user looks, and how unsure that frame is (pixels)
     {"t": ..., "face": true} / {"face": false}   face seen but not calibrated / no face (a few per second)
     {"calibrated": true, "error_px": 140, "dots": 13, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
                                            calibration done ({"calibrated": false, "why": "..."} if not)
@@ -238,38 +238,29 @@ def eye_jumped(prev, vector, limit: float = JUMP) -> bool:
         return False
 
 
-def validation_score(model: dict, samples: list, screen: tuple[int, int]) -> dict:
-    """Held-out error. Median, over targets, of the distance from the target to the median prediction.
+def feature_set_name(value) -> str:
+    """The feature set a calibration should fit. Anything else stays on v1."""
+    return value if value in ("v1", "v2") else "v1"
 
-    `samples` are (features, (x, y)) from dots that were not used in fit. 3x3 region hits use the
-    same median prediction. Phase 2 can replace this with gaze_model.validate.
+
+def validation_score(model: dict, samples: list, screen: tuple[int, int]) -> dict:
+    """Held-out error from gaze_model.validate.
+
+    `samples` are (features, (x, y)) from dots that were not used in fit. error_px is rounded to
+    a whole pixel, which is what the saved file and the on-screen words use.
     """
-    grouped: dict[tuple[float, float], list] = {}
-    order: list[tuple[float, float]] = []
-    for feat, target in samples:
-        key = (float(target[0]), float(target[1]))
-        if key not in grouped:
-            order.append(key)
-            grouped[key] = []
-        grouped[key].append(feat)
-    if not order:
-        return {"error_px": None, "region_hits": 0, "region_total": 0, "per_target": []}
     from ally import gaze_model
 
-    per = []
-    dists = []
-    hits = 0
-    for key in order:
-        preds = [gaze_model.predict(model, f) for f in grouped[key]]
-        mx = statistics.median([p[0] for p in preds])
-        my = statistics.median([p[1] for p in preds])
-        dist = math.hypot(mx - key[0], my - key[1])
-        hit = region_of(mx, my, screen) == region_of(key[0], key[1], screen)
-        dists.append(dist)
-        hits += int(hit)
-        per.append({"x": key[0], "y": key[1], "error_px": dist, "hit": hit})
-    return {"error_px": int(round(statistics.median(dists))), "region_hits": hits,
-            "region_total": len(dists), "per_target": per}
+    use = dict(model or {})
+    if not use.get("screen"):
+        use["screen"] = [int(screen[0]), int(screen[1])]
+    score = gaze_model.validate(use, samples)
+    err = score.get("error_px")
+    if err is None:
+        return score
+    out = dict(score)
+    out["error_px"] = int(round(float(err)))
+    return out
 
 
 def result_grade(score: dict) -> str:
@@ -1202,12 +1193,23 @@ def face_snapshot(landmarks, matrix, light, eye_light=None, two: bool = False) -
             "yaw": yaw, "pitch": pitch, "eye_light": eye_f}
 
 
-def look(landmarker, mp, cv2, frame, t_ms: int) -> dict:
-    """One camera frame -> landmarks, features, and readiness numbers. The frame is not returned."""
+def frame_features(model, landmarks, blendshapes, matrix, width, height):
+    """Feature vector for this model (v1 or v2) plus eye openness. None when the landmarks are unusable."""
+    from ally import gaze_model
+
+    probe = model if isinstance(model, dict) else {"features": "v1"}
+    if probe.get("features") not in ("v1", "v2"):
+        probe = {"features": "v1"}
+    return gaze_model.features_for_model(probe, landmarks, blendshapes, matrix, width, height)
+
+
+def look(landmarker, mp, cv2, frame, t_ms: int, model=None) -> dict:
+    """One camera frame -> landmarks, features, and readiness numbers. The frame is not returned.
+
+    `model` only picks the feature set (a fitted model, or {"features": "v1"} / "v2").
+    """
     import numpy as np
     from ally.senses.face import brightness, face_box
-
-    from ally import gaze_model
 
     h, w = frame.shape[:2]
     image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -1227,7 +1229,7 @@ def look(landmarker, mp, cv2, frame, t_ms: int) -> dict:
     mat = None
     if res.facial_transformation_matrixes and chosen < len(res.facial_transformation_matrixes):
         mat = res.facial_transformation_matrixes[chosen]
-    feat = gaze_model.features(lms, bs, mat, w, h)
+    feat = frame_features(model, lms, bs, mat, w, h)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     light = brightness(gray, face_box(np.asarray(lms), w, h))
     face = face_snapshot(lms, mat, light, _eye_light(gray, lms, w, h))
@@ -1252,6 +1254,7 @@ def main(argv: list[str]) -> int:
         return 3
 
     gaze_on, signals_on = bool(cfg.get("gaze", True)), bool(cfg.get("signals", False))
+    feature_set = feature_set_name(cfg.get("features", "v1"))
     if signals_on:
         from ally.senses import face as face_signals
     size = screen_size()
@@ -1359,7 +1362,10 @@ def main(argv: list[str]) -> int:
             time.sleep(0.05)
             continue
         misses = 0
-        seen = look(landmarker, mp, cv2, frame, int((tick - t_start) * 1000))
+        # A new calibration is fit with [gaze] features. Tracking uses the saved model's own set,
+        # so an older v1 file still predicts while features is already v2.
+        probe = {"features": feature_set} if calib is not None else (model or {"features": feature_set})
+        seen = look(landmarker, mp, cv2, frame, int((tick - t_start) * 1000), probe)
         feat, lms, bs, mat = seen["feat"], seen["lms"], seen["bs"], seen["mat"]
         face, w, h = seen["face"], seen["w"], seen["h"]
         now = time.time()
@@ -1385,7 +1391,7 @@ def main(argv: list[str]) -> int:
             state = calib.step(feat, time.monotonic(), face, now)
             if state == "fit":
                 try:
-                    fitted = gaze_model.fit(calib.usable(), size)
+                    fitted = gaze_model.fit(calib.usable(), size, feature_set)
                     calib.accept_fit(fitted)
                 except (ValueError, np.linalg.LinAlgError) as e:
                     result = {"calibrated": False, "why": f"I {e}. Try again with more light on your face."}
@@ -1429,7 +1435,9 @@ def main(argv: list[str]) -> int:
             x = min(max(x, -0.05 * size[0]), 1.05 * size[0])
             y = min(max(y, -0.05 * size[1]), 1.05 * size[1])
             sx, sy = smooth(np.array([x, y]), now)
-            emit({"t": round(now, 3), "x": int(min(max(sx, 0), size[0] - 1)), "y": int(min(max(sy, 0), size[1] - 1))})
+            emit({"t": round(now, 3), "x": int(min(max(sx, 0), size[0] - 1)),
+                  "y": int(min(max(sy, 0), size[1] - 1)),
+                  "r": round(float(gaze_model.radius_px(model, feat[0])), 1)})
         spare = period - (time.monotonic() - tick)
         if spare > 0:
             time.sleep(spare)

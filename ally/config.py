@@ -44,7 +44,7 @@ SPEC = {
     "voice": {"engine": ("auto", "cartesia", "whisper", "off"), "max_seconds": NUM, "silence_seconds": NUM,
               "language": str, "beep": bool, "always_listen": bool, "wake_words": list, "follow_up_seconds": NUM,
               "whisper_model": str},
-    "gaze": {"enabled": bool, "camera": int, "fps": int, "pan_speed": NUM},
+    "gaze": {"enabled": bool, "camera": int, "fps": int, "pan_speed": NUM, "features": ("v1", "v2")},
     "senses": {"vision": bool, "input": bool, "fps": int, "calibrate_seconds": NUM, "solo": list,
                "window_seconds": NUM, "cooldown_seconds": NUM, "min_confidence": NUM, "decline_seconds": NUM,
                "squint_delta": NUM, "squint_weak": NUM, "squint_hold": NUM, "squint_window": NUM, "wink_max": NUM,
