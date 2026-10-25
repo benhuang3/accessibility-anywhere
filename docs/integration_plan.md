@@ -140,6 +140,12 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 05:51 PT — Hayden (via Claude Code) — `main`, commit `4d1d50e`
+
+**Changed:** the gaze ring now moves smoothly. It is redrawn at 60 fps on its own thread, with eased
+position, size and fade and sub-pixel placement, and is drawn with numpy. Only `ally/gaze_dot.py`
+changes, and the tests pass.
+
 ### Oct 25, 05:46 PT — Hayden (via Claude Code) — `main`, commit `2c0f91f`
 
 **Fixed:** "Call Priya" could not open the camera while eye tracking had it, because Windows gives
