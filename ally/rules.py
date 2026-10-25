@@ -54,6 +54,12 @@ RULES = [
               r"(?:set up|setup)(?: the| my)? (?:eyes|eye ?track(?:er|ing)|gaze(?: tracking)?)|"
               r"(?:eye ?track(?:er|ing)|gaze) (?:calibration|setup|set up)",
          loose=r"\bcalibrat"),
+    Rule("where_looking", [("where_am_i_looking", {})],
+         full=r"what am i looking at",
+         loose=r"\bwhat am i looking at\b"),
+    Rule("check_eyes", [("check_eye_tracker", {})],
+         full=r"check (?:my |the )?(?:eye ?track(?:er|ing)|eyes)",
+         loose=r"\bcheck (?:my |the )?(?:eye ?track(?:er|ing)|eyes)\b"),
     Rule("follow_eyes", [("magnifier_follow", {"target": "eyes"})],
          full=r"(?:follow|track) (?:my )?(?:eyes|gaze)|(?:magnifier|zoom) (?:should )?follows? (?:my )?(?:eyes|gaze)"),
     Rule("follow_mouse", [("magnifier_follow", {"target": "mouse"})],
@@ -154,5 +160,6 @@ def match(text: str, strict: bool = True) -> Match | None:
 
 
 HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the selection, stop, high contrast, "
-             "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, calibrate my eyes, "
+             "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, "
+             "what am I looking at, check my eye tracker, set up my eyes, "
              "invert colors, scroll down, go back, or ask anything when you're online.")
