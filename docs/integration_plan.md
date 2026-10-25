@@ -140,6 +140,31 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 22:20 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `30e80b2`
+
+**Committed (local, not pushed yet). Not merged.** Windows only from now on (Mac abandoned).
+
+**Changed:**
+- **AI check and fix after the page steps** (spec: "AI check and fix" in `docs/page_steps.md`): Claude
+  compares before/after screenshots of the tab and fixes what got worse with limited, checked actions;
+  3 tries, then the page is put back. Runs in the background after Ally answers; speaks only if it
+  changed something. `[page_enlarge] ai_check` / `ai_background`.
+- **Speed:** page steps now answer in about 0.2–4 s on real sites (Wikipedia, usa.gov, CNN), down from 9–33 s.
+  Enlarge text predicts the zoom from one measurement instead of trying six levels.
+- **Bugs found on real sites and fixed:** Chrome's 2-screenshots-per-second limit; a popup command's page
+  actions could go to a different connected browser (now: the asking browser); two WebSockets at extension
+  startup; the buttons layer broke compact list buttons (Wikipedia's table of contents).
+- Tests: `tests/timed.py 75 <modules>` runs suites with a hard limit (they finish in seconds; longer =
+  hang). Test browsers no longer connect to a running Ally. Real websites: `scripts/real_sites.py`.
+
+**For others:**
+- **Ben W / everyone:** `brain.ask` and `ctx.ask` take `images=[(bytes, media_type), ...]` for several pictures.
+- **Ganesh:** the AI fixer can never hide `#ally-risk-banner`, dialogs or alerts (checked in the page).
+- **Hayden:** `test_senses` `test_calibration` fails now and then in the Windows VM ("saw your face clearly in
+  only 28 frames"): it depends on machine speed. It passes on re-run.
+- Privacy: with a key, a screenshot of the visible tab goes to Claude after page changes (never on excluded
+  pages such as sign-in or payments). Turn off with `[page_enlarge] ai_check = false`.
+
 ### Oct 24, 20:30 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `68e4150`
 
 **Committed (local, not pushed yet). Not merged to `main`.** Before it: merged `hayden/eye-tracker` into

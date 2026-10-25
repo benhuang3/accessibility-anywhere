@@ -94,3 +94,19 @@ It speaks first, shows a "Simplifying..." card while measuring, shows a "Simple 
 on, and remembers a site only after an explicit yes. On page load the extension re-applies remembered sites
 in JS only (clutter, menu strip, fit and buttons layers at Chrome's remembered zoom); it never re-measures
 zoom on load.
+
+## AI check and fix (after the steps)
+
+When Claude is available (`[page_enlarge] ai_check`), every page-changing request continues after the
+deterministic steps and verify, **in the background** (`ai_background`): Ally replies at once, then:
+
+1. One Claude call per round gets a screenshot from before the request and one from now (800 px wide), the
+   verify result and a page outline (`pageOutline`), and answers `{worse: [...], actions: [...]}`. Only
+   regressions count; "not as big as hoped", content further down, or a sidebar folded into a menu don't.
+2. Actions are limited to: a Chrome zoom level, turning one of this run's steps off, or CSS rules from a short
+   list of layout properties in the `ally_fix` layer (`STEPS.fix`, checked again in the page: never hides
+   dialogs, navigation, main content or `#ally-risk-banner`).
+3. Up to 3 fix rounds. A round that leaves more problems is undone. If it still looks wrong, everything the
+   request did is reverted and Ally says so. It speaks only when it changed something.
+4. A newer request on the same tab cancels a running check. Skipped offline, on excluded pages, and for
+   articles (the reader view replaces the page).
