@@ -8,6 +8,44 @@ import numpy as np
 from . import gaze_model as gm
 
 
+def mobileone_angles(frame):
+    """Yaw and pitch in degrees from a frame's mobileone_s0 reading, or None."""
+    raw = frame.get('cnn') if isinstance(frame, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    pair = raw.get('mobileone_s0')
+    if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+        return None
+    try:
+        yaw, pitch = float(pair[0]), float(pair[1])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(yaw) or not math.isfinite(pitch):
+        return None
+    return yaw, pitch
+
+
+def has_mobileone(frames) -> bool:
+    """True when at least one frame stored mobileone_s0 yaw and pitch."""
+    return any(mobileone_angles(frame) for frame in frames)
+
+
+def file_has_mobileone(path) -> bool:
+    """True when this recording stored mobileone_s0 angles. Older files do not."""
+    frames = []
+    for line in Path(path).read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and row.get('rec') == 'frame':
+            frames.append(row)
+    return has_mobileone(frames)
+
+
 def _frame_before_click(feats, click_time):
     """Return the closest feature frame at or before 100 ms before a click."""
     cutoff = click_time - 0.1
@@ -95,10 +133,12 @@ def evaluate(path):
     targets = [r for r in rows if r.get('rec') == 'target']
     results = []
     screen_mm = meta.get('screen_mm', (344.0, 193.0))
-    for fs in ('v1', 'v2', 'v3', 'v4'):
+    sets = ('v1', 'v2', 'v3', 'v4', 'v5') if has_mobileone(frames) else ('v1', 'v2', 'v3', 'v4')
+    for fs in sets:
         feats = []
         for fr in frames:
-            z = gm.features_for_model({'features': fs, 'screen_mm': screen_mm}, fr['lm'], fr.get('bs'), fr.get('mat'), fr['w'], fr['h'])
+            cnn = mobileone_angles(fr) if fs == 'v5' else None
+            z = gm.features_for_model({'features': fs, 'screen_mm': screen_mm}, fr['lm'], fr.get('bs'), fr.get('mat'), fr['w'], fr['h'], cnn=cnn)
             if z:
                 feats.append((fr['t'], z[0], z[1]))
         raw_calibration = [(f, (target['x'], target['y']), op)
@@ -126,6 +166,8 @@ def evaluate(path):
         if len({tuple(point) for _, point in train}) < 6:
             continue
         model = gm.fit(train, screen, fs, cutoff, train_weights, screen_mm=screen_mm)
+        if fs == 'v5' and model.get('features') != 'v5':
+            continue  # no usable CNN angles: the fit came back as the v4 fallback
         model['screen_mm'] = list(screen_mm)
         corrector = gm.Corrector(model)
         for click in sorted((r for r in rows if r.get('rec') == 'click'), key=lambda c: c['t']):
@@ -198,8 +240,15 @@ def report(paths, out=None):
     indexed = {(row['file'], row['features'], row['phase']): row for row in rows}
     summary_headers = ['session', 'features', 'validation', 'drift without re-tune', 'drift with re-tune']
     print('| ' + ' | '.join(summary_headers) + ' |\n|' + '|'.join(['---'] * len(summary_headers)) + '|')
+    skipped = []
     for path in files:
-        for fs in ('v1', 'v2', 'v3', 'v4'):
+        present = {row['features'] for row in rows if row['file'] == str(path)}
+        sets = ('v1', 'v2', 'v3', 'v4') + (('v5',) if 'v5' in present else ())
+        if 'v5' not in present:
+            why = ('no mobileone_s0 angles on frames' if not file_has_mobileone(path)
+                   else 'mobileone_s0 angles were present, but v5 could not be fit')
+            skipped.append(f'{path.name} skipped v5 ({why}).')
+        for fs in sets:
             validation = indexed.get((str(path), fs, 'validation'), {})
             drift = indexed.get((str(path), fs, 'drift'), {})
             def metric(row, error_key='error_px'):
@@ -207,6 +256,8 @@ def report(paths, out=None):
                 return '' if error is None else f"{error:.1f} ({row.get('region_hits', 0)}/{row.get('region_total', 0)})"
             print('| ' + ' | '.join((path.name, fs, metric(validation), metric(drift),
                                      metric(drift, 'retuned_error_px'))) + ' |')
+    for note in skipped:
+        print(f'Note: {note}')
     output = Path(out) if out else Path.cwd() / 'gaze_eval.csv'
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open('w', newline='', encoding='utf-8') as f:
@@ -227,7 +278,8 @@ def report(paths, out=None):
                                  frame_cell('raw'), frame_cell('one_euro'), frame_cell('smoother'))) + ' |')
     phases = [('validation', 'validation', ''), ('drift', 'drift', ''),
               ('drift', 'drift after retune', 'retuned_')]
-    for fs in ('v1', 'v2', 'v3', 'v4'):
+    bar_sets = ('v1', 'v2', 'v3', 'v4') + (('v5',) if any(row['features'] == 'v5' for row in rows) else ())
+    for fs in bar_sets:
         for phase, label, prefix in phases:
             sessions = {row['file'] for row in rows if row['features'] == fs and row['phase'] == phase and _meets(row, prefix)}
             print(f'{fs} meets the bar on {len(sessions)} session(s) for {label}.')
