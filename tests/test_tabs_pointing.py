@@ -39,6 +39,15 @@ class PhraseTests(unittest.TestCase):
         self.assertEqual(self.tool("go to the gmail tab"), ("switch_tab", {"name": "gmail"}))
         self.assertEqual(self.tool("what tabs are open"), ("list_tabs", {}))
         self.assertIsNone(self.tool("open a new tab"))
+        for text, name in (("switch back to facebook", "facebook"), ("switch to facebook", "facebook"),
+                           ("go back to facebook", "facebook"), ("go back to my email", "email"),
+                           ("switch back to the gmail tab", "gmail"), ("take me back to the news", "news")):
+            self.assertEqual(self.tool(text), ("switch_tab", {"name": name}), text)
+        # Phrases that mean something else keep their meaning (or go to Claude).
+        self.assertEqual(self.tool("go back")[0], "browser_navigate")
+        for text in ("switch to dark mode", "switch to reader view", "go back to the top", "go back to normal",
+                     "go back to the previous page", "switch back to bigger text", "go to facebook"):
+            self.assertNotEqual((self.tool(text) or ("",))[0], "switch_tab", text)
 
     def test_pointing(self):
         self.assertEqual(self.tool("where do I click to sign in"), ("show_where", {"target": "sign in"}))

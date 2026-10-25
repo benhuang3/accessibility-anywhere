@@ -291,6 +291,11 @@ TAB_RULES = [
 TAB_NUMBER = re.compile(rf"(?:go to |switch to |open )?(?:the )?(?:tab (?:number )?(?P<n>{_NUM})|"
                         rf"(?P<o>{'|'.join(_ORD)}) tab)")
 TAB_NAME = re.compile(r"(?:go to|switch to|take me to|show me|open)(?: the| my)? (?P<name>[a-z0-9' ]+?) tab")
+# "switch back to facebook", "go back to my email": a tab by name even without the word "tab". "go to facebook"
+# alone stays with Claude (it may mean opening the site). Words that mean something else are left alone.
+TAB_BACK = re.compile(r"(?:switch(?: back)?|go back|take me back|flip back) to(?: the| my)? (?P<name>[a-z0-9' ]+?)(?: tab)?")
+NOT_A_TAB = re.compile(r"(?:(?:\w+ )*(?:mode|view|theme|style|colou?rs?|font|text|size|zoom))|normal|top|bottom|start|"
+                       r"beginning|(?:the )?(?:previous|last|other|next) (?:page|one|screen)|page before|before|it")
 LIST_TABS = re.compile(r"(?:what|which) tabs (?:are|do i have)(?: open)?|list (?:my |the |all )?(?:open )?tabs|"
                        r"(?:read|tell me) (?:my |the )?tabs|how many tabs(?: are open| do i have)?")
 # "Show me where to click" and highlighting.
@@ -317,6 +322,9 @@ def _tabs(t: str) -> Match | None:
         return Match("list_tabs", [("list_tabs", {})])
     m = TAB_NAME.fullmatch(t)
     if m and m.group("name").strip() not in ("new", "a new", "another", "another new"):
+        return Match("switch_tab", [("switch_tab", {"name": m.group("name").strip()})])
+    m = TAB_BACK.fullmatch(t)
+    if m and not NOT_A_TAB.fullmatch(m.group("name").strip()):
         return Match("switch_tab", [("switch_tab", {"name": m.group("name").strip()})])
     return None
 
