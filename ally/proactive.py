@@ -25,7 +25,7 @@ from .habits import HabitMemory, context_key
 log = logging.getLogger("ally")
 
 DEFAULTS = {
-    "enabled": True, "offer_timeout_seconds": 8.0, "cooldown_seconds": 30.0, "fusion_window_seconds": 4.0,
+    "enabled": True, "offer_timeout_seconds": 20.0, "cooldown_seconds": 30.0, "fusion_window_seconds": 4.0,
     "min_confidence": 0.6, "auto_apply_after": 2, "voice_confirm": True, "overlay": True,
     "senses_behavior": True, "senses_vision": False, "camera_index": 0, "context_poll_seconds": 1.5,
 }
@@ -41,6 +41,13 @@ SIMPLE_OFFER = Accommodation("simple_site", "make this site simpler", "simplifie
 SIMPLE_WINDOW_SECONDS = 300
 SIMPLE_OFFER_EVERY_SECONDS = 24 * 3600
 REPLAY_EVERY_SECONDS = 600
+
+
+def trusted_source(s: Struggle) -> bool:
+    """Struggles that already passed the senses' own confidence gate ("senses", "senses.vision", ...,
+    and the senses' own simulator, "simulated")."""
+    src = s.source or ""
+    return src == "senses" or src.startswith("senses.") or src == "simulated"
 
 
 def fused_kinds(s: Struggle | None) -> set[str]:
@@ -264,7 +271,9 @@ class Coordinator:
         kinds = {e.kind for e in recent}
         self._log("struggle", f"{s.kind} {s.confidence:.2f} (fused {score:.2f} from {', '.join(sorted(kinds))})",
                   source=s.source)
-        if score < float(self.cfg("min_confidence")):
+        # One gate, not two: the senses already require two agreeing signals (or a strong solo one) before
+        # they send a struggle, so theirs pass as they are; other senders (run.py simulate, the API) are fused here.
+        if not trusted_source(s) and score < float(self.cfg("min_confidence")):
             return
         if self.pending is not None:
             return

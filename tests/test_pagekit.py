@@ -444,6 +444,20 @@ class ProactiveTests(unittest.TestCase):
         coord.handle_struggle(Struggle("rage_click", 0.9))
         self.assertNotEqual(offers[-1].accommodation.key, SIMPLE_OFFER.key)
 
+    def test_senses_struggles_pass_their_own_gate_others_are_checked_again(self):
+        tmp = Path(tempfile.mkdtemp())
+        offers = []
+        coord = Coordinator(EventBus(), lambda n, a, src: None, HabitMemory(tmp / "h.json"),
+                            lambda: {"app": "Notepad", "site": "", "in_browser": False},
+                            lambda: {"cooldown_seconds": 0, "min_confidence": 0.6, "offer_timeout_seconds": 0.05},
+                            ui=NullUI(), voice=NullVoice())
+        coord.bus.subscribe("offer", offers.append)
+        coord.handle_struggle(Struggle("fused", 0.55, source="senses"))  # weak but agreed by two signals
+        self.assertEqual(len(offers), 1)
+        coord._recent.clear()
+        coord.handle_struggle(Struggle("squint", 0.55, source="simulate"))  # run.py simulate: checked here
+        self.assertEqual(len(offers), 1)
+
     def test_simplified_mode_never_becomes_an_automatic_habit(self):
         coord, mem, calls, _ = self.make_coordinator()
         mem.record("example.test", SIMPLE_OFFER, True)

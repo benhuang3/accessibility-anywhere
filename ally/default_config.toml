@@ -115,7 +115,7 @@ calibration_poses = 3      # 3 = 9 dots, then sit back for 5, then lean in for 5
 features = "v5"            # v5 is v4 plus MobileGaze yaw and pitch (mobileone_s0). If that model is missing, setup uses v4.
 click_learning = true      # clicks quietly improve the estimate, and that learning is kept across restarts. A new setup starts fresh. Set false to turn that off. Clicks stay on this computer.
 max_radius_px = 250        # above this uncertainty, Ally uses the mouse pointer and says so
-answer_offers = true       # when Ally offers help, Yes and No cards appear; look at one to answer (if the tracker is reliable)
+answer_offers = false      # separate look-to-answer Yes/No cards (off: Ally's offer bubble and voice answer offers)
 
 # Noticing when you're struggling, so Ally can offer help before you ask.
 # Camera: squinting and leaning toward the screen (shares the camera with the eye tracker; frames are
@@ -187,7 +187,7 @@ camera_index = 0
 min_confidence = 0.6           # 0..1, how sure before offering
 fusion_window_seconds = 4      # signals this close together count as one moment
 cooldown_seconds = 30          # at most one offer per app/site in this time
-offer_timeout_seconds = 8      # no answer = no change
+offer_timeout_seconds = 20     # no answer = no change (time to hear the question, answer, and a re-ask)
 auto_apply_after = 2           # accepted this many times on a site = do it automatically
 context_poll_seconds = 1.5
 
