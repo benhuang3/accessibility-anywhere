@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from helpers import EnvPatch, FakeClaude, fake_screen, final, temp_home, tool_use
 
@@ -133,6 +134,41 @@ class BrainTests(unittest.TestCase):
         reply = self.agent.brain.handle("stop")
         self.assertEqual(reply.mode, "fast")
         self.assertEqual(self.api.requests, [])
+
+    def test_closest_runs_as_fast_rule(self):
+        calls = []
+
+        def fake_reader(on: bool = True):
+            calls.append(on)
+            return "Reader view is on."
+
+        self.agent.registry.add(build_tool(fake_reader, name="reader_view"))
+        reply = self.agent.brain.handle("can you make this easier to read")
+        self.assertEqual(reply.mode, "fast")
+        self.assertEqual(reply.actions[0]["tool"], "reader_view")
+        self.assertEqual(calls, [True])
+        self.assertEqual(self.api.requests, [])
+
+    def test_strict_rule_precedes_closest(self):
+        with patch("ally.brain.rules.closest") as closest:
+            self.assertEqual(self.agent.brain.handle("stop").mode, "fast")
+        closest.assert_not_called()
+
+    def test_closest_respects_fast_path_setting(self):
+        self.agent.config.data["brain"]["fast_path"] = False
+        self.api.queue(200, final("I can help with reading."))
+        with patch("ally.brain.rules.closest") as closest:
+            reply = self.agent.brain.handle("make this easier to read")
+        self.assertEqual(reply.mode, "claude")
+        closest.assert_not_called()
+
+    def test_closest_leaves_other_requests_to_claude(self):
+        for text in ("what's the weather", "call Priya", "don't make the words bigger"):
+            with self.subTest(text=text):
+                self.api.queue(200, final("Let me help."))
+                reply = self.agent.brain.handle(text)
+                self.assertEqual(reply.mode, "claude")
+                self.assertEqual(reply.actions, [])
 
     def test_self_heals_unsupported_speed_settings(self):
         self.api.queue(400, {"type": "error", "error": {"type": "invalid_request_error",

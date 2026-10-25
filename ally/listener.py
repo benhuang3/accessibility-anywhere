@@ -29,8 +29,10 @@ log = logging.getLogger("ally.listener")
 
 BLOCK = RATE // 10  # 100 ms of audio per read
 # What speech-to-text writes for "Ally" (it often can't know the spelling of a name).
-SOUNDS_LIKE = {"ally": ["ally", "allie", "alley", "ali", "aly", "alli", "allee"]}
-PREFIX = r"(?:(?:hey|hi|okay|ok|oh|yo)[\s,.!]+)?"
+SOUNDS_LIKE = {"ally": ["ally", "allie", "alley", "ali", "aly", "alli", "allee", "ollie", "olly",
+                        "ally's", "al e", "a lee"]}
+# Only fillers may precede the name, which must start within the first three words.
+PREFIX = r"(?:(?:hey|hello|hi|okay|ok|oh|yo|um|uh|so)[\W_]+){0,2}"
 STOP_WORDS = r"(?:stop|quiet|be quiet|shh+|pause|cancel|enough|shut up|silence)"
 
 
@@ -48,8 +50,9 @@ def wake_pattern(words: list[str]) -> str:
     for w in words:
         w = " ".join(str(w).lower().split())
         if w:
-            alts.extend(SOUNDS_LIKE.get(w, [w]))
-    alts = sorted({re.escape(a).replace(r"\ ", r"[\s,]+") for a in alts}, key=len, reverse=True)
+            alts.extend(SOUNDS_LIKE.get(w, [w, w + "s", w + "'s"]))
+    alts = sorted({re.escape(a).replace(r"\ ", r"[\s,]+").replace("'", "['\u2019]") for a in alts},
+                  key=len, reverse=True)
     return "(?:" + "|".join(alts or ["ally"]) + ")"
 
 
@@ -338,7 +341,8 @@ class WakeListener:
                 return None  # not for Ally
             if rules.normalize(rest) in ("", "you", "thank you", "thanks", "bye", "okay", "ok"):
                 return None  # what speech-to-text writes for noise
-            if self._awake_kind == "follow" and len(rest.split()) > 5 and not rules.match(rest, strict=False):
+            if (self._awake_kind == "follow" and len(rest.split()) > 5
+                    and not rules.match(rest, strict=False) and not rules.closest(rest)):
                 return None  # a follow-up is short ("a bit more") or a known request; this is chatter
         self.last_heard = text
         self.awake_until = 0.0

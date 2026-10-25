@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
 FILLER = re.compile(r"^(hey |hi |ok |okay )?(ally |computer )?(please |can you |could you |would you )*|"
                     r"( please| for me| now| thanks| thank you)+$")
@@ -187,6 +188,125 @@ RULES = [
     Rule("help", [("show_help", {})], full=r"help|what can you do|what can i say|commands"),
 ]
 
+# Examples also describe strict-only commands, so an unsafe near-match can win and be declined.
+EXAMPLES = {
+    "stop": ["stop talking", "be quiet", "that's enough talking", "please stop reading now", "no more talking"],
+    "reset": ["reset everything", "undo all the changes", "put it back to normal", "reset the page", "undo that"],
+    "show_dot": ["show my eye dot", "show where i am looking", "put the eye marker on", "display the gaze circle",
+                 "let me see the eye pointer"],
+    "hide_dot": ["hide my eye dot", "hide where i am looking", "take the eye marker away", "remove the gaze circle",
+                 "hide the eye pointer"],
+    "follow_slower": ["follow my eyes more slowly", "slow the eye following down", "move the view slower",
+                      "the eye following is too fast", "pan a little slower"],
+    "follow_faster": ["follow my eyes more quickly", "speed the eye following up", "move the view faster",
+                      "the eye following is too slow", "pan a little faster"],
+    "look_magnify": ["magnify where i am looking", "make the spot i'm looking at bigger", "zoom in right here",
+                     "magnify this spot", "enlarge the words i'm looking at"],
+    "face_setup": ["set up my face", "scan my face", "do the face setup", "start setting up my face",
+                   "help set up my face"],
+    "quick_calibrate": ["quickly calibrate my eyes", "do a quick eye setup", "quick calibration",
+                        "recalibrate my eyes quickly", "quickly check the eye tracker"],
+    "calibrate": ["calibrate my eyes", "set up my eyes", "calibrate the eye tracker", "start eye calibration",
+                  "help set up eye tracking"],
+    "where_looking": ["what am i looking at", "tell me where i'm looking", "where are my eyes pointing",
+                      "which part am i looking at", "tell me what i'm staring at"],
+    "check_eyes": ["check my eye tracker", "check my eyes", "test the eye tracking", "check the gaze tracker",
+                   "see if my eye tracker works"],
+    "follow_eyes": ["follow my eyes", "make the zoom follow my gaze", "track where my eyes go",
+                    "move the magnifier with my eyes", "have the magnifier follow my eyes"],
+    "follow_mouse": ["follow my mouse", "make the zoom follow the pointer", "track where my mouse goes",
+                     "move the magnifier with the cursor", "have the magnifier follow my mouse"],
+    "eyes_off": ["turn the camera off", "stop tracking my eyes", "disable the eye tracker", "switch off the webcam",
+                 "stop watching my eyes"],
+    "eyes_on": ["turn the camera on", "start tracking my eyes", "enable the eye tracker", "switch on the webcam",
+                "start watching my eyes"],
+    "simple_off_all": ["turn simple mode off everywhere", "stop simple mode on every site",
+                       "remove simple mode from all sites", "disable simple mode everywhere",
+                       "leave simple mode on all websites"],
+    "simple_off": ["turn simple mode off", "leave simplified mode", "exit the simple view", "stop simple mode",
+                   "switch out of simple mode"],
+    "simple_on": ["turn simple mode on", "make this website simpler", "this site is confusing",
+                  "this website is too busy", "simplify this website"],
+    "buttons": ["make the buttons bigger", "these buttons are too tiny", "i keep missing the buttons",
+                "enlarge these buttons", "i need larger buttons"],
+    "clutter_off": ["show the ads again", "bring back the pop ups", "show the clutter again", "unhide the ads",
+                    "put the cookie banners back"],
+    "clutter": ["remove these pop ups", "get these ads out of the way", "hide all the adverts",
+                "there are too many pop ups", "clean up the clutter on this page"],
+    "menus_off": ["close the big menu", "hide the ally menu", "put the simple menu away", "close this simple menu",
+                  "take the big menu away"],
+    "menus": ["make the menu easier to use", "this menu keeps disappearing", "show the big menu",
+              "simplify this menu", "i can't use this menu"],
+    "check_layout": ["check this page layout", "is something cut off", "does this page look okay",
+                     "check if the page fits", "is the text getting cut off"],
+    "zoom_in": ["zoom in a bit", "zoom in a little more", "zoom in on this page", "bring the page closer with zoom",
+                "increase the page zoom"],
+    "zoom_out": ["zoom out a bit", "zoom out a little more", "zoom out on this page", "reduce the page zoom",
+                 "decrease the page zoom"],
+    "text_bigger": ["make the words bigger", "i can't read this", "i can't see this", "make it bigger",
+                    "the writing is too tiny", "i need bigger letters", "enlarge this text a little",
+                    "make these words larger"],
+    "text_smaller": ["make the words smaller", "the writing is too big", "i need smaller letters",
+                     "shrink this text a little", "make these words smaller"],
+    "read_selection": ["read the highlighted words to me", "read my selected text aloud",
+                       "say the words i highlighted", "read just the selection", "read what i selected"],
+    "read_page": ["read this to me", "read it out loud", "read me this article", "say what's written on this page",
+                  "read the whole page aloud", "can you read this page for me"],
+    "describe": ["describe my screen", "tell me what's on the screen", "what is on my screen",
+                 "explain what you see on the screen", "describe what's on the screen"],
+    "contrast": ["turn on high contrast", "make the contrast stronger", "use high contrast mode",
+                 "i need more contrast", "increase the contrast"],
+    "dark": ["turn on dark mode", "use a dark background", "make the page dark", "switch to dark theme",
+             "give me dark mode"],
+    "spacing": ["put more space between the lines", "spread the words out", "give the text more spacing",
+                "space the lines out more", "add more space around the text"],
+    "dyslexia": ["turn on the dyslexia font", "use the dyslexia reading font", "switch to dyslexic mode",
+                 "give me the dyslexia font", "enable the dyslexia style"],
+    "reader": ["make it easier to read", "make this easier to read", "make this page easier to read",
+               "give me a clean reading view", "show just the article", "put this in reader mode",
+               "switch to reading view"],
+    "reader_off": ["turn reader mode off", "close the reading view", "leave reader view",
+                   "exit the reader", "take me out of reader mode"],
+    "invert": ["invert the colors", "reverse the screen colors", "swap the light and dark colors",
+               "turn on inverted colors", "use inverted colours"],
+    "grayscale": ["make the screen black and white", "turn on grayscale", "use grey scale mode",
+                  "show everything in black and white", "switch to grayscale"],
+    "colors_normal": ["put the colors back to normal", "remove the color filter", "use regular colors again",
+                      "switch the color filters off", "restore the normal colors"],
+    "magnifier_off": ["turn the magnifier off", "close the screen magnifier", "stop magnifying the screen",
+                      "switch off screen magnification", "disable the magnifier"],
+    "magnifier": ["turn the magnifier on", "open the screen magnifier", "start magnifying the screen",
+                  "switch on screen magnification", "enable the magnifier"],
+    "scroll_down": ["scroll down a little", "go down", "keep going", "next part", "move down the page",
+                    "show me the next part", "go a bit further down"],
+    "scroll_up": ["scroll up a little", "go up a bit", "move up the page", "show me the part above",
+                  "go a bit further up"],
+    "back": ["go back", "take me back", "back to the last page", "return to the previous page",
+             "take me to the page before this"],
+    "reload": ["refresh this page", "load this page again", "reload the website", "try loading this page again",
+               "refresh the current tab"],
+    "forward": ["go forward", "take me forward", "forward to the next page", "go forward in the browser",
+                "return to the page ahead"],
+    "help": ["what can you do", "show me the commands", "what can i ask you", "tell me how to use ally",
+             "show me some help"],
+    "zoom_picture": ["show me the picture", "open the image", "let me see the photo", "make this picture bigger",
+                     "show this photo a little closer", "open up the picture"],
+    "close_picture": ["close this picture", "hide the photo", "exit the picture viewer", "put the picture away",
+                      "close the image viewer"],
+    "next_picture": ["show the next photo", "another picture", "move to the next image", "show a different picture",
+                     "next photograph"],
+    "previous_picture": ["show the previous photo", "go back to the earlier picture", "show the image before this",
+                         "previous photograph", "take me back to the last picture"],
+    "describe_picture": ["describe this picture", "tell me about this photo", "what is in the image",
+                         "explain this photograph", "what does this picture show"],
+    "show_numbers": ["show the numbers", "put numbers on the buttons", "number all the links", "show number labels",
+                     "give me numbers to click"],
+    "hide_numbers": ["hide the numbers", "remove the number labels", "take the numbers away", "numbers off",
+                     "clear the numbers"],
+    "click_number": ["click number three", "press seven", "tap number four", "choose number two", "click twenty"],
+    "click_text": ["click the sign in button", "press submit", "tap the link", "click continue", "choose the tab"],
+}
+
 _COMPILED = [(r, re.compile(rf"^(?:{r.full})$") if r.full else None, re.compile(r.loose) if r.loose else None)
              for r in RULES]
 
@@ -329,6 +449,63 @@ def match(text: str, strict: bool = True) -> Match | None:
             if loose is not None and loose.search(t):
                 return Match(rule.name, list(rule.actions))
     return None
+
+
+# Explicit allowlist: never infer clicks, numbers, resets, calibration, or screen uploads.
+_CLOSEST_NAMES = {
+    "stop", "show_dot", "hide_dot", "follow_slower", "follow_faster", "look_magnify", "where_looking",
+    "follow_eyes", "follow_mouse", "eyes_off", "eyes_on", "simple_off", "simple_on", "buttons", "clutter_off",
+    "clutter", "menus_off", "menus", "check_layout", "zoom_in", "zoom_out", "text_bigger", "text_smaller",
+    "read_selection", "read_page", "contrast", "dark", "spacing", "dyslexia", "reader", "reader_off", "invert",
+    "grayscale", "colors_normal", "magnifier_off", "magnifier", "scroll_down", "scroll_up", "back", "reload",
+    "forward", "help",
+}
+_CLOSEST_ACTIONS = {r.name: r.actions for r in RULES if r.name in _CLOSEST_NAMES}
+_CLOSEST_ACTIONS.update({name: actions for name, actions, _ in PICTURE_RULES})
+_CLOSEST_ACTIONS["zoom_picture"] = [("zoom_picture", {"about": ""})]
+_STOP_WORDS = set("a an the this that these those it me my i you your to of for please can could would "
+                  "will do does is are was be have has just bit little really very now thanks thank so um uh "
+                  "hey hello hi okay ok".split())
+_SENSITIVE = re.compile(r"\b(?:click|press|tap|number\w*|reset|undo|calibrat\w*|setup|set up|send|share|"
+                        r"call|tell|pay|buy|purchase|transfer|donate|delete|submit)\b|\d")
+_CHATTER = re.compile(r"^(?:why|how|when|who|we|he|she|they)\b|^i (?:read|said|was|did|went|like|had)\b")
+_NEGATION = {"not", "don't", "dont", "never", "no", "can't", "cant", "cannot"}
+CLOSEST_THRESHOLD = 0.82
+CLOSEST_MARGIN = 0.08
+
+
+def _content(text: str) -> set[str]:
+    return set(text.split()) - _STOP_WORDS
+
+
+def closest(text: str) -> Match | None:
+    """Fill a confident, unambiguous paraphrase of a safe command; otherwise leave it to Claude."""
+    t = normalize(text)
+    if not t or _SENSITIVE.search(t) or _CHATTER.search(t):
+        return None
+    words = _content(t)
+    if not words:
+        return None
+    scores = []
+    for name, examples in _CLOSEST_EXAMPLES.items():
+        best = 0.0
+        for example, content in examples:
+            # Negation changes intent even when almost every other word matches.
+            if bool(words & _NEGATION) != bool(content & _NEGATION):
+                continue
+            overlap = len(words & content) / len(words | content)
+            score = 0.55 * SequenceMatcher(None, t, example).ratio() + 0.45 * overlap
+            best = max(best, score)
+        scores.append((best, name))
+    scores.sort(reverse=True)
+    (score, name), (runner_up, _) = scores[:2]
+    if score < CLOSEST_THRESHOLD or score - runner_up < CLOSEST_MARGIN or name not in _CLOSEST_ACTIONS:
+        return None
+    return Match(name, [(tool, dict(args)) for tool, args in _CLOSEST_ACTIONS[name]])
+
+
+_CLOSEST_EXAMPLES = {name: [(normalize(e), _content(normalize(e))) for e in examples]
+                     for name, examples in EXAMPLES.items()}
 
 
 HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the selection, stop, high contrast, "

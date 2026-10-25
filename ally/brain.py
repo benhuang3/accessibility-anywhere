@@ -89,7 +89,7 @@ class Brain:
             return self._run_actions([(name, {})], "fast")
         mode = self.mode()
         if self.cfg.get("fast_path", True) or mode == "offline":
-            m = rules.match(text, strict=True)
+            m = rules.match(text, strict=True) or rules.closest(text)
             if m:
                 return self._run_rule(m, "fast")
         if mode == "offline":

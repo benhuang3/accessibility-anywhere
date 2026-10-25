@@ -43,6 +43,26 @@ class WakeWordTests(unittest.TestCase):
         self.assertTrue(listener.is_stop("Ally, be quiet.", ["ally"]))
         self.assertFalse(listener.is_stop("stop the car", ["ally"]))
 
+    def test_variants_fillers_and_boundaries(self):
+        for name in ("Ally", "Allie", "Alley", "Ali", "Aly", "Alli", "Allee", "Ollie", "Olly", "Al E", "A Lee",
+                     "Ally's", "Ally\u2019s"):
+            with self.subTest(name=name):
+                self.assertEqual(listener.split_wake(f"Okay so {name}: zoom in!", ["ally"]), (True, "zoom in"))
+                self.assertEqual(listener.split_wake(f"Zoom in, {name}.", ["ally"]), (True, "Zoom in"))
+                self.assertTrue(listener.is_stop(f"{name}, stop", ["ally"]))
+        for text in ("my friend Ali said the alley was dark", "my friend Ali zoom in", "Alligator zoom in",
+                     "Totally zoom in", "okay so um Ally zoom in", "the alley is dark", "hi Al Ebert zoom in"):
+            with self.subTest(text=text):
+                self.assertFalse(listener.split_wake(text, ["ally"])[0])
+
+    def test_configured_wake_words(self):
+        for name in ("Computer", "Computers", "Computer's", "Computer\u2019s"):
+            with self.subTest(name=name):
+                self.assertEqual(listener.split_wake(f"Hello {name}, zoom in", ["computer"]), (True, "zoom in"))
+                self.assertTrue(listener.is_stop(f"{name} stop", ["computer"]))
+        self.assertFalse(listener.split_wake("Allie zoom in", ["computer"])[0])
+        self.assertEqual(listener.split_wake("Um hello my helper, read this", ["my helper"]), (True, "read this"))
+
 
 def blocks(levels):
     """Fake audio: one 100 ms block per level."""
@@ -157,6 +177,16 @@ class ListenerTests(unittest.TestCase):
         self.hear(L, a, "Ally, make it bigger")
         time.sleep(0.05)
         self.assertIsNone(self.hear(L, a, "bigger"))
+
+    def test_long_closest_follow_up(self):
+        a = FakeAgent()
+        L = listener.WakeListener(a)
+        self.hear(L, a, "Allie, make it bigger")
+        time.sleep(0.05)
+        text = "could you take me to the page before this"
+        self.assertIsNone(rules.match(text, strict=False))
+        self.assertEqual(self.hear(L, a, text), text)
+        self.assertEqual(a.handled[-1], text)
 
     def test_only_stop_while_ally_talks(self):
         a = FakeAgent()
