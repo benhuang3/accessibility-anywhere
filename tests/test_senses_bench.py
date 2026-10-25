@@ -66,6 +66,7 @@ class BenchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p=Path(td)/"small.jsonl"
             rows=[{"rec":"meta","alias":"A","eyes":"hooded"},
+                  {"rec":"helper","ready":True},
                   {"rec":"helper","t":1,"f":{"squint_l":.2}},
                   {"rec":"label","name":"squint","start":1,"end":2,"expect":"squint"}]
             p.write_text("\n".join(map(json.dumps,rows)),encoding="utf-8")

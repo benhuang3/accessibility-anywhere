@@ -23,7 +23,7 @@ def read_recording(path):
         except ValueError: continue
         typ=row.get("rec", row.get("type", row.get("kind", "")))
         if typ=="meta": meta=row
-        elif "helper" in typ or "frame" in typ:
+        elif typ == "frame" or (typ == "helper" and "t" in row and ("f" in row or "lm" in row)):
             f=row.get("f", row)
             frames.append({"t":float(row.get("t",0)), "f":f, "raw":row if "lm" in row else f})
         elif typ in ("label", "target"):
