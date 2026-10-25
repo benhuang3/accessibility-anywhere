@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Harbor Light Bank: Account Alert (DEMO)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font: 20px/1.5 system-ui, sans-serif; max-width: 640px; margin: 80px auto; padding: 0 16px; color: #1a1a1a; }
+    .note { color: #555; font-size: 16px; }
+    button { font-size: 20px; padding: 12px 20px; cursor: pointer; margin-top: 16px; }
+    .trap-overlay {
+      position: fixed; inset: 0; z-index: 99999;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.65);
+    }
+    .trap-overlay.hidden { display: none; }
+    .trap-box {
+      background: #fff; border: 4px solid #b3261e; padding: 32px; max-width: 480px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4); font-size: 22px;
+    }
+    .trap-box strong { color: #b3261e; font-size: 28px; display: block; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <p class="note">Ally demo page. Invented brand. Nothing here is real.</p>
+  <h1>Harbor Light Bank</h1>
+  <p>We detected unusual activity on your account. Stay on this page while we verify your identity.</p>
+  <button type="button" id="run-tricks">Run the scam tricks</button>
+  <div id="trap-overlay" class="trap-overlay hidden" role="alert">
+    <div class="trap-box">
+      <strong>SECURITY ALERT</strong>
+      <p>Your device has been flagged. Call Harbor Light support at 1-888-555-0100 immediately. Do not close this window.</p>
+      <button type="button" id="close-overlay">Dismiss</button>
+    </div>
+  </div>
+  <script src="trap-demo.js"></script>
+</body>
+</html>
