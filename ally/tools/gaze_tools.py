@@ -7,7 +7,8 @@ import sys
 from typing import Annotated, Literal
 
 from .. import gaze_model
-from ..gaze_helper import likely_cause, result_grade, result_lines, retune_check, retune_sentence
+from ..gaze_helper import (likely_cause, pose_count, result_grade, result_lines, retune_check,
+                           retune_sentence, setup_duration)
 from ..registry import ToolError, tool
 
 
@@ -163,20 +164,24 @@ def magnify_where_i_look(ctx, level: Annotated[float, "Magnification, e.g. 2 = 2
     return done
 
 
-@tool(timeout=150)
+@tool(timeout=210)
 def calibrate_eye_tracker(ctx):
-    """Set up the eye tracker: about a minute of dots, then a check the user was not trained on.
+    """Set up the eye tracker: dots at the usual position, then a little farther and a little closer, then a check.
 
     Use when the user asks to calibrate or set up eye tracking, or when "what I'm looking at"
-    doesn't land where they look.
+    doesn't land where they look. With calibration_poses = 1 it is the original single sitting.
     """
     p = ctx.os
     level = p.view()[0]
     if level > 1.0 or p.other_magnifier_open():
         p.magnify(1.0)  # the dots must be shown unmagnified (this also closes Windows Magnifier)
-    ctx.say("Eye tracker setup. Look at each dot. Move only your eyes, and keep your head still. This takes about a minute.")
+    poses = pose_count(ctx.agent.config.data.get("gaze", {}).get("calibration_poses", 3))
+    extra = "" if poses <= 1 else " Then sit back a little, and lean in a little."
+    takes = setup_duration(poses).rstrip(".").lower()
+    ctx.say("Eye tracker setup. Look at each dot. Move only your eyes, and keep your head still."
+            f"{extra} This takes {takes}.")
     try:
-        result = ctx.agent.gaze.calibrate()
+        result = ctx.agent.gaze.calibrate(timeout=180 if poses >= 3 else 120)
     finally:
         if level > 1.0:
             p.magnify(level)

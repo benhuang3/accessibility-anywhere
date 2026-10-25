@@ -24,6 +24,7 @@ import urllib.request
 from pathlib import Path
 
 from . import gaze_model
+from .gaze_helper import pose_count
 from .claude import ssl_context
 from .hotkeys import python_for_children
 from .paths import CODE_ROOT
@@ -267,6 +268,8 @@ class GazeManager:
             elif msg.get("camera_off"):
                 # The reader thread must not wait on the helper: closing stdin from here can deadlock.
                 threading.Thread(target=self._on_camera_off, daemon=True, name="gaze-off").start()
+            elif msg.get("say"):
+                self._speak(str(msg["say"]))
             elif "error" in msg:
                 self.error = str(msg["error"])[:300]
                 log.warning("eye tracker: %s", self.error)
@@ -626,7 +629,16 @@ class GazeManager:
         except (TypeError, ValueError):
             return 250.0
 
-    def calibrate(self, timeout: float = 120) -> dict:
+    def _speak(self, text: str) -> None:
+        speaker = getattr(self.agent, "speaker", None)
+        if speaker is None or not text:
+            return
+        try:
+            speaker.say(text)
+        except Exception:
+            log.debug("couldn't say the eye-tracker prompt", exc_info=True)
+
+    def calibrate(self, timeout: float = 180) -> dict:
         """Show the dots and wait for the result: {"calibrated": bool, "error_px" or "why"}."""
         if not self.wanted():
             self.set_enabled(True)
@@ -637,7 +649,8 @@ class GazeManager:
             time.sleep(0.2)
         self._calib_done.clear()
         self._calib_result = None
-        if not self.send("calibrate"):
+        count = pose_count(self.cfg.get("calibration_poses", 3))
+        if not self.send(f"calibrate {count}"):
             raise ToolError("The eye tracker stopped. Try again in a few seconds.")
         if not self._calib_done.wait(timeout):
             raise ToolError("Calibration took too long.")

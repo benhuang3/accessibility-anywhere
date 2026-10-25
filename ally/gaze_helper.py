@@ -12,7 +12,7 @@
 Settings "gaze" (default true) turns gaze points on; "signals" sends face numbers (ally.senses.face) at
 "signals_fps". Frames never leave this process and are never written to disk.
 
-Commands on stdin: "calibrate"; "check" runs only the 5 check dots; "stop" cancels a calibration in
+Commands on stdin: "calibrate" or "calibrate 1" / "calibrate 3" (head positions); "check" runs only the 5 check dots; "stop" cancels a calibration in
 progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not saved
 and is not sent anywhere); "choose {json}" shows 2 to 4 large cards and "choose off" closes them;
 "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
@@ -59,6 +59,11 @@ HEAD_MOVE_DEG = 3.0  # yaw or pitch change that means the head turned instead of
 WIDTH_STEADY = 0.05  # relative face-width change; 40 cm to 32 cm is much larger than this
 EYES_ONLY = "Move only your eyes, keep your head still."
 HEAD_RETRY_LINE = "Keep your head still, look with your eyes only."
+SIT_BACK = "Sit back a little"
+LEAN_IN = "Lean in a little"
+POSE_NORMAL, POSE_BACK, POSE_CLOSE = "normal", "back", "close"
+MINUTE = "About a minute."
+MINUTE_HALF = "About a minute and a half."
 RESULT_SECONDS = 4.0
 MIN_OPEN = 0.12  # eye openness below this is a blink: skip the frame
 JUMP = 0.08  # change in iris position (eye widths) that means the eye jumped: skip that frame
@@ -216,10 +221,60 @@ def _pose_summary(poses: list[tuple[float, float]]) -> tuple[float, tuple[float,
     return span, (statistics.median(yaws), statistics.median(pitches))
 
 
-def intro_lines(instruction: str = "") -> list[str]:
+def pose_count(value) -> int:
+    """3 runs the extra sit-back and lean-in rounds. 1 is the original 13 dots only."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 3
+    return 1 if n <= 1 else 3
+
+
+def setup_duration(poses: int = 3) -> str:
+    """The time shown and spoken before the dots. The extra rounds add about half a minute."""
+    return MINUTE if pose_count(poses) <= 1 else MINUTE_HALF
+
+
+def intro_lines(instruction: str = "", poses: int = 3) -> list[str]:
     """The words on the setup screen before the first dot."""
     third = instruction if instruction else "Next, look at each dot until it moves."
-    return ["Eye tracker setup", EYES_ONLY, third, "Esc cancels."]
+    return ["Eye tracker setup", EYES_ONLY, third, setup_duration(poses), "Esc cancels."]
+
+
+def screen_mm() -> tuple[int, int] | None:
+    """The primary screen's physical size in millimetres, or None when Windows can't say."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+        hdc = user32.GetDC(0)
+        try:
+            width = int(gdi32.GetDeviceCaps(hdc, 4))   # HORZSIZE
+            height = int(gdi32.GetDeviceCaps(hdc, 6))  # VERTSIZE
+        finally:
+            user32.ReleaseDC(0, hdc)
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def attach_screen_mm(model: dict, mm=None) -> dict:
+    """Copy of a fitted model with screen_mm set, when the size is known."""
+    out = dict(model)
+    if mm is None:
+        mm = screen_mm()
+    if not mm:
+        return out
+    try:
+        out["screen_mm"] = [int(mm[0]), int(mm[1])]
+    except (TypeError, ValueError, IndexError):
+        return out
+    return out
 
 
 def readiness_issue(face: dict | None) -> str | None:
@@ -511,10 +566,12 @@ def _wrap_plain(text: str, limit: int = 42) -> list[str]:
 
 
 class _Dot:
-    def __init__(self, phase: str, tid: int, nx: float, ny: float, settle: float, collect: float):
+    def __init__(self, phase: str, tid: int, nx: float, ny: float, settle: float, collect: float,
+                 pose: str = ""):
         self.phase, self.id = phase, tid
         self.nx, self.ny = nx, ny
         self.settle, self.collect = settle, collect
+        self.pose = pose
         self.good = 0
         self.samples: list[tuple[list[float], tuple[float, float]]] = []
         self.poses: list[tuple[float, float]] = []  # yaw, pitch in degrees, from the face matrix
@@ -528,12 +585,14 @@ class Setup:
     """Readiness, 13 calibration dots, one retry, then 5 check dots. No camera and no window."""
 
     def __init__(self, screen: tuple[int, int], rng: random.Random | None = None,
-                 ready_seconds: float = READY_SECONDS, min_good: int = MIN_GOOD, on_target=None):
+                 ready_seconds: float = READY_SECONDS, min_good: int = MIN_GOOD, on_target=None,
+                 poses: int = 3):
         self.w, self.h = int(screen[0]), int(screen[1])
         self.rng = rng or random.Random()
         self.ready_seconds = float(ready_seconds)
         self.min_good = int(min_good)
         self.on_target = on_target
+        self.poses = pose_count(poses)
         self.stage = "ready"
         self.instruction = ""
         self.good_since: float | None = None
@@ -556,6 +615,9 @@ class Setup:
         self._steady_ref: tuple[float, float, float] | None = None
         self._steady_since: float | None = None
         self.anchor_pose: tuple[float, float] | None = None
+        self._round: list[_Dot] = []  # the dots of the round in progress; retries stay inside it
+        self.pose_plan: list[tuple[str, str, list]] = []
+        self.announcements: list[str] = []
         self._lights: list[float] = []
         self._widths: list[float] = []
         self._glare_frames = 0
@@ -574,6 +636,8 @@ class Setup:
         wall = now if wall is None else wall
         if self.stage == "ready":
             return self._ready(now, face, wall)
+        if self.stage == "settle":
+            return self._settle(now, face, wall)
         if self.stage in ("targets", "validate", "drift"):
             if self.t0 is None:
                 self._begin(now, wall)
@@ -645,15 +709,58 @@ class Setup:
         return now - self._steady_since >= STEADY_SECONDS
 
     def _start_targets(self, now: float, wall: float) -> None:
-        self.targets = [_Dot("calibration", i, x, y, CAL_SETTLE, CAL_COLLECT)
+        self.targets = [_Dot("calibration", i, x, y, CAL_SETTLE, CAL_COLLECT, pose=POSE_NORMAL)
                         for i, (x, y) in enumerate(calibration_points())]
         checks = validation_points(self.rng)
         self.val_targets = [_Dot("validation", i, x, y, VAL_SETTLE, VAL_COLLECT)
                             for i, (x, y) in enumerate(checks)]
-        self.order = list(self.targets)
+        self.pose_plan = []
+        if self.poses >= 3:
+            avoid = [(dot.nx, dot.ny) for dot in self.targets + self.val_targets]
+            back = validation_points(self.rng, n=5, avoid=avoid)
+            close = validation_points(self.rng, n=5, avoid=avoid + back)
+            self.pose_plan = [(POSE_BACK, SIT_BACK, back), (POSE_CLOSE, LEAN_IN, close)]
+        self._begin_round(self.targets, now, wall)
+
+    def _begin_round(self, dots: list[_Dot], now: float, wall: float) -> None:
+        """Start a round. Head movement is judged against this round's first dot, not an earlier one."""
+        self.anchor_pose = None
+        self._round = list(dots)
+        self.order = list(dots)
         self.pos = 0
+        self.t0 = None
         self.stage = "targets"
-        self._begin(now, wall)
+        self._retried_stages.discard("targets")
+        if self.order:
+            self._begin(now, wall)
+
+    def _settle(self, now: float, face, wall: float) -> str:
+        """Wait until the new head position holds still, then collect that round."""
+        if not self._update_steady(now, face):
+            return "running"
+        name = getattr(self, "_settle_pose", "")
+        prompt = getattr(self, "_settle_prompt", "")
+        points = getattr(self, "_settle_points", [])
+        dots = [_Dot("calibration", i, x, y, CAL_SETTLE, CAL_COLLECT, pose=name)
+                for i, (x, y) in enumerate(points)]
+        self.targets.extend(dots)
+        self._begin_round(dots, now, wall)
+        if prompt:
+            self.line = prompt
+        return "running"
+
+    def _start_settle(self, pose: str, prompt: str, points: list) -> None:
+        self.stage = "settle"
+        self._settle_pose = pose
+        self._settle_prompt = prompt
+        self._settle_points = list(points)
+        self.t0 = None
+        self._steady_ref = None
+        self._steady_since = None
+        self.line = prompt
+        self.instruction = prompt
+        self.banners.append(prompt)
+        self.announcements.append(prompt)
 
     def _begin(self, now: float, wall: float) -> None:
         target = self.order[self.pos]
@@ -664,6 +771,8 @@ class Setup:
         x, y = self._px(target)
         event = {"phase": target.phase, "id": target.id, "x": x, "y": y,
                  "shown": target.shown, "start": target.start, "end": target.end}
+        if target.pose:
+            event["pose"] = target.pose
         self.events.append(event)
         if target.warn_head:
             self.line = HEAD_RETRY_LINE
@@ -697,7 +806,7 @@ class Setup:
             return
 
     def _mark_head(self, target: _Dot) -> None:
-        """Flag a dot whose head turned during the collection, or away from the first dot's pose."""
+        """Flag a dot whose head turned during the collection, or away from this round's first dot."""
         if target.retried:
             return
         summary = _pose_summary(target.poses)
@@ -756,6 +865,10 @@ class Setup:
                 self.order.extend(again)
                 self._begin(now, wall)
                 return "running"
+        if self.stage == "targets" and self.pose_plan:
+            pose, prompt, points = self.pose_plan.pop(0)
+            self._start_settle(pose, prompt, points)
+            return "running"
         if self.stage == "targets":
             self.stage = "await_fit"
             self._fit_sent = False
@@ -769,7 +882,7 @@ class Setup:
 
     def _again(self) -> list[_Dot]:
         """Dots to show once more: too few frames (calibration only), or the head turned."""
-        dots = {"targets": self.targets, "validate": self.val_targets, "drift": self.drift_targets}
+        dots = {"targets": self._round, "validate": self.val_targets, "drift": self.drift_targets}
         again = []
         for target in dots.get(self.stage, []):
             if target.retried:
@@ -819,6 +932,8 @@ class Setup:
         self.pos = 0
         self.t0 = None
         self._score_sent = False
+        self.anchor_pose = None  # the check is its own round
+        self._retried_stages.discard("validate")
 
     def start_check(self, now: float, wall: float) -> None:
         """Five check dots only. The model is already fit; these frames are not used to fit it."""
@@ -830,6 +945,8 @@ class Setup:
         self.stage = "validate" if self.order else "done"
         self._score_sent = False
         self._fit_sent = True
+        self.anchor_pose = None
+        self._retried_stages.discard("validate")
         if self.order:
             self._begin(now, wall)
 
@@ -845,6 +962,8 @@ class Setup:
         self.pos = 0
         self.t0 = None
         self.stage = "drift" if self.drift_targets else "done"
+        self.anchor_pose = None
+        self._retried_stages.discard("drift")
 
     def finish(self, now: float) -> None:
         self.stage = "result"
@@ -852,16 +971,18 @@ class Setup:
 
 
 class Calibration:
-    """Full-screen setup: readiness, 13 dots, a retry, then 5 check dots. Esc cancels."""
+    """Full-screen setup: readiness, 13 dots, optional sit-back and lean-in rounds, then 5 check dots."""
 
     def __init__(self, size: tuple[int, int], on_target=None, rng: random.Random | None = None,
-                 ready_seconds: float = READY_SECONDS):
+                 ready_seconds: float = READY_SECONDS, poses: int = 3):
         import cv2  # type: ignore
         import numpy as np  # type: ignore
 
         self.cv2, self.np = cv2, np
         self.w, self.h = size
-        self.setup = Setup(size, rng=rng, ready_seconds=ready_seconds, on_target=on_target)
+        self.speak = False  # the camera helper turns this on so Ally can say the pose prompts
+        self._said = 0
+        self.setup = Setup(size, rng=rng, ready_seconds=ready_seconds, on_target=on_target, poses=poses)
         self.last_face = time.monotonic()
         self.check_only = False
         self.result: dict | None = None
@@ -911,6 +1032,10 @@ class Calibration:
         if feat is not None:
             self.last_face = now
         state = self.setup.step(now, feat, face, wall)
+        if self.speak:
+            while self._said < len(self.setup.announcements):
+                emit({"say": self.setup.announcements[self._said]})
+                self._said += 1
         self._draw(now)
         if (self.cv2.waitKey(1) & 0xFF) == 27:
             if self.setup.stage in ("result", "done"):
@@ -924,11 +1049,15 @@ class Calibration:
         stage = self.setup.stage
         target = self.setup.current
         if stage == "ready":
-            title, eyes, third, cancel = intro_lines(self.setup.instruction)
-            self._text(img, title, 0.32, 1.3)
-            self._text(img, eyes, 0.44, 0.75)
-            self._text(img, third, 0.56, 0.85)
-            self._text(img, cancel, 0.68, 0.7)
+            title, eyes, third, duration, cancel = intro_lines(self.setup.instruction, self.setup.poses)
+            self._text(img, title, 0.28, 1.2)
+            self._text(img, eyes, 0.40, 0.75)
+            self._text(img, third, 0.52, 0.8)
+            self._text(img, duration, 0.64, 0.75)
+            self._text(img, cancel, 0.76, 0.7)
+        elif stage == "settle":
+            self._text(img, self.setup.line or SIT_BACK, 0.46, 1.15)
+            self._text(img, "Hold still there.", 0.58, 0.8)
         elif target is not None and self.setup.t0 is not None:
             x, y = self.setup._px(target)
             elapsed = now - self.setup.t0
@@ -1281,6 +1410,14 @@ def classify_command(cmd: str) -> tuple[str, object]:
             return "stop", None
         if cmd == "calibrate":
             return "calibrate", None
+        if cmd.startswith("calibrate "):
+            parts = cmd.split()
+            if len(parts) != 2:
+                return "ignore", None
+            try:
+                return "calibrate", pose_count(parts[1])
+            except ValueError:
+                return "ignore", None
         if cmd == "check":
             return "check", None
         if cmd == "reload":
@@ -1735,7 +1872,9 @@ def main(argv: list[str]) -> int:
             smooth = gaze_model.OneEuro()
         try:
             if kind == "calibrate" and calib is None:
-                calib = Calibration(size)
+                poses = 3 if payload is None else pose_count(payload)
+                calib = Calibration(size, poses=poses)
+                calib.speak = True
             elif kind == "check" and calib is None:
                 if model is None:
                     emit({"calibrated": False, "why": "The eye tracker needs a setup first."})
@@ -1855,7 +1994,7 @@ def main(argv: list[str]) -> int:
             state = calib.step(feat, time.monotonic(), face, now)
             if state == "fit":
                 try:
-                    fitted = gaze_model.fit(calib.usable(), size, feature_set)
+                    fitted = attach_screen_mm(gaze_model.fit(calib.usable(), size, feature_set))
                     calib.accept_fit(fitted)
                 except (ValueError, np.linalg.LinAlgError) as e:
                     result = {"calibrated": False, "why": f"I {e}. Try again with more light on your face."}

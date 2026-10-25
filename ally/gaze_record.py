@@ -2,7 +2,8 @@
 
     python -m ally.gaze_record --person ALIAS --glasses yes|no --light bright|dim
 
-The same setup as "Ally, set up my eyes" (readiness, 13 dots, 5 check dots), then about
+The same setup as "Ally, set up my eyes" (readiness, 13 dots, then 5 sitting back and 5
+leaning in when calibration_poses is 3, then 5 check dots), then about
 2 minutes of reading, then 5 check dots again (drift). Writes
 state/gaze_runs/<run>/<alias>-<glasses>-<light>.jsonl.
 
@@ -174,17 +175,28 @@ def target_record(event: dict) -> dict | None:
     if phase not in ("calibration", "validation", "drift"):
         return None
     try:
-        return {"rec": "target", "phase": phase, "id": int(event["id"]), "x": int(event["x"]),
-                "y": int(event["y"]), "shown": float(event["shown"]), "start": float(event["start"]),
-                "end": float(event["end"])}
+        row = {"rec": "target", "phase": phase, "id": int(event["id"]), "x": int(event["x"]),
+               "y": int(event["y"]), "shown": float(event["shown"]), "start": float(event["start"]),
+               "end": float(event["end"])}
     except (KeyError, TypeError, ValueError):
         return None
+    pose = event.get("pose")
+    if pose in ("normal", "back", "close"):
+        row["pose"] = pose
+    return row
 
 
-def meta_record(alias: str, glasses: str, light: str, screen, camera: int, commit: str, created: float) -> dict:
-    return {"rec": "meta", "alias": alias, "glasses": glasses, "light": light,
-            "screen": [int(screen[0]), int(screen[1])], "camera": int(camera),
-            "commit": str(commit or ""), "created": float(created)}
+def meta_record(alias: str, glasses: str, light: str, screen, camera: int, commit: str, created: float,
+                screen_mm=None) -> dict:
+    row = {"rec": "meta", "alias": alias, "glasses": glasses, "light": light,
+           "screen": [int(screen[0]), int(screen[1])], "camera": int(camera),
+           "commit": str(commit or ""), "created": float(created)}
+    if screen_mm:
+        try:
+            row["screen_mm"] = [int(screen_mm[0]), int(screen_mm[1])]
+        except (TypeError, ValueError, IndexError):
+            pass
+    return row
 
 
 def click_record(t, x, y) -> dict:
@@ -238,6 +250,19 @@ def run_name(run: str) -> str:
     if run and TOKEN.fullmatch(run):
         return run
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
+def calibration_poses(paths) -> int:
+    """How many head positions a recording collects. Same setting as Ally's setup."""
+    try:
+        from .config import ConfigManager
+        from .gaze_helper import pose_count
+
+        cm = ConfigManager(paths.config)
+        cm.reload()
+        return pose_count((cm.data.get("gaze") or {}).get("calibration_poses", 3))
+    except (OSError, KeyError, TypeError, ValueError):
+        return 3
 
 
 def camera_index(paths, camera: int | None) -> int:
@@ -370,7 +395,8 @@ def _on_target(log: RunLog, event: dict) -> None:
 
 
 def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int],
-          alias: str, glasses: str, light: str, commit: str, created: float) -> int:
+          alias: str, glasses: str, light: str, commit: str, created: float,
+          poses: int = 3, screen_mm=None) -> int:
     cap = indicator = calib = reading = None
     cv2 = None
     try:
@@ -380,7 +406,8 @@ def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int]
 
         from ally import gaze_model
         from ally.gaze_helper import (NUM_FACES, Calibration, CameraIndicator, likely_cause, look,
-                                      open_camera, result_grade, result_lines, validation_score)
+                                      open_camera, pose_count, result_grade, result_lines, screen_mm as read_screen_mm,
+                                      validation_score)
     except Exception as e:
         print(f"Eye tracking needs mediapipe and opencv-python ({type(e).__name__}: {e})")
         return 3
@@ -399,12 +426,18 @@ def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int]
         return 3
 
     log.open()
-    log.write(meta_record(alias, glasses, light, screen, camera, commit, created))
+    if screen_mm is None:
+        screen_mm = read_screen_mm()
+    poses = pose_count(poses)
+    log.write(meta_record(alias, glasses, light, screen, camera, commit, created, screen_mm=screen_mm))
     print(f"Recording to {log.path}")
-    print("Look at each dot. Esc cancels. Ctrl+C keeps what was recorded.")
+    if poses <= 1:
+        print("Look at each dot. Esc cancels. Ctrl+C keeps what was recorded.")
+    else:
+        print("Look at each dot. Then sit back a little, and lean in a little. Esc cancels.")
     indicator = CameraIndicator()
     indicator.open(cv2, screen)
-    calib = Calibration(screen, on_target=lambda event: _on_target(log, event))
+    calib = Calibration(screen, on_target=lambda event: _on_target(log, event), poses=poses)
     clicks = ClickWatch()
     phase = "setup"
     read_until = 0.0
@@ -537,7 +570,8 @@ def record(person: str, glasses: str, light: str, camera: int | None = None, run
     try:
         return _live(log, model_path=model_path, camera=cam, screen=screen, alias=person, glasses=glasses,
                      light=light, commit=git_commit() if commit is None else commit,
-                     created=time.time() if created is None else float(created))
+                     created=time.time() if created is None else float(created),
+                     poses=calibration_poses(paths))
     except KeyboardInterrupt:
         print("\nStopped. Kept what was recorded.")
         return 0

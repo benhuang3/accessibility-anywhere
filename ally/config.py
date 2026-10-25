@@ -51,7 +51,7 @@ SPEC = {
               "language": str, "beep": bool, "always_listen": bool, "wake_words": list, "follow_up_seconds": NUM,
               "whisper_model": str},
     "gaze": {"enabled": bool, "camera": int, "fps": int, "pan_speed": NUM, "show_dot": bool,
-             "features": ("v1", "v2"),
+             "features": ("v1", "v2"), "calibration_poses": int,
              "click_learning": bool, "max_radius_px": NUM, "answer_offers": bool},
     "senses": {"vision": bool, "input": bool, "fps": int, "calibrate_seconds": NUM, "solo": list,
                "window_seconds": NUM, "cooldown_seconds": NUM, "min_confidence": NUM, "decline_seconds": NUM,
@@ -81,6 +81,7 @@ RANGES = {
     ("confirm", "warning_speed"): (0.6, 1.5), ("voice", "max_seconds"): (1, 60),
     ("voice", "silence_seconds"): (0.3, 5), ("voice", "follow_up_seconds"): (0, 60), ("gaze", "camera"): (0, 9),
     ("gaze", "fps"): (5, 30), ("gaze", "pan_speed"): (0.1, 2.0), ("gaze", "max_radius_px"): (20, 4000),
+    ("gaze", "calibration_poses"): (1, 3),
     ("senses", "fps"): (2, 30), ("senses", "calibrate_seconds"): (5, 60), ("senses", "window_seconds"): (1, 30),
     ("senses", "cooldown_seconds"): (0, 600), ("senses", "min_confidence"): (0, 1),
     ("senses", "decline_seconds"): (30, 600),
@@ -182,6 +183,12 @@ def validate(cfg: dict, known_tools: set[str] | None = None) -> tuple[list[str],
                 rng = RANGES.get((section, key))
                 if rng and not (rng[0] <= v <= rng[1]):
                     errors.append(f"{section}.{key} = {v} is outside {rng[0]}..{rng[1]}")
+
+    gaze = cfg.get("gaze")
+    if isinstance(gaze, dict):
+        poses = gaze.get("calibration_poses", 3)
+        if isinstance(poses, int) and not isinstance(poses, bool) and poses not in (1, 3):
+            errors.append("gaze.calibration_poses should be 1 or 3")
 
     styles = cfg.get("page_styles", {})
     if not isinstance(styles, dict):

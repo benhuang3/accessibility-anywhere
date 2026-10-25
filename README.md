@@ -104,9 +104,11 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
 
 ### Eye tracking
 
-1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About 50 seconds: Ally checks that it can
-   see your face, shows 13 dots, then 5 check dots it did not train on. Esc cancels. Do this again if
-   you move your laptop or chair a lot.
+1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About a minute and a half: Ally checks
+   that it can see your face, shows 13 dots, then asks you to sit back a little and lean in a little
+   (5 dots each, so head movement is part of the setup), then 5 check dots it did not train on.
+   Esc cancels. `[gaze] calibration_poses = 1` is the old single sitting, about a minute. Do this
+   again if you move your laptop or chair a lot.
 2. Say **"Ally, what am I looking at"** for the area of the screen. On Windows, Ally also names the
    button, link, or text under that spot. **"this"**, **"that"**, and **"here"** use the same tool.
 3. Say **"Ally, magnify what I'm looking at"** (or "magnify here"), or press `<mod>+G`. The screen
