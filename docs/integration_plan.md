@@ -140,6 +140,32 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 03:30 PT — Ben H (via Claude Code) — branch `benh/os-layer` -> `main`, commits `348d419`, `1f9d611`
+
+**Pushed to `main`.** New for the OS team's list: (5) enlarge images, (9) click by voice, (10) describe images.
+- **Picture viewer** (`docs/picture_viewer.md`): "zoom in on the picture (of X)", "show me the photo bigger",
+  "next picture", "close the picture". Chosen by the picture's alt text / caption / label; never page zoom.
+  While it's open, zoom in/out (voice, popup, Ctrl+Plus) act on the picture.
+- **Click by voice / number** (`docs/click_by_voice.md`): "show numbers", "click 7", "click sign in"; two
+  matches -> numbers on just those + "Which number?"; yes/no first for paying, sending, deleting, signing out
+  or unnamed buttons. A bare "seven" only works offline (online it may answer something Claude asked).
+- **Claude picture descriptions**: one screenshot with numbered boxes when nothing on screen matches; "describe
+  the picture". `[picture] describe_with_claude` (default on; no key = old behaviour).
+- **Bug fix, affects everyone:** "go back", "go forward" and "reload" by voice always failed
+  (`BrowserAPI.call("navigate", action=...)` collided with its own `action` parameter; it is now
+  positional-only, same for `PageSession.call`). Back/forward now run `history.back()` in the page: Chrome's own
+  Back skips pages the user never clicked, which for a voice-only user is every page. A tab with no history goes
+  back to the tab that opened it. Voice-clicked links are opened by the extension (`chrome.tabs.update/create`):
+  no pop-up blocking, normal history; a link's own click handler doesn't run (`href="#"` links still click).
+- **Runtime v2** (`extension/page/runtime.js`): shared scroll lock, reverse-order teardown, an older runtime in a
+  tab is cleaned up on reset. **Ganesh:** new overlay hosts `ally-picture-host`, `ally-picture-boxes`,
+  `ally-click-host` (z-index below `#ally-risk-banner`, which is never touched).
+- `CLAUDE.md`: a section on working with several agents (handoff card, reviewer before builders, caps).
+- Tests: `test_picture`, `test_clicks`, `browser.test_picture`, `browser.test_clicks` (back/forward cache,
+  reload, new tabs). Full run in the Windows VM: 48 modules OK.
+- Still to do tonight: tab switching ("go to the other tab"), "show me where to click", form helper, "keep
+  reading". Reload the extension and open tabs after pulling.
+
 ### Oct 25, 01:45 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `dece59e`
 
 **Pushed to `benh/os-layer` (not yet on `main`).** "Bigger" now makes a clear difference (Ben H: at least 30%).
