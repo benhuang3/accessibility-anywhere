@@ -36,3 +36,11 @@ Several agents work on this repo at once, each in its own git worktree and branc
 
 Match the surrounding code: standard library first, small functions, type hints where the file
 already uses them, comments only where the reason isn't obvious. User-facing text is plain and short.
+
+## Ganesh's areas
+
+- `ally/risk/` (scam and risk rules, warning copy), the risk parts of `extension/`, `dashboard/` and `ally/overlay/` are Ganesh's. Ask before editing them.
+
+## Dashboard and extension security
+
+- The dashboard CSP is `script-src 'self'; style-src 'self'`: no inline `<script>`, no `on*=` handlers, no `style=` attributes. All JS goes in separate `.js` files, and API calls send the `X-Ally-Token` header.
