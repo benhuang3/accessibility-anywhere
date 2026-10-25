@@ -19,83 +19,120 @@ SCAM = {"url": "https://help.example/scam", "tab_id": 42,
 
 class HelperActionTests(unittest.TestCase):
     def wire(self, **kwargs):
+        kwargs.setdefault("remote_touch", Mock(handle=Mock(return_value=False)))
         wire = RiskWire(EventBus(), **kwargs)
         self.addCleanup(wire.stop)
         return wire
 
-    def test_done_notes_are_short_named_and_spoken_and_failed_actions_are_inert(self):
+    def test_first_stream_event_per_call_is_named_and_spoken_once(self):
         notes, spoken = [], []
-        wire = self.wire(done=notes.append, say=spoken.append, highlight=Mock(), screen_size=lambda: (3200, 2000))
-        for action in ("close_tab", "bigger", "point"):
-            wire.on_helper_action({"action": action, "ok": True, "helper_name": " Priya\x00\r\n ", "x": .5, "y": .5})
-        self.assertEqual(notes, ["Priya closed that page for you.", "Priya made the page bigger.", "Priya is pointing here."])
+        wire = self.wire(done=notes.append, say=spoken.append, marker=Mock(), screen_size=lambda: (3200, 2000))
+        wire._helper_call_opened()
+        wire.on_helper_action({"action": "close_tab", "ok": True, "helper_name": "Priya"})
+        for action in ("hl_start", "hl_move", "hl_end", "touch_start", "touch_move", "touch_end"):
+            wire.on_helper_action({"action": action, "helper_name": " Priya\x00\r\n ", "x": .5, "y": .5})
+        self.assertEqual(notes, ["Priya closed that page for you.", "Priya is helping on your screen."])
         self.assertEqual(notes, spoken)
-        wire.on_helper_action({"action": "bigger", "ok": True, "helper_name": "a" * 100})
-        self.assertEqual(notes[-1], "a" * 30 + " made the page bigger.")
-        for msg in (None, [], {}, {"action": "click", "ok": True}, {"action": "bigger", "ok": 1},
-                    {"action": "close_tab", "ok": False}, {"action": "bigger", "ok": True, "helper_name": []}):
-            wire.on_helper_action(msg)
-        self.assertEqual(len(notes), 4)
+        wire.on_call_ended({"service": "spacecall"})
+        wire._helper_call_opened()
+        wire.on_helper_action({"action": "hl_start", "helper_name": "a" * 100, "x": .5, "y": .5})
+        self.assertEqual(notes[-1], "a" * 30 + " is helping on your screen.")
 
-    def test_point_maps_primary_capture_pixels_at_200_percent_dpi_and_replaces_timer(self):
-        marks, timers = [], []
-
-        class Timer:
-            def __init__(self, delay, callback):
-                self.delay, self.callback, self.daemon = delay, callback, False
-                self.cancelled = False
-                timers.append(self)
-
-            def cancel(self): self.cancelled = True
-            def start(self): pass
-
-        capture = Mock(return_value=SimpleNamespace(size=(3200, 2000)))
-        wire = self.wire(highlight=marks.append, screen_capture=capture, screen_size=lambda: (1600, 1000))
-        with patch("ally.risk.wire.threading.Timer", Timer):
-            wire.on_helper_action({"action": "point", "ok": True, "x": .75, "y": .25})
-            self.assertEqual(marks, [(2330, 430, 140, 140)])
-            wire.on_helper_action({"action": "point", "ok": True, "x": .5, "y": .5})
-            self.assertEqual(marks[-1], (1530, 930, 140, 140))
-            self.assertTrue(timers[0].cancelled)
-            self.assertEqual(timers[1].delay, 8)
-            self.assertTrue(timers[1].daemon)
-            timers[0].callback()
-            self.assertIsNotNone(marks[-1], "older timers cannot erase newer points")
-            timers[1].callback()
-            self.assertIsNone(marks[-1])
-        self.assertEqual(capture.call_count, 2)
-
-    def test_png_capture_dimensions_and_screen_edges_remain_on_the_primary_screen(self):
-        png = b"\x89PNG\r\n\x1a\n" + b"\0" * 8 + struct.pack(">II", 3840, 2160)
+    def test_marker_maps_primary_capture_pixels_at_200_percent_dpi_and_caches_dimensions(self):
         marks = []
-        wire = self.wire(highlight=marks.append, screen_capture=lambda: png)
-        wire.on_helper_action({"action": "point", "ok": True, "x": 1, "y": 1})
-        self.assertEqual(marks[-1], (3700, 2020, 140, 140))
+        capture = Mock(return_value=SimpleNamespace(size=(3200, 2000)))
+        wire = self.wire(marker=lambda *args: marks.append(args), screen_capture=capture,
+                         screen_size=lambda: (1600, 1000))
+        wire._helper_call_opened()
+        for phase, x, y in (("start", .75, .25), ("move", .5, .5), ("end", 1, 1)):
+            wire.on_helper_action({"action": "hl_" + phase, "x": x, "y": y})
+        self.assertEqual(marks, [("start", 2400, 500), ("move", 1600, 1000), ("end", 3199, 1999)])
+        capture.assert_called_once()
+        wire._remote_touch.handle.return_value = True
+        wire.on_helper_action({"action": "touch_end", "x": 0, "y": 0})
+        self.assertEqual(marks[-1], ("ripple", 0, 0))
+        wire._remote_touch.handle.assert_called_once_with("end", 0, 0)
 
-    def test_bad_points_and_callback_failures_never_raise(self):
+    def test_png_capture_dimensions_and_tuple_capture_use_the_whole_primary_screen(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"\0" * 8 + struct.pack(">II", 3840, 2160)
+        for capture in (png, (png, "ignored metadata")):
+            marks = []
+            wire = self.wire(marker=lambda *args: marks.append(args), screen_capture=lambda: capture)
+            wire._helper_call_opened()
+            wire.on_helper_action({"action": "hl_start", "x": 1, "y": 1})
+            self.assertEqual(marks[-1], ("start", 3839, 2159))
+
+    def test_bad_messages_and_callback_failures_never_raise(self):
         marks, notes = [], []
-        wire = self.wire(highlight=marks.append, done=notes.append, screen_size=lambda: (3200, 2000))
-        for value in (None, "0.5", True, -0.1, 1.1, float("nan"), float("inf")):
+        wire = self.wire(marker=lambda *args: marks.append(args), done=notes.append, screen_size=lambda: (3200, 2000))
+        wire._helper_call_opened()
+        for value in (None, "0.5", True, -0.1, 1.1, float("nan"), float("inf"), 10 ** 1000):
             for axis in ("x", "y"):
-                wire.on_helper_action(dict({"action": "point", "ok": True, "x": .5, "y": .5}, **{axis: value}))
+                wire.on_helper_action(dict({"action": "hl_start", "x": .5, "y": .5}, **{axis: value}))
+        for msg in (None, [], {}, {"action": "click"}, {"action": "point", "ok": True},
+                    {"action": "bigger", "ok": True}, {"action": "close_tab", "ok": 1},
+                    {"action": "close_tab", "ok": False}, {"action": "hl_start", "x": .5, "y": .5, "helper_name": []}):
+            wire.on_helper_action(msg)
         self.assertEqual((marks, notes), ([], []))
-        wire.highlight = Mock(side_effect=RuntimeError("bad UI"))
-        wire.on_helper_action({"action": "point", "ok": True, "x": .5, "y": .5})
+        wire.marker = Mock(side_effect=RuntimeError("bad UI"))
+        wire.on_helper_action({"action": "hl_start", "x": .5, "y": .5})
+        self.assertEqual(notes, ["Your helper is helping on your screen."])
         wire.done = wire.say = Mock(side_effect=RuntimeError("bad UI"))
-        wire.on_helper_action({"action": "bigger", "ok": True})
+        wire.on_helper_action({"action": "close_tab", "ok": True})
 
-    def test_attach_uses_the_current_ui_for_done_and_highlight(self):
+    def test_streams_are_inert_before_open_and_after_end_or_stop(self):
+        marker = Mock()
+        wire = self.wire(marker=marker, screen_size=lambda: (3200, 2000))
+        gesture = {"action": "touch_start", "x": .2, "y": .8}
+        wire.on_helper_action(gesture)
+        wire.on_helper_action(dict(gesture, action="hl_start"))
+        marker.assert_not_called()
+        wire._remote_touch.handle.assert_not_called()
+        wire._helper_call_opened()
+        wire.on_helper_action(gesture)
+        wire._remote_touch.handle.assert_called_once_with("start", .2, .8)
+        wire.on_call_ended({"service": "spacecall"})
+        marker.assert_called_once_with("clear", 0, 0)
+        marker.reset_mock()
+        wire._remote_touch.handle.reset_mock()
+        for action in ("hl_start", "hl_move", "hl_end", "touch_start", "touch_move", "touch_end"):
+            wire.on_helper_action(dict(gesture, action=action))
+        marker.assert_not_called()
+        wire._remote_touch.handle.assert_not_called()
+        wire.stop()
+        wire._helper_call_opened()
+        wire.on_helper_action(gesture)
+        wire._remote_touch.handle.assert_not_called()
+
+    def test_a_late_open_response_cannot_reopen_helper_input_after_hangup(self):
+        wire = self.wire()
+        generation = wire._helper_call_generation
+        wire.on_call_ended({"service": "spacecall"})
+        wire._helper_call_opened(generation)
+        wire.on_helper_action({"action": "touch_start", "x": .5, "y": .5})
+        wire._remote_touch.handle.assert_not_called()
+        self.assertFalse(wire._helper_call_open)
+
+    def test_attach_tracks_successful_opens_and_uses_current_ui_with_nullui_guard(self):
         ui, voice = Mock(), Mock()
         agent = SimpleNamespace(bus=EventBus(), bridge=SimpleNamespace(on_page=None),
                                 proactive=SimpleNamespace(ui=ui, voice=voice))
-        with patch("ally.risk.wire._make_guardian", return_value=(None, None)), patch.object(RiskWire, "start"):
+        with patch("ally.risk.wire._make_guardian", return_value=(None, lambda: (3200, 2000))), \
+                patch.object(RiskWire, "start"), patch.object(RiskWire, "_open_call", return_value=True):
             wire = attach(agent)
         self.addCleanup(wire.stop)
+        wire.screen_capture = None
+        self.assertTrue(wire._open_call("call"))
         agent.proactive.ui = ui = Mock()
         self.assertEqual(agent.bridge.on_helper_action, wire.on_helper_action)
-        agent.bridge.on_helper_action({"action": "bigger", "ok": True, "helper_name": "Priya"})
-        ui.show_card.assert_called_once_with("Priya made the page bigger.", actions=("OK",), kind="done")
-        voice.say.assert_called_once_with("Priya made the page bigger.")
+        agent.bridge.on_helper_action({"action": "hl_start", "x": .5, "y": .25, "helper_name": "Priya"})
+        ui.marker.assert_called_once_with("start", 1600, 500)
+        ui.show_card.assert_called_once_with("Priya is helping on your screen.", actions=("OK",), kind="done")
+        voice.say.assert_called_once_with("Priya is helping on your screen.")
+        agent.proactive.ui = SimpleNamespace()  # NullUI is allowed to lack marker().
+        agent.bridge.on_helper_action({"action": "hl_end", "x": .5, "y": .25})
+        agent.bridge.on_call_ended({"service": "spacecall"})
+        self.assertFalse(wire._helper_call_open)
 
     def test_helper_close_cancels_real_coordinator_offer_and_replaces_risk_card(self):
         bus, shown, workers = EventBus(), queue.Queue(), []

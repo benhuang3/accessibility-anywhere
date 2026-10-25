@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store';
 
-export const actionKinds = ['close_tab', 'point', 'bigger'] as const;
+export const actionKinds = ['close_tab', 'hl_start', 'hl_move', 'hl_end',
+  'touch_start', 'touch_move', 'touch_end'] as const;
 export type HelperActionKind = typeof actionKinds[number];
 export type Point = { x: number; y: number };
 export type HelperAction = Point & { seq: number; action: HelperActionKind };
@@ -32,15 +33,13 @@ export function actionDisabledReason(connected: boolean, sharing: boolean): stri
   return !connected ? 'Wait until the call is connected' : !sharing ? 'Screen sharing is off' : '';
 }
 
-export function actionLabel(action: HelperActionKind, pending: boolean, result?: ActionResult): string {
-  if (pending) return { close_tab: 'Closing\u2026', point: 'Pointing\u2026', bigger: 'Making bigger\u2026' }[action];
-  if (result) return result.ok
-    ? { close_tab: 'Closed \u2713', point: 'Pointed \u2713', bigger: 'Made bigger \u2713' }[action]
-    : { close_tab: "Couldn't close it", point: "Couldn't point", bigger: "Couldn't make it bigger" }[action];
-  return { close_tab: 'Close this page', point: 'Point', bigger: 'Make it bigger' }[action];
+export function actionLabel(_action: 'close_tab', pending: boolean, result?: ActionResult): string {
+  if (pending) return 'Closing\u2026';
+  if (result) return result.ok ? 'Closed \u2713' : "Couldn't close it";
+  return 'Close tab';
 }
 
-export function createHelperActions(timeoutMs = 8000, resultMs = 4000) {
+export function createHelperActions(timeoutMs = 8000, resultMs = 4000, now = Date.now) {
   const pending = writable<Record<number, HelperAction>>({});
   const results = writable<ActionResults>({});
   const lastResult = writable<ActionResult | null>(null);
@@ -70,19 +69,49 @@ export function createHelperActions(timeoutMs = 8000, resultMs = 4000) {
       if (get(lastResult) === result) lastResult.set(null);
     }, resultMs);
   }
+  let moveTimer: ReturnType<typeof setTimeout> | undefined;
+  let latestMove: { row: HelperAction; transmit: (row: HelperAction) => Promise<unknown> } | null = null;
+  let lastMoveAt = -Infinity;
+  function dropMove() {
+    clearTimeout(moveTimer);
+    moveTimer = undefined;
+    latestMove = null;
+  }
+  function stream(row: HelperAction, transmit: (row: HelperAction) => Promise<unknown>) {
+    try { void transmit(row).catch(() => {}); } catch { /* keep streaming after a failed reducer */ }
+  }
+  function flushMove() {
+    const next = latestMove;
+    dropMove();
+    if (next) { lastMoveAt = now(); stream(next.row, next.transmit); }
+  }
   function send(action: HelperActionKind, transmit: (row: HelperAction) => Promise<unknown>,
     point: Point = { x: 0, y: 0 }): HelperAction | null {
     if (!actionKinds.includes(action) || !validPoint(point) ||
-        Object.values(get(pending)).some(row => row.action === action)) return null;
-    const row = { seq: seq = (seq + 1) >>> 0, action,
-      x: action === 'point' ? point.x : 0, y: action === 'point' ? point.y : 0 };
+        (action === 'close_tab' && Object.keys(get(pending)).length)) return null;
+    const row: HelperAction = { seq: seq = (seq + 1) >>> 0, action,
+      x: action === 'close_tab' ? 0 : point.x, y: action === 'close_tab' ? 0 : point.y };
+    if (action !== 'close_tab') {
+      if (action.endsWith('_move')) {
+        latestMove = { row, transmit };
+        const delay = 50 - (now() - lastMoveAt);
+        if (delay <= 0) flushMove();
+        else if (moveTimer === undefined) moveTimer = setTimeout(flushMove, delay);
+      } else {
+        dropMove();
+        stream(row, transmit);
+      }
+      return row;
+    }
     pending.update(rows => ({ ...rows, [row.seq]: row }));
-    results.update(rows => { const next = { ...rows }; delete next[action]; return next; });
+    results.update(rows => { const next = { ...rows }; delete next.close_tab; return next; });
     waits.set(row.seq, later(() => complete(row.seq, false), timeoutMs));
     void Promise.resolve().then(() => transmit(row)).catch(() => complete(row.seq, false));
     return row;
   }
   function reset() {
+    dropMove();
+    lastMoveAt = -Infinity;
     for (const timer of timers) clearTimeout(timer);
     timers.clear(); waits.clear();
     pending.set({}); results.set({}); lastResult.set(null);
@@ -101,6 +130,9 @@ export function createElderRelay(target: Window, report: (seq: number, ok: boole
     if (!isHelperAction(row) || seen.has(row.seq)) return;
     seen.add(row.seq);
     if (seen.size > 256) seen.delete(seen.values().next().value!);
+    const forward = () => target.postMessage({ source: 'ally-call', type: 'helperAction', seq: row.seq,
+      action: row.action, x: row.x, y: row.y }, target.location.origin);
+    if (row.action !== 'close_tab') { forward(); return; }
     const finish = (ok: boolean, reportResult = true) => {
       if (!waiting.delete(row.seq)) return;
       clearTimeout(timer);
@@ -116,8 +148,7 @@ export function createElderRelay(target: Window, report: (seq: number, ok: boole
     const timer = setTimeout(() => finish(false), timeoutMs);
     waiting.set(row.seq, finish);
     target.addEventListener('message', receive);
-    target.postMessage({ source: 'ally-call', type: 'helperAction', seq: row.seq,
-      action: row.action, x: row.x, y: row.y }, target.location.origin);
+    forward();
   }
   return { handle, stop() {
     for (const finish of [...waiting.values()]) finish(false, false);

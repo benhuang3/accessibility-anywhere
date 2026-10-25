@@ -14,6 +14,7 @@ from ally.contracts import EventBus, Offer, Risk
 from . import actions, behavior, contact, domains, fakescan, fields, joined, process, soft, text
 from .copy import load_copy, render
 from .guardian import Evidence
+from .remote_touch import RemoteTouch
 from .screenshare import ScreenShare
 
 log = logging.getLogger("ally")
@@ -132,9 +133,9 @@ class Deduper:
 class RiskWire:
     def __init__(self, bus: EventBus, snapshot_fn=process.snapshot_processes,
                  poll_seconds=10.0, clock=time.time, deduper=None, ask=None, call=None,
-                 broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None,
+                 broadcast=None, kill=actions._kill, guardian=None, marker=None, screen_size=None,
                  overlay_active=None, review_timeout_s=10.0, contact=None, notify=None, say=None,
-                 screen_capture=None, screen_share=True, done=None):
+                 screen_capture=None, screen_share=True, done=None, remote_touch=None):
         self.screen_capture = screen_capture
         self.screen_share = screen_share
         self._screen_share = None
@@ -145,14 +146,18 @@ class RiskWire:
         self.overlay_active = overlay_active or (lambda: False)  # the in-page banner only stands in for it
         self.guardian = guardian        # second opinion from a vision model (consent and budget live inside it)
         self.review_timeout_s = review_timeout_s
-        self.highlight = highlight      # helper points use the same physical pixels as the overlay
+        self.marker = marker            # physical primary-screen pixels, through the Tk queue
         self.screen_size = screen_size  # () -> (width, height) of the screenshot the guardian saw
         self._marks = {}
         self._tab_ids = {}
         self._page_questions = {}
         self._closed_tabs = set()
-        self._point_timer = None
-        self._point_generation = 0
+        self._remote_touch = remote_touch or RemoteTouch()
+        self._helper_call_open = False
+        self._helper_call_generation = 0
+        self._helper_announced = False
+        self._helper_dimensions = None
+        self._helper_dimensions_until = 0
         self.ask = ask
         self.call = call
         self.broadcast = broadcast
@@ -177,6 +182,7 @@ class RiskWire:
         self.last_page = {"url": "", "card_present": False, "last_scam_text_at": None}
         self._stop = threading.Event()
         self._thread = None
+        self._unsubscribe_helper = self.bus.subscribe("risk_call_ended", self._helper_call_ended)
 
     def on_risk_warning(self, msg) -> None:
         try:
@@ -382,13 +388,34 @@ class RiskWire:
             self._stop_screen_share()
             self.bus.publish("risk_call_ended", {"service": service})
 
+    def _helper_call_opened(self, generation=None) -> None:
+        with self._lock:
+            if generation is not None and generation != self._helper_call_generation:
+                return  # the window ended while the open request was returning
+            self._helper_call_open = True
+            self._helper_announced = False
+            self._helper_dimensions = None
+            self._remote_touch.reset()
+
+    def _helper_call_ended(self, msg=None) -> None:
+        with self._lock:
+            self._helper_call_generation += 1
+            self._helper_call_open = False
+            self._remote_touch.reset()
+            if self.marker is not None:
+                try:
+                    self.marker("clear", 0, 0)
+                except Exception:
+                    pass
+
     def on_helper_action(self, msg) -> None:
-        """Announce only the three bounded helper actions; malformed bridge messages are inert."""
+        """Accept only bounded call gestures; malformed bridge messages are inert."""
         try:
-            if not isinstance(msg, dict) or msg.get("ok") is not True:
+            if not isinstance(msg, dict):
                 return
             action = msg.get("action")
-            if action not in ("close_tab", "bigger", "point"):
+            if action not in ("close_tab", "hl_start", "hl_move", "hl_end",
+                              "touch_start", "touch_move", "touch_end"):
                 return
             name = msg.get("helper_name", "Your helper")
             if not isinstance(name, str):
@@ -396,25 +423,38 @@ class RiskWire:
             name = " ".join("".join(ch for ch in name if not unicodedata.category(ch).startswith("C")).split())[:30]
             name = name or "Your helper"
             if action == "close_tab":
+                if msg.get("ok") is not True:
+                    return
                 self._helper_closed_page(msg.get("tab_id"))
                 message = f"{name} closed that page for you."
-            elif action == "bigger":
-                message = f"{name} made the page bigger."
             else:
                 x, y = msg.get("x"), msg.get("y")
                 if (type(x) not in (int, float) or type(y) not in (int, float)
-                        or not math.isfinite(x) or not math.isfinite(y) or not 0 <= x <= 1 or not 0 <= y <= 1):
+                        or not math.isfinite(x) or not math.isfinite(y) or not 0 <= x <= 1 or not 0 <= y <= 1
+                        or ("ok" in msg and msg["ok"] is not True)):
                     return
-                if not self._helper_point(x, y):
-                    return
-                message = f"{name} is pointing here."
+                with self._lock:
+                    if not self._helper_call_open or self._stop.is_set():
+                        return
+                    phase = action.split("_", 1)[1]
+                    try:
+                        if action.startswith("hl_"):
+                            self._helper_marker(phase, x, y)
+                        elif self._remote_touch.handle(phase, x, y):
+                            self._helper_marker("ripple", x, y)
+                    except Exception:
+                        log.debug("helper drawing unavailable")
+                    if self._helper_announced:
+                        return
+                    self._helper_announced = True
+                message = f"{name} is helping on your screen."
             for callback in (self.done, self.say):
                 try:
                     callback(message)
                 except Exception:
-                    log.debug("helper action note failed")
+                    log.debug("helper action message failed", exc_info=True)
         except Exception:
-            log.debug("helper action ignored")
+            log.debug("helper action ignored", exc_info=True)
 
     def _helper_closed_page(self, tab_id):
         with self._lock:
@@ -439,48 +479,30 @@ class RiskWire:
             if tab_id is None or self.last_page.get("tab_id") == tab_id:
                 self.last_page.update(url="", card_present=False, last_scam_text_at=None)
 
-    def _helper_point(self, x, y) -> bool:
-        if self.highlight is None:
-            return False
-        if self.screen_capture is not None:
-            raw = self.screen_capture()
-            if isinstance(raw, tuple):
-                raw = raw[0]
-            if isinstance(raw, bytes) and raw[:8] == b"\x89PNG\r\n\x1a\n":
-                width, height = struct.unpack(">II", raw[16:24])
+    def _helper_marker(self, phase, x, y) -> None:
+        if self.marker is None:
+            return
+        now = time.monotonic()
+        if self._helper_dimensions is None or now >= self._helper_dimensions_until:
+            if self.screen_capture is not None:
+                raw = self.screen_capture()
+                if isinstance(raw, tuple):
+                    raw = raw[0]
+                if isinstance(raw, bytes) and raw[:8] == b"\x89PNG\r\n\x1a\n":
+                    width, height = struct.unpack(">II", raw[16:24])
+                else:
+                    width, height = raw.size
+            elif self.screen_size is not None:
+                width, height = self.screen_size()
             else:
-                width, height = raw.size
-        elif self.screen_size is not None:
-            width, height = self.screen_size()
-        else:
-            return False
-        if not (0 < width <= 100000 and 0 < height <= 100000):
-            return False
-        # Capture is the whole primary screen, including the taskbar, in physical pixels.
-        # Do not use the 1280px transport JPEG, browser viewport or DPI-scaled work area.
-        side = min(140, width, height)
-        box = (max(0, min(width - side, round(x * width - side / 2))),
-               max(0, min(height - side, round(y * height - side / 2))), side, side)
-        with self._lock:
-            self._point_generation += 1
-            generation = self._point_generation
-            if self._point_timer is not None:
-                self._point_timer.cancel()
-            self.highlight(box)
-
-            def clear():
-                with self._lock:
-                    if generation != self._point_generation:
-                        return
-                    try:
-                        self.highlight(None)
-                    except Exception:
-                        pass
-
-            self._point_timer = threading.Timer(8.0, clear)
-            self._point_timer.daemon = True
-            self._point_timer.start()
-        return True
+                return
+            if not (0 < width <= 100000 and 0 < height <= 100000):
+                return
+            self._helper_dimensions = (width, height)
+            self._helper_dimensions_until = now + 1
+        width, height = self._helper_dimensions
+        # Whole primary capture in physical pixels, never the scaled transport JPEG or work area.
+        self.marker(phase, min(width - 1, round(x * width)), min(height - 1, round(y * height)))
 
     def _stop_screen_share(self):
         with self._lock:
@@ -768,6 +790,8 @@ class RiskWire:
             if self._thread is not None and self._thread.is_alive():
                 return
             self._stop.clear()
+            if self._unsubscribe_helper is None:
+                self._unsubscribe_helper = self.bus.subscribe("risk_call_ended", self._helper_call_ended)
             if self._unsubscribe is None:
                 self._unsubscribe = self.bus.subscribe("risk_warning", self.on_risk_warning)
             if self._unsubscribe_reset is None:
@@ -776,11 +800,12 @@ class RiskWire:
             self._thread.start()
 
     def stop(self):
+        self._helper_call_ended()
         with self._lock:
             self._stop.set()
-            self._point_generation += 1
-            if self._point_timer is not None:
-                self._point_timer.cancel()
+            if self._unsubscribe_helper is not None:
+                self._unsubscribe_helper()
+                self._unsubscribe_helper = None
             if self._screen_share is not None:
                 self._screen_share.stop()
                 self._screen_share = None
@@ -860,10 +885,11 @@ def attach(agent) -> RiskWire:
         if ui is not None:
             ui.show_card(message, actions=("OK",), kind="done")
 
-    def highlight(box):
+    def marker(phase, x, y):
         ui = getattr(getattr(agent, "proactive", None), "ui", None)
-        if ui is not None:
-            ui.highlight(box)
+        draw = getattr(ui, "marker", None)
+        if draw is not None:
+            draw(phase, x, y)
 
     def say(message):
         voice = getattr(getattr(agent, "proactive", None), "voice", None)
@@ -881,9 +907,21 @@ def attach(agent) -> RiskWire:
                     broadcast=getattr(bridge, "broadcast", None),
                     guardian=guardian, screen_size=screen_size,
                     overlay_active=lambda: getattr(agent, "overlay", None) is not None,
-                    contact=_make_contact(agent), notify=notify, say=say, done=done, highlight=highlight,
+                    contact=_make_contact(agent), notify=notify, say=say, done=done, marker=marker,
                     screen_capture=lambda: ScreenShare.capture_screen(lambda: agent.platform.screenshot_png()),
                     screen_share=risk_config.get("screen_share", True) is True)
+    # Observe successful opens here so the separate call-window lifecycle code stays independent.
+    open_call = wire._open_call
+
+    def open_helper_call(url):
+        with wire._lock:
+            generation = wire._helper_call_generation
+        opened = open_call(url)
+        if opened:
+            wire._helper_call_opened(generation)
+        return opened
+
+    wire._open_call = open_helper_call
     if hasattr(bridge, "on_page"):
         bridge.on_page = wire.on_page
         bridge.on_call_ended = wire.on_call_ended

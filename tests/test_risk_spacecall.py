@@ -353,18 +353,17 @@ const source = fs.readFileSync("extension/background.js", "utf8");
 const worker = source.slice(source.indexOf("async function handleHelperAction("), source.indexOf("// ---------------------------------------------------------------- start up"));
 const stored = { "allySpacecall:10": { tabId: 10, windowId: 20, name: "Priya" } };
 const changed = [], notes = [];
+let reads = 0, now = 1000;
 let listener, normal = { id: 30, type: "normal" }, tab = { id: 40, url: "https://shop.test" }, bridge = true, fail = false;
 const context = {
-  callCreation: Promise.resolve(), stepZoom: (zoom, dir) => zoom + dir * .1,
+  callCreation: Promise.resolve(), Date: { now: () => now },
   send: (msg) => { if (bridge) notes.push(msg); return bridge; },
   chrome: {
-    storage: { session: { get: async (key) => ({ [key]: stored[key] }) } },
+    storage: { session: { get: async (key) => { reads++; return structuredClone({ [key]: stored[key] }); } } },
     windows: { getLastFocused: async (opts) => { assert.deepEqual(Array.from(opts.windowTypes), ["normal"]); return normal; } },
     tabs: {
       query: async (opts) => { assert.equal(opts.active, true); assert.equal(opts.windowId, 30); return tab ? [tab] : []; },
       remove: async (id) => { if (fail) throw new Error("gone"); changed.push(["close", id]); },
-      getZoom: async (id) => { assert.equal(id, 40); return 1.25; },
-      setZoom: async (id, zoom) => { changed.push(["zoom", id, zoom]); },
     },
     runtime: { onMessage: { addListener: (fn) => { listener = fn; } } },
   },
@@ -382,8 +381,8 @@ const request = async (msg = message, from = sender) => {
   for (const from of [{}, { tab: { id: 99, windowId: 20 } }, { ...sender, frameId: 1 }, { tab: { id: 10, windowId: 99 } }]) {
     assert.equal((await request(message, from)).ok, false);
   }
-  for (const bad of [{ action: "click" }, { action: "type" }, { action: "scroll" }, { seq: -1 }, { seq: 1.5 },
-    { seq: 2 ** 32 }, { x: NaN }, { y: Infinity }, { action: "point", y: 1.1 }, { action: "point", x: -.1 }, { x: .2 }]) {
+  for (const bad of [{ action: "click" }, { action: "type" }, { action: "scroll" }, { action: "point" }, { action: "bigger" }, { seq: -1 }, { seq: 1.5 },
+    { seq: 2 ** 32 }, { x: NaN }, { y: Infinity }, { action: "hl_move", y: 1.1 }, { action: "touch_move", x: -.1 }, { x: .2 }]) {
     assert.equal((await request({ ...message, ...bad })).ok, false);
   }
   assert.equal(changed.length, 0); assert.equal(notes.length, 0);
@@ -391,13 +390,23 @@ const request = async (msg = message, from = sender) => {
   assert.deepEqual(changed[0], ["close", 40]);
   assert.equal(notes[0].name, "helper_action"); assert.equal(notes[0].helper_name, "Priya");
   assert.equal(notes[0].tab_id, 40); assert.equal(notes[0].ok, true);
-  assert.equal((await request({ ...message, action: "bigger" })).ok, true);
-  assert.deepEqual(changed[1], ["zoom", 40, 1.35]);
-  assert.equal((await request({ ...message, action: "point", x: .5, y: .75 })).ok, true);
-  assert.equal(changed.length, 2); assert.equal(notes[2].x, .5); assert.equal(notes[2].y, .75);
+  const previousReads = reads;
+  normal = null; // streaming must not depend on the foreground browser or change a tab
+  for (const action of ["hl_start", "hl_move", "hl_end", "touch_start", "touch_move", "touch_end"]) {
+    assert.equal((await request({ ...message, action, x: .5, y: .75 })).ok, true);
+  }
+  assert.equal(reads, previousReads, "the short-lived session lookup is cached");
+  assert.equal(changed.length, 1);
+  assert.equal(notes[2].x, .5); assert.equal(notes[2].y, .75);
+  assert.equal(notes[2].name, "helper_action"); assert.equal(notes[2].helper_name, "Priya");
   bridge = false;
-  assert.equal((await request({ ...message, action: "point" })).ok, false);
+  assert.equal((await request({ ...message, action: "hl_move" })).ok, false);
   bridge = true;
+  now += 251;
+  const record = stored["allySpacecall:10"]; delete stored["allySpacecall:10"];
+  assert.equal((await request({ ...message, action: "hl_start" })).ok, false);
+  stored["allySpacecall:10"] = record;
+  normal = { id: 30, type: "normal" };
   for (const url of ["chrome://settings", "chrome-extension://abc/popup.html", "about:blank"]) {
     tab.url = url; assert.equal((await request()).ok, false);
   }
@@ -407,7 +416,7 @@ const request = async (msg = message, from = sender) => {
   normal = { id: 30, type: "popup" }; assert.equal((await request()).ok, false);
   normal = { id: 30, type: "normal" }; tab = { id: 40, url: "https://shop.test" }; fail = true;
   assert.equal((await request()).ok, false);
-  assert.equal(changed.length, 2, "invalid targets cannot change any tab");
+  assert.equal(changed.length, 1, "invalid targets cannot change any tab");
 
   // Content relay rejects cross-window, cross-origin and unrelated page messages.
   let receive; const forwarded = [], replies = [];
@@ -416,13 +425,16 @@ const request = async (msg = message, from = sender) => {
   vm.runInNewContext(fs.readFileSync("extension/call-relay.js", "utf8"), {
     window: page, location: { origin }, chrome: { runtime: { sendMessage: async (data) => { forwarded.push(data); return { ok: true }; } } },
   });
-  const data = { source: "ally-call", type: "helperAction", seq: 8, action: "point", x: .2, y: .8 };
+  const data = { source: "ally-call", type: "helperAction", seq: 8, action: "hl_start", x: .2, y: .8 };
   for (const event of [{ source: {}, origin, data }, { source: page, origin: "https://evil.test", data },
     { source: page, origin, data: { ...data, source: "evil" } }, { source: page, origin, data: { ...data, type: "click" } }]) await receive(event);
   assert.equal(forwarded.length, 0);
   await receive({ source: page, origin, data });
   assert.equal(forwarded.length, 1); assert.equal(forwarded[0].kind, "allyHelperAction");
-  assert.equal(forwarded[0].seq, 8); assert.equal(replies[0].data.ok, true);
+  assert.equal(forwarded[0].seq, 8);
+  assert.equal(replies.length, 0, "streaming never posts per-event replies");
+  await receive({ source: page, origin, data: { ...data, action: "close_tab", seq: 9, x: 0, y: 0 } });
+  assert.equal(replies[0].data.seq, 9); assert.equal(replies[0].data.ok, true);
   assert.equal(replies[0].data.source, "ally-ext"); assert.equal(replies[0].data.type, "helperActionResult");
   assert.equal(replies[0].origin, origin);
 })().catch((error) => { console.error(error); process.exitCode = 1; });

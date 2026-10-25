@@ -321,13 +321,13 @@ export const send_helper_action = spacetime.reducer({
 }, (ctx, args) => {
   const { row, peer } = actionPeer(ctx, args.room_id, 'helper');
   if (!row.screen_sharing) throw new SenderError('Screen sharing is off');
-  if (!['close_tab', 'point', 'bigger'].includes(args.action) ||
+  if (!['close_tab', 'hl_start', 'hl_move', 'hl_end', 'touch_start', 'touch_move', 'touch_end'].includes(args.action) ||
       !Number.isFinite(args.x) || !Number.isFinite(args.y) ||
       args.x < 0 || args.x > 1 || args.y < 0 || args.y > 1) {
     throw new SenderError('Invalid helper action');
   }
   ctx.db.helperActionEvent.insert({ ...args,
-    x: args.action === 'point' ? args.x : 0, y: args.action === 'point' ? args.y : 0,
+    x: args.action === 'close_tab' ? 0 : args.x, y: args.action === 'close_tab' ? 0 : args.y,
     recipient: peer, server_at: ctx.timestamp });
 });
 
