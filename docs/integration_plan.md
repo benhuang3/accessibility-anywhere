@@ -140,6 +140,50 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 20:15 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `11be275`
+
+The eye tracker after live testing: it now copes with head movement, follows the eyes calmly, and
+can show where it thinks you're looking. 433 tests pass.
+
+1. **Head movement no longer breaks it.**
+   - **New default model `v4`:** the head's position and rotation (MediaPipe's transformation matrix,
+     in cm) are used as geometry; only the eye angle is learned from calibration.
+   - **Error after the user moved, with no re-tune, on 4 real recordings:**
+
+     | Model | Hayden 1 | Hayden 2 | p3 | p2 |
+     | --- | --- | --- | --- | --- |
+     | v1 (before) | 769 px | 999 px | 773 px | 917 px |
+     | v4 | 204 px | 155 px | 159 px | 259 px |
+
+   - **Right after calibration** it's close to v1.
+   - **Codex's `v3`** (another geometric attempt) couldn't fit its own calibration and isn't used.
+   - **Without a head pose,** `v4` falls back to a `v1` model fitted alongside.
+   - **Settings:** `[gaze] features = "v4"` by default (also accepts `v1`, `v2`, `v3`).
+2. **Calibration at three head positions.** After the 13 dots: "sit back a little" (5 dots), then
+   "lean in a little" (5 dots). `[gaze] calibration_poses = 3`; set `1` for the old setup.
+   Recordings now carry `pose` on target lines and `screen_mm` in the meta line.
+3. **Calmer eye-following while zoomed in:**
+   - **Speed:** default `pan_speed` 0.35, was 1.0.
+   - **Start:** a quadratic ramp, and panning waits until the gaze has stayed in the edge band for
+     0.3 s.
+   - **Smoothing:** speed changes are eased.
+   - **Adjusting it:** the tool `eye_follow_speed` and the phrases "follow my eyes slower/faster" save
+     to `config.toml`.
+   - **Files outside gaze:** the eye-follow block in `ally/platforms/windows.py` and `edge_speed`
+     plus a new `ease_pan` in `ally/platforms/base.py`. Ben H: platform files, FYI.
+4. **Gaze dot:** a translucent, click-through, never-focused circle where the tracker thinks the
+   user is looking, sized by its uncertainty. It also works while zoomed in.
+   - **Turning it on:** the tool `show_gaze` and the phrases "show where I'm looking" / "hide the eye
+     dot", plus `[gaze] show_dot` (off by default).
+   - **Where it lives:** `ally/gaze_dot.py`, drawn by the camera helper. It doesn't use `ally/overlay`.
+
+**Conflict check** (fetched at 20:10): no new change-log entries from others. Ganesh's
+`risk-branch` (19:44) shares only `ally/config.py` and `ally/default_config.toml` with this, in
+different sections.
+
+**Needs a person and camera:** a three-position calibration, the slower panning and voice speed
+change, and the dot (no focus taken, clicks pass through, follows the zoomed view).
+
 ### Oct 24, 19:25 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, docs only
 
 **Changed:** this file only.
