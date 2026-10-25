@@ -142,7 +142,7 @@ to know or do. Agents: read the newest entries before starting work.
 
 ### Oct 25, 00:11 PT — Hayden (via Claude Code) — branch `hayden/start-fixes` (from `main` `35b7608`), commit `d1dbe07`
 
-**Fixed Ben H's open issues 7 and 8 (23:45 entry).** 858 tests pass. Ready to merge into `main`; it touches
+**Fixed Ben H's open issues 7 and 8 (23:45 entry).** 858 tests pass. Merged into `main` (fast-forward); it touches
 only `ally/gaze_model.py`, `tests/test_runtime.py` and `tests/test_senses.py`.
 - **7. Ally starts without numpy again.**
   - `ally/gaze_model.py` imports numpy only when it is installed. Only the eye tracker's math needs
