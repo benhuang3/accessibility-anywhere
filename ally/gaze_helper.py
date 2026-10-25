@@ -17,7 +17,8 @@ senses window, and "hud [[text, level], ...]" sets its rows; "card {json}" shows
 optional title, size normal|large|tiny, seconds) and "card off" closes it. The card also closes itself
 after seconds. Unknown or broken lines are ignored.
 It exits when the agent closes its stdin (like the hotkey helper),
-so a camera or MediaPipe crash can never take Ally down. The camera is only ever used here.
+so a camera or MediaPipe crash can never take Ally down. The agent never opens the camera.
+ally.gaze_record opens it only while Ally is stopped, and it writes numbers, not pictures.
 Usage: python -m ally.gaze_helper '{"model": "...", "calibration": "...", "camera": 0, "fps": 20}'
 """
 
@@ -396,6 +397,7 @@ class Setup:
         self.good_since: float | None = None
         self.targets: list[_Dot] = []
         self.val_targets: list[_Dot] = []
+        self.drift_targets: list[_Dot] = []
         self.order: list[_Dot] = []
         self.pos = 0
         self.t0: float | None = None
@@ -582,6 +584,19 @@ class Setup:
         self.t0 = None
         self._score_sent = False
 
+    def start_drift(self, rng: random.Random | None = None) -> None:
+        """Five new check dots, phase "drift". Not used for fitting."""
+        rng = rng or self.rng
+        avoid = list(calibration_points())
+        avoid += [(t.nx, t.ny) for t in self.targets]
+        avoid += [(t.nx, t.ny) for t in self.val_targets]
+        points = validation_points(rng, avoid=avoid)
+        self.drift_targets = [_Dot("drift", i, x, y, VAL_SETTLE, VAL_COLLECT) for i, (x, y) in enumerate(points)]
+        self.order = list(self.drift_targets)
+        self.pos = 0
+        self.t0 = None
+        self.stage = "drift" if self.drift_targets else "done"
+
     def finish(self, now: float) -> None:
         self.stage = "result"
         self.result_at = now
@@ -615,6 +630,13 @@ class Calibration:
 
     def reopen(self) -> None:
         self._open_window()
+
+    def start_drift(self, rng: random.Random | None = None) -> None:
+        self.lines = []
+        self.result = None
+        self.last_face = time.monotonic()
+        self.setup.start_drift(rng)
+        self.reopen()
 
     def _text(self, img, text: str, y: float, scale: float = 1.0) -> None:
         cv2 = self.cv2
@@ -659,6 +681,8 @@ class Calibration:
             cv2.circle(img, (x, y), 3, (255, 255, 255), -1, cv2.LINE_AA)
             if stage == "validate":
                 self._text(img, "Checking. Keep looking at the dot.", 0.90, 0.7)
+            elif stage == "drift":
+                self._text(img, "Checking again. Keep looking at the dot.", 0.90, 0.7)
             if now - self.last_face > 1.0:
                 self._text(img, "I can't see your eyes. Face the screen, with light on your face.", 0.96, 0.65)
         elif stage in ("await_fit", "await_score"):
