@@ -29,6 +29,15 @@ class GazeModelTests(unittest.TestCase):
         shown = smooth.update((505, 402), 0.24, 100)
         self.assertLess(np.linalg.norm(shown - (502.5, 401)), 10)
 
+    def test_gaze_smoother_reset_reinitializes_after_missing_frames(self):
+        smooth = gm.GazeSmoother()
+        smooth.update((100, 100), 0.0, 80)
+        held = smooth.update(None, 0.1, 80)
+        np.testing.assert_allclose(held, (100, 100))
+        smooth.reset()
+        shown = smooth.update((800, 600), 0.2, 80)
+        np.testing.assert_allclose(shown, (800, 600))
+
     def landmarks(self, rh=0, rv=0, lh=0, lv=0):
         a = np.zeros((478, 3), float)
         for ids, h, v in ((gm.RIGHT_EYE, rh, rv), (gm.LEFT_EYE, lh, lv)):
