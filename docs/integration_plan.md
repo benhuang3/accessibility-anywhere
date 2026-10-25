@@ -140,6 +140,28 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 01:03 PT — Hayden (via Claude Code) — branch `hayden/senses-v2` (from `main` `77dd943`), merge `dab3c61`
+
+**Added, not on `main`, and live behavior unchanged:** groundwork for fairer squint and lean detection. 872 tests pass.
+- **Senses recorder v2 (`ally/senses/matrix.py`, camera helper `raw` option):**
+  - Saves raw face numbers (landmarks, blendshapes, face matrix), never pictures.
+  - New script parts: top and bottom of the screen, fast blinks, tired eyes, wink, soft squint, long
+    natural small-text reading, soft lean, sit back.
+  - Optional `--eyes` and `--age`, plus `--repeat` and `--parts`.
+- **`ally/senses/features.py`, `ally/senses/bench.py`, and new detector classes in `detectors.py`:**
+  - Squint and lean candidate detectors and an offline benchmark that reports per person and per group.
+  - `[senses] squint_method` and `lean_method` default to `v1`, today's detectors.
+- **Fairness evidence so far:**
+  - On the London Face Set (CC BY 4.0), a fixed squint threshold flags East Asian faces at rest
+    far more often than others.
+  - The open-source LibreFace AU7 reads more resting "squint" on Black faces (15% vs 3% white,
+    n=13/69).
+  - So the design compares each person only with their own calibration.
+- **Next on this branch:** the personal squint model, LibreFace as an optional off-by-default vote
+  (USC research and non-profit license only), and volunteer recordings.
+
+**Others:** nothing to do. Ganesh and Ben H: the senses `Struggle` shape on the bus is unchanged.
+
 ### Oct 25, 00:11 PT — Hayden (via Claude Code) — branch `hayden/start-fixes` (from `main` `35b7608`), commit `d1dbe07`
 
 **Fixed Ben H's open issues 7 and 8 (23:45 entry).** 858 tests pass. Merged into `main` (fast-forward); it touches
