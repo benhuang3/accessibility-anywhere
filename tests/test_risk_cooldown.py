@@ -8,7 +8,7 @@ from helpers import ROOT  # noqa: F401
 
 from ally.contracts import EventBus, Risk
 from ally.overlay.layout import button_labels
-from ally.overlay.overlay import Overlay
+from ally.overlay.overlay import Overlay, PRIMARY_BG
 from ally.risk.wire import Deduper, PAUSE_SECONDS, RiskWire, attach
 
 
@@ -278,7 +278,7 @@ class ConfirmationOverlayTests(unittest.TestCase):
         self.assertEqual(overlay._panel.current_offer.id, second.id)
         buttons = overlay._tk.Button.call_args_list[-2:]
         self.assertEqual([c.kwargs["text"] for c in buttons], ["Close it", "Keep it open"])
-        self.assertEqual(buttons[0].kwargs["bg"], "#7A4100")
+        self.assertEqual(buttons[0].kwargs["bg"], PRIMARY_BG)
         buttons[0].kwargs["command"]()
         self.assertEqual(second.choice, "yes")
 

@@ -351,9 +351,10 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const source = fs.readFileSync("extension/background.js", "utf8");
 const action = source.slice(source.indexOf("  async openCall("), source.indexOf("  async rememberSite("));
+const docked = source.slice(source.indexOf("async function openDockedCall("), source.indexOf("const ACTIONS = {"));
 const events = source.slice(source.indexOf("async function insertCallCSS("), source.indexOf("// ---------------------------------------------------------------- shortcuts"));
-const stored = {}, css = [], sent = [], created = [];
-let removed, next = 0;
+const stored = {}, css = [], sent = [], created = [], updated = [];
+let removed, next = 0, browser = null, displays = null;
 const context = {
   URL, send: (msg) => sent.push(msg),
   chrome: {
@@ -366,11 +367,15 @@ const context = {
     windows: {
       create: async (args) => { created.push(args); return { id: ++next, tabs: [{ id: next, status: "complete" }] }; },
       remove: async () => {},
+      getLastFocused: async () => browser,
+      update: async (id, info) => { updated.push({ id, info }); },
       onRemoved: { addListener: (fn) => { removed = fn; } },
     },
+    get system() { return displays && { display: { getInfo: async () => displays } }; },
   },
 };
 vm.runInNewContext(`let callCreation = Promise.resolve(); const callKey = (id) => 'allyCall:' + id;
+  ${docked}
   const ACTIONS = { ${action} }; globalThis.actions = ACTIONS; ${events}`, context);
 (async () => {
   const origin = "https://ganeshkar1.github.io";
@@ -401,6 +406,25 @@ vm.runInNewContext(`let callCreation = Promise.resolve(); const callKey = (id) =
   assert.equal(sent[1].service, "meet");
   assert.equal(Object.keys(stored).length, 0);
   assert.ok(!JSON.stringify(sent).includes("private"));
+
+  // Docking: a maximized browser keeps its page visible and the call popup sits on the right edge.
+  browser = { id: 50, type: "normal", state: "maximized", left: 0, top: 0, width: 1600, height: 900 };
+  const dockedCall = await context.actions.openCall(options);
+  const popup = created[created.length - 1];
+  assert.equal(popup.type, "popup");
+  assert.notEqual(popup.state, "maximized");
+  assert.equal(popup.left + popup.width, 1600);
+  assert.ok(popup.left > 800 && popup.height === 900);
+  assert.equal(updated[0].id, 50);
+  assert.equal(updated[0].info.left + updated[0].info.width, popup.left);
+  // Not maximized and no system.display permission: fall back to the maximized popup.
+  browser = { ...browser, state: "normal", width: 1000 };
+  const fallback = await context.actions.openCall(options);
+  assert.equal(created[created.length - 1].state, "maximized");
+  assert.equal(updated.length, 1);
+  await removed(dockedCall.windowId);
+  await removed(fallback.windowId);
+  assert.equal(Object.keys(stored).length, 0);
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 '''
         result = subprocess.run([shutil.which("node"), "-"], input=script, text=True,
