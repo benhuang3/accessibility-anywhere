@@ -7,6 +7,7 @@ from typing import Annotated
 
 from ..platforms.base import next_level
 from ..registry import ToolError, tool
+from .ui_text_tools import undo_native_rewrites
 
 
 def zoom_target(ctx) -> str:
@@ -67,6 +68,7 @@ def reset_all(ctx):
         p.clear_text_overlays()
     except ToolError as e:
         problems.append(str(e))
+    problems += undo_native_rewrites(ctx)
     try:
         if p.magnify_level > 1.0:
             p.magnify(1.0)

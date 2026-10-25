@@ -136,6 +136,17 @@ class Platform:
     def clear_text_overlays(self) -> None:
         """Remove any reading cards shown by show_text_overlay. Default: nothing to clear."""
 
+    def replace_focused_text(self, text: str) -> dict | None:
+        """Write `text` into the focused text box of the front app, if it can be edited in place.
+
+        Returns {"bounds": (x, y, w, h), "old": previous text} so the change can be undone, or
+        None if this system can't (the caller shows a reading card instead)."""
+        return None
+
+    def restore_text_at(self, bounds, old: str) -> bool:
+        """Put `old` back into the text box at screen rectangle `bounds`. True on success."""
+        return False
+
     def set_gaze_source(self, latest, pan_speed: float = 1.0) -> None:
         """latest() -> where the eyes are on the screen (or None); a magnifier can pan with it."""
 

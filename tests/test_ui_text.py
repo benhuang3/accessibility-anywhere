@@ -31,10 +31,14 @@ class FakePlatform(base.Platform):
     name = "linux"
     label = "this test"
 
-    def __init__(self, box=None, overlay_ok=True):
+    def __init__(self, box=None, overlay_ok=True, editable=None, restore_ok=True):
         super().__init__()
         self._box = box
         self.overlay_ok = overlay_ok
+        self.editable = editable  # {"bounds": ..., "old": ...} for a focused box that can be rewritten
+        self.restore_ok = restore_ok
+        self.replaced = []
+        self.restored = []
         self.magnify_calls = []
         self.magnify_at_calls = []
         self.overlay_calls = []
@@ -61,6 +65,16 @@ class FakePlatform(base.Platform):
 
     def clear_text_overlays(self):
         self.cleared += 1
+
+    def replace_focused_text(self, text):
+        if not self.editable:
+            return None
+        self.replaced.append(text)
+        return dict(self.editable)
+
+    def restore_text_at(self, bounds, old):
+        self.restored.append((tuple(bounds), old))
+        return self.restore_ok
 
 
 class FakeState:
@@ -153,6 +167,54 @@ class EnlargeTextTests(unittest.TestCase):
         out = r.call("enlarge_text", {"goal": "hello"}, ctx=ctx)
         self.assertFalse(out.ok)
         self.assertIn("isn't supported", out.error)
+
+
+class NativeRewriteTests(unittest.TestCase):
+    def test_editable_box_is_rewritten_in_place(self):
+        r = make_registry()
+        plat = FakePlatform(box=(0, 0, 10, 10), editable={"bounds": (5, 6, 70, 20), "old": "Untitled"})
+        ctx = FakeCtx(FakeBrowser(connected=False, focused=False), plat)
+        out = r.call("enlarge_text", {"goal": "Please sign here"}, ctx=ctx)
+        self.assertTrue(out.ok, out.error)
+        self.assertEqual(out.value["tier"], "native-rewrite")
+        self.assertEqual(plat.replaced, ["Please sign here"])
+        self.assertEqual(plat.overlay_calls, [])
+        self.assertEqual(ctx.state.get("ui_text_edits"),
+                         [{"tier": "native-rewrite", "bounds": [5, 6, 70, 20], "old": "Untitled"}])
+
+    def test_restore_puts_old_text_back_newest_first(self):
+        r = make_registry()
+        plat = FakePlatform()
+        ctx = FakeCtx(FakeBrowser(connected=False, focused=False), plat)
+        ctx.state.set("ui_text_edits", [
+            {"tier": "native-rewrite", "bounds": [1, 1, 10, 10], "old": "first"},
+            {"tier": "overlay"},
+            {"tier": "native-rewrite", "bounds": [1, 1, 10, 10], "old": "second"},
+        ])
+        out = r.call("restore_ui_text", {}, ctx=ctx)
+        self.assertTrue(out.ok, out.error)
+        self.assertEqual([old for _b, old in plat.restored], ["second", "first"])
+        self.assertEqual(ctx.state.get("ui_text_edits"), [])
+
+    def test_failed_restore_is_kept_for_later(self):
+        r = make_registry()
+        plat = FakePlatform(restore_ok=False)
+        ctx = FakeCtx(FakeBrowser(connected=False, focused=False), plat)
+        edit = {"tier": "native-rewrite", "bounds": [1, 1, 10, 10], "old": "x"}
+        ctx.state.set("ui_text_edits", [edit, {"tier": "overlay"}])
+        out = r.call("restore_ui_text", {}, ctx=ctx)
+        self.assertTrue(out.ok, out.error)  # the reading cards were still cleared
+        self.assertIn("Couldn't put back", out.value)
+        self.assertEqual(ctx.state.get("ui_text_edits"), [edit])
+
+    def test_reset_all_undoes_native_rewrites(self):
+        r = make_registry()
+        plat = FakePlatform()
+        ctx = FakeCtx(FakeBrowser(connected=False, focused=False), plat)
+        ctx.state.set("ui_text_edits", [{"tier": "native-rewrite", "bounds": [1, 1, 10, 10], "old": "x"}])
+        out = r.call("reset_all", {}, ctx=ctx)
+        self.assertTrue(out.ok, out.error)
+        self.assertEqual(plat.restored, [((1, 1, 10, 10), "x")])
 
 
 class RestoreTests(unittest.TestCase):

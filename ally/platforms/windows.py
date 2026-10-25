@@ -29,6 +29,7 @@ import wave
 
 from ..registry import ToolError
 from .base import NO_WINDOW, Platform, edge_speed, is_64bit_python, popen, run, which
+from .cards import ReadingCards
 
 log = logging.getLogger("ally.os.windows")
 
@@ -55,6 +56,7 @@ VK = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10, "cmd": 0x5B, "esc": 0x1B, "enter
       "tab": 0x09, "plus": 0xBB, "minus": 0xBD, "=": 0xBB, "-": 0xBD, "up": 0x26, "down": 0x28,
       "left": 0x25, "right": 0x27}
 KEYEVENTF_KEYUP = 0x0002
+MAX_REWRITE_CHARS = 200  # longer text boxes get a reading card instead of an in-place rewrite
 
 
 def follow_offset(cursor: int, screen: int, level: float) -> int:
@@ -94,6 +96,22 @@ def win_shortcut(vk: int) -> None:
     """Press Win+key once the user has let go of the hotkey's modifiers."""
     wait_for_keys_up()
     tap(VK["cmd"], vk)
+
+
+@functools.cache
+def set_dpi_aware() -> bool:
+    """Use real screen pixels everywhere in this process (once, before any window or UIA call).
+
+    UI Automation boxes, the cursor and the magnifier's offsets must all be in the same pixels; on
+    a 150% or 200% display a DPI-unaware process gets scaled ones and the zoom lands off target."""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor aware
+        return True
+    except Exception:
+        try:
+            return bool(ctypes.windll.user32.SetProcessDPIAware())
+        except Exception:
+            return False
 
 
 def magnifier_app_open() -> bool:
@@ -410,10 +428,7 @@ class _MagThread(threading.Thread):
 
         user32 = ctypes.windll.user32
         try:
-            try:
-                ctypes.windll.shcore.SetProcessDpiAwareness(2)
-            except Exception:
-                user32.SetProcessDPIAware()
+            set_dpi_aware()
             mag = ctypes.WinDLL("Magnification.dll")
             mag.MagInitialize.restype = wt.BOOL
             mag.MagUninitialize.restype = wt.BOOL
@@ -556,6 +571,8 @@ class WindowsPlatform(Platform):
         self._speech: _SpeechWorker | None = None
         self._gaze = None  # (latest gaze point callable, pan speed) from the eye tracker
         self._lock = threading.Lock()
+        set_dpi_aware()
+        self.cards = ReadingCards()
 
     def _magnifier(self) -> _MagThread | None:
         with self._lock:
@@ -782,12 +799,42 @@ class WindowsPlatform(Platform):
         except Exception:
             return None
 
+    def show_text_overlay(self, box, text: str) -> str:
+        return self.cards.show(box, text)
+
+    def clear_text_overlays(self) -> None:
+        self.cards.clear()
+
+    def replace_focused_text(self, text: str) -> dict | None:
+        """Write into the focused box through UI Automation. Only short, editable text boxes: a
+        ValuePattern replaces the whole value, which in an editor would be the whole document."""
+        from . import win_uia
+
+        el = win_uia.focused_element()
+        if not el or not el.get("settable") or el.get("role") != "edit":
+            return None
+        old = el.get("value") or ""
+        if len(old) > MAX_REWRITE_CHARS or not win_uia.usable_bounds(el.get("bounds")):
+            return None
+        if not win_uia.set_focused_value(text):
+            return None
+        return {"bounds": el["bounds"], "old": old}
+
+    def restore_text_at(self, bounds, old: str) -> bool:
+        from . import win_uia
+
+        box = win_uia.usable_bounds(bounds)
+        if not box:
+            return False
+        x, y, w, h = box
+        return win_uia.set_value(x + w // 2, y + h // 2, old)
+
     def read_focused_box(self) -> tuple | None:
         """Screen rectangle of the element with keyboard focus, via UI Automation, or None."""
         from . import win_uia
 
         el = win_uia.focused_element()
-        return el.get("bounds") if el else None
+        return win_uia.usable_bounds(el.get("bounds")) if el else None
 
     def checks(self):
         out = []
@@ -808,6 +855,10 @@ class WindowsPlatform(Platform):
         return out
 
     def shutdown(self) -> None:
+        from . import win_uia
+
+        win_uia.shutdown()
+        self.cards.close()
         if self._speech is not None:
             self._speech.close()
         if self._mag is not None and self._mag.ok and self._mag.is_alive():

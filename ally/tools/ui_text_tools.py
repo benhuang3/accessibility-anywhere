@@ -18,6 +18,20 @@ def _record(ctx, entry: dict) -> None:
     ctx.state.set("ui_text_edits", edits[-50:])
 
 
+def undo_native_rewrites(ctx) -> list[str]:
+    """Put back the text of native text boxes that enlarge_text rewrote, newest first, and forget the
+    other edits (the caller undoes those). Returns the problems; edits that failed are kept so a later
+    restore can try again. Used by restore_ui_text and reset_all."""
+    failed, problems = [], []
+    for e in reversed(list(ctx.state.get("ui_text_edits") or [])):
+        if e.get("tier") == "native-rewrite" and not ctx.os.restore_text_at(e.get("bounds"), e.get("old", "")):
+            failed.append(e)
+    if failed:
+        problems.append("Couldn't put back the text in the other program (is its window still open?).")
+    ctx.state.set("ui_text_edits", list(reversed(failed)))
+    return problems
+
+
 @tool
 def enlarge_text(ctx, goal: Annotated[str, "'bigger' to magnify, or a replacement string to show instead"] = "bigger",
                  level: Annotated[float, "Magnification for native apps (2 = 200%). 0 = pick a sensible default."] = 0.0):
@@ -27,8 +41,8 @@ def enlarge_text(ctx, goal: Annotated[str, "'bigger' to magnify, or a replacemen
     swapped for something easier to read. Chrome gets a real in-page edit: goal="bigger" zooms the
     page, and any other goal rewrites the tab's title text in memory. Every other app is magnified
     on the element the user is working in (whole screen if that can't be found). Replacing the words
-    in a non-Chrome app needs the reading-card overlay and isn't available on every system yet; if it
-    isn't, this says so. Pass goal="bigger" to enlarge, or goal=<the words to show> to replace.
+    in a non-Chrome app writes them into a short editable text box when possible (Windows), and
+    otherwise shows them on a big reading card; if neither works here, this says so. Pass goal="bigger" to enlarge, or goal=<the words to show> to replace.
     After a rewrite or reading card, say restore_ui_text to undo it; say reset to undo zoom and
     magnifier too.
     """
@@ -57,6 +71,11 @@ def enlarge_text(ctx, goal: Annotated[str, "'bigger' to magnify, or a replacemen
         _record(ctx, {"tier": "screen-magnify"})
         return {"tier": "screen-magnify", "detail": "whole-screen", "message": msg}
 
+    native = ctx.os.replace_focused_text(goal)
+    if native:
+        _record(ctx, {"tier": "native-rewrite", "bounds": list(native["bounds"]), "old": native["old"]})
+        return {"tier": "native-rewrite", "detail": goal,
+                "message": f'Changed the text to "{goal}". Say restore to put it back.'}
     box = ctx.os.read_focused_box()
     msg = ctx.os.show_text_overlay(box, goal)
     _record(ctx, {"tier": "overlay"})
@@ -81,7 +100,7 @@ def restore_ui_text(ctx):
         done.append("reading cards")
     except ToolError as e:
         problems.append(str(e))
-    ctx.state.set("ui_text_edits", [])
+    problems += undo_native_rewrites(ctx)
     if problems and not done:
         raise ToolError(problems[0])
-    return "Put the text back the way it was."
+    return "Put the text back the way it was." if not problems else "Put back what I could. " + problems[0]

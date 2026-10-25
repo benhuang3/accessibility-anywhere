@@ -16,6 +16,7 @@ import time
 
 from ..registry import ToolError
 from .base import Platform, run, tempfile_path, which
+from .cards import ReadingCards
 
 KEY_EQUAL, KEY_MINUS, KEY_8, KEY_C = 24, 27, 28, 8  # ANSI virtual key codes
 
@@ -52,6 +53,10 @@ def ax_trusted() -> bool | None:
 class MacPlatform(Platform):
     name = "macos"
     label = "macOS"
+
+    def __init__(self):
+        super().__init__()
+        self.cards = ReadingCards()
 
     def magnify(self, level: float) -> str:
         level = max(1.0, min(16.0, float(level)))
@@ -165,6 +170,12 @@ class MacPlatform(Platform):
         m = re.search(r'"LSDisplayName"\s*=\s*"([^"]*)"', out)
         return m.group(1)[:120] if m else None
 
+    def show_text_overlay(self, box, text: str) -> str:
+        return self.cards.show(box, text)
+
+    def clear_text_overlays(self) -> None:
+        self.cards.clear()
+
     def checks(self):
         out = []
         trusted = ax_trusted()
@@ -182,6 +193,7 @@ class MacPlatform(Platform):
         return out
 
     def shutdown(self) -> None:
+        self.cards.close()
         try:
             if self.magnify_level > 1.0:
                 self.magnify(1.0)

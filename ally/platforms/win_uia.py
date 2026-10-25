@@ -9,6 +9,11 @@ Everything that touches comtypes or user32 is imported lazily and guarded by a W
 `import ally.platforms.win_uia` succeeds on macOS/Linux and available() returns (False, reason).
 The pure helpers rect_to_bounds() and role_for() carry the logic that can be unit-tested anywhere.
 
+Threads: every tool call runs on a fresh thread, and a COM object must be used from a thread that
+initialized COM. So all UIA calls run on one worker thread that joins the multithreaded apartment
+(Microsoft's advice for UIA clients) and owns the IUIAutomation object. Each call has a timeout: an
+app that stops answering can't freeze a tool, and the next call gets a fresh worker.
+
 Docs: IUIAutomation (ElementFromPoint, GetFocusedElement), IUIAutomationElement
 (CurrentName, CurrentControlType, CurrentBoundingRectangle, GetCurrentPattern),
 IUIAutomationValuePattern (CurrentValue, CurrentIsReadOnly, SetValue). Windows 7+.
@@ -17,9 +22,13 @@ IUIAutomationValuePattern (CurrentValue, CurrentIsReadOnly, SetValue). Windows 7
 from __future__ import annotations
 
 import logging
+import queue
 import sys
+import threading
 
 log = logging.getLogger("ally.os.win_uia")
+
+CALL_TIMEOUT = 2.0  # seconds; UIA asks the target app, which may be busy or hung
 
 # UIA control-type ids (UIA_*ControlTypeId). A few common ones map to a short role; the rest are
 # "other". These constants are stable and documented, so we don't need comtypes to know them.
@@ -45,26 +54,133 @@ def rect_to_bounds(left: int, top: int, right: int, bottom: int) -> tuple[int, i
     return int(left), int(top), int(right - left), int(bottom - top)
 
 
+def usable_bounds(bounds) -> tuple[int, int, int, int] | None:
+    """bounds if it is a real on-screen box, else None (UIA reports (0, 0, 0, 0) or negative sizes
+    for elements it can't place; centering a magnifier on those would zoom into a corner)."""
+    try:
+        x, y, w, h = (int(v) for v in bounds)
+    except (TypeError, ValueError):
+        return None
+    return (x, y, w, h) if w > 0 and h > 0 else None
+
+
 def role_for(control_type_id: int) -> str:
     """Map a UIA control-type id to a short role string ("button"/"edit"/"text"/"tab"/"other")."""
     return _ROLES.get(int(control_type_id), "other")
 
 
+# ---- the worker thread that owns COM (logic is OS-independent and unit-tested) --------------
+
+class _Worker(threading.Thread):
+    """Runs functions one at a time on a single thread that set itself up with `setup()`.
+
+    call() waits up to `timeout` seconds; on a timeout the worker is marked broken (it may be stuck
+    inside a hung app forever) and the owner starts a new one for the next call."""
+
+    def __init__(self, setup=None, teardown=None):
+        super().__init__(name="uia", daemon=True)
+        self.setup, self.teardown = setup, teardown
+        self.jobs: queue.Queue = queue.Queue()
+        self.ready = threading.Event()
+        self.error = ""
+        self.broken = False
+
+    def run(self):
+        try:
+            if self.setup:
+                self.setup()
+        except Exception as e:
+            self.error = f"{type(e).__name__}: {e}"
+            self.broken = True
+            self.ready.set()
+            return
+        self.ready.set()
+        try:
+            while True:
+                job = self.jobs.get()
+                if job is None:
+                    break
+                fn, args, box, done = job
+                try:
+                    box["result"] = fn(*args)
+                except BaseException as e:  # handed back to the caller
+                    box["error"] = e
+                done.set()
+        finally:
+            if self.teardown:
+                try:
+                    self.teardown()
+                except Exception:
+                    pass
+
+    def call(self, fn, *args, timeout: float = CALL_TIMEOUT):
+        if not self.ready.wait(timeout) or self.broken:
+            raise RuntimeError(self.error or "UI Automation worker didn't start")
+        box: dict = {}
+        done = threading.Event()
+        self.jobs.put((fn, args, box, done))
+        if not done.wait(timeout):
+            self.broken = True
+            self.error = f"UI Automation didn't answer within {timeout:g} s"
+            self.jobs.put(None)  # exits after the stuck call returns, if it ever does
+            raise TimeoutError(self.error)
+        if "error" in box:
+            raise box["error"]
+        return box.get("result")
+
+    def stop(self):
+        self.jobs.put(None)
+
+
+def _com_setup():
+    import comtypes  # type: ignore
+
+    comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+
+
+def _com_teardown():
+    global _UIA_CACHE
+    _UIA_CACHE = None  # COM objects die with the apartment
+    import comtypes  # type: ignore
+
+    comtypes.CoUninitialize()
+
+
+_worker: _Worker | None = None
+_worker_lock = threading.Lock()
+
+
+def _call(fn, *args, timeout: float = CALL_TIMEOUT):
+    """Run fn(*args) on the UIA worker thread (started, or restarted after a hang, as needed)."""
+    global _worker
+    with _worker_lock:
+        if _worker is None or _worker.broken or not _worker.is_alive():
+            _worker = _Worker(_com_setup, _com_teardown)
+            _worker.start()
+        w = _worker
+    return w.call(fn, *args, timeout=timeout)
+
+
+def shutdown() -> None:
+    global _worker
+    with _worker_lock:
+        if _worker is not None:
+            _worker.stop()
+            _worker = None
+
+
 # ---- Windows / comtypes bridge (lazy, guarded) ----------------------------------------------
+# Every function below whose name starts with "_" and touches UIA runs on the worker thread.
 
 def _on_windows() -> bool:
     return sys.platform == "win32"
 
 
-_UIA_CACHE: tuple | None = None  # (iuia, UIA module) once built
+_UIA_CACHE: tuple | None = None  # (iuia, UIA module) once built, owned by the worker thread
 
 
 def _uia():
-    """Build and cache the IUIAutomation root object and the generated UIA module.
-
-    Raises OSError/Exception if comtypes or the UIAutomationCore type library is unavailable; all
-    callers catch broadly and degrade. Must only be called on Windows.
-    """
+    """Build and cache the IUIAutomation root object and the generated UIA module (worker thread only)."""
     global _UIA_CACHE
     if _UIA_CACHE is not None:
         return _UIA_CACHE
@@ -78,8 +194,14 @@ def _uia():
     return _UIA_CACHE
 
 
+_available: tuple[bool, str] | None = None
+
+
 def available() -> tuple[bool, str]:
-    """(True, "...") if UIA can be used here, else (False, reason). Never raises."""
+    """(True, "...") if UIA can be used here, else (False, reason). Never raises. Cached once it works."""
+    global _available
+    if _available is not None:
+        return _available
     if not _on_windows():
         return False, "UI Automation needs Windows"
     try:
@@ -87,10 +209,11 @@ def available() -> tuple[bool, str]:
     except Exception as e:  # pragma: no cover - Windows-only path
         return False, f"comtypes not installed: {e} (pip install comtypes)"
     try:
-        _uia()
+        _call(_uia, timeout=10)  # the first call generates the type library wrapper: slow
     except Exception as e:  # pragma: no cover - Windows-only path
         return False, f"UI Automation COM API unavailable: {type(e).__name__}: {e}"
-    return True, "available"
+    _available = (True, "available")
+    return _available
 
 
 def _value_pattern(element):
@@ -106,7 +229,9 @@ def _value_pattern(element):
 
 
 def _describe(element) -> dict | None:
-    """Turn a UIA element into {"text", "role", "bounds", "settable"}. None on failure."""
+    """Turn a UIA element into {"text", "value", "role", "bounds", "settable"}. None on failure.
+
+    bounds is None when UIA can't place the element on screen."""
     if element is None:
         return None
     try:
@@ -127,17 +252,16 @@ def _describe(element) -> dict | None:
                 value = vp.CurrentValue or ""
             except Exception:
                 value = ""
-        text = name or value
         try:
             role = role_for(element.CurrentControlType)
         except Exception:
             role = "other"
         try:
             r = element.CurrentBoundingRectangle
-            bounds = rect_to_bounds(r.left, r.top, r.right, r.bottom)
+            bounds = usable_bounds(rect_to_bounds(r.left, r.top, r.right, r.bottom))
         except Exception:
-            bounds = (0, 0, 0, 0)
-        return {"text": text, "role": role, "bounds": bounds, "settable": settable}
+            bounds = None
+        return {"text": name or value, "value": value, "role": role, "bounds": bounds, "settable": settable}
     except Exception as e:  # pragma: no cover - Windows-only path
         log.warning("UIA describe failed: %s", e)
         return None
@@ -156,12 +280,30 @@ def _element_from_point(x: int, y: int):
     return iuia.ElementFromPoint(pt)
 
 
+def _focused():
+    iuia, _UIA = _uia()
+    return iuia.GetFocusedElement()
+
+
+def _set(element, text: str) -> bool:
+    vp = _value_pattern(element)
+    if vp is None:
+        return False
+    try:
+        if bool(vp.CurrentIsReadOnly):
+            return False
+    except Exception:
+        return False
+    vp.SetValue(text)
+    return True
+
+
 def element_from_point(x: int, y: int) -> dict | None:
     """Describe the element under screen pixel (x, y). None if UIA is unavailable or finds nothing."""
     if not available()[0]:
         return None
     try:
-        return _describe(_element_from_point(x, y))
+        return _call(lambda: _describe(_element_from_point(x, y)))
     except Exception as e:  # pragma: no cover - Windows-only path
         log.warning("ElementFromPoint failed at (%s,%s): %s", x, y, e)
         return None
@@ -172,8 +314,7 @@ def focused_element() -> dict | None:
     if not available()[0]:
         return None
     try:
-        iuia, _UIA = _uia()
-        return _describe(iuia.GetFocusedElement())
+        return _call(lambda: _describe(_focused()))
     except Exception as e:  # pragma: no cover - Windows-only path
         log.warning("GetFocusedElement failed: %s", e)
         return None
@@ -184,19 +325,20 @@ def set_value(x: int, y: int, text: str) -> bool:
     if not available()[0]:
         return False
     try:
-        element = _element_from_point(x, y)
-        vp = _value_pattern(element)
-        if vp is None:
-            return False
-        try:
-            if bool(vp.CurrentIsReadOnly):
-                return False
-        except Exception:
-            return False
-        vp.SetValue(text)
-        return True
+        return bool(_call(lambda: _set(_element_from_point(x, y), text)))
     except Exception as e:  # pragma: no cover - Windows-only path
         log.warning("SetValue failed at (%s,%s): %s", x, y, e)
+        return False
+
+
+def set_focused_value(text: str) -> bool:
+    """Set the text of the element with keyboard focus via its ValuePattern. True on success."""
+    if not available()[0]:
+        return False
+    try:
+        return bool(_call(lambda: _set(_focused(), text)))
+    except Exception as e:  # pragma: no cover - Windows-only path
+        log.warning("SetValue on the focused element failed: %s", e)
         return False
 
 
