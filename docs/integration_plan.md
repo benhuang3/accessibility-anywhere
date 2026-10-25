@@ -140,6 +140,21 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 06:30 PT — Hayden (via Claude Code) — `main`, merges plus commit `f6793f1`
+
+**Merged into `main` (at Hayden's request):** 1120 tests pass.
+- `benh/os-layer` (Ben): eye scrolling, tab switching and the rest of the branch.
+- `hayden/handsfree-scroll`: the "hands free scrolling" phrases.
+- `uiux` (Ben): Clarity theme and mascot.
+
+`rules.py` help text conflict resolved by keeping both "set up my face" and "scroll with my eyes".
+
+**Fixed:** a frozen black box with a ring appeared next to the live gaze ring. The ring's animation
+thread never handled window messages, so Windows "ghosted" it after about 5 s. It now handles them
+every frame. Checked live for 8 s: the window is not marked hung.
+
+**Ben:** your branches are in `main`; pull before your next push.
+
 ### Oct 25, 06:21 PT — Hayden (via Claude Code) — `main`, commit `0f4f587`
 
 **Fixed:** the gaze ring did not appear after the smooth-ring change. `ReleaseDC` had no ctypes
