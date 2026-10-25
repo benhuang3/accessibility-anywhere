@@ -5,8 +5,8 @@ import re
 import threading
 import time
 
-from ally.contracts import EventBus, Risk
-from . import domains, fields, joined, process, text
+from ally.contracts import EventBus, Offer, Risk
+from . import actions, domains, fields, joined, process, text
 
 log = logging.getLogger("ally")
 _ORDER = ("scam_popup", "remote_access", "untrusted_site", "payment_field")
@@ -85,8 +85,15 @@ class Deduper:
 
 class RiskWire:
     def __init__(self, bus: EventBus, snapshot_fn=process.snapshot_processes,
-                 poll_seconds=10.0, clock=time.time, deduper=None):
+                 poll_seconds=10.0, clock=time.time, deduper=None, ask=None, call=None,
+                 broadcast=None, kill=actions._kill):
         self.bus = bus
+        self.ask = ask
+        self.call = call
+        self.broadcast = broadcast
+        self.kill = kill
+        self._inflight = set()
+        self._unsubscribe = None
         self.snapshot_fn = snapshot_fn
         self.poll_seconds = poll_seconds
         self.clock = clock
@@ -98,6 +105,47 @@ class RiskWire:
         self.last_page = {"url": "", "card_present": False, "last_scam_text_at": None}
         self._stop = threading.Event()
         self._thread = None
+
+    def on_risk_warning(self, msg) -> None:
+        try:
+            risk = Risk.from_dict(msg["risk"])
+        except Exception:
+            return
+        if self.broadcast is not None:
+            try:
+                self.broadcast("showRiskBanner", {"url": risk.url, "kind": risk.kind,
+                                                  "text": msg["text"]})
+            except Exception:
+                log.debug("risk banner failed", exc_info=True)
+        proposal = actions.ask_for(risk)
+        if self.ask is None or proposal is None:
+            return
+        key = (domains.host_of(risk.url), risk.kind)
+        with self._lock:
+            if self._stop.is_set() or key in self._inflight:
+                return
+            self._inflight.add(key)
+        prompt, action_id = proposal
+
+        def ask_and_act():
+            try:
+                offer = Offer(prompt, context="risk", reason=risk, timeout=20.0)
+                if self.ask(offer) == "yes" and not self._stop.is_set():
+                    ok = actions.perform(action_id, risk, self.call,
+                                         snapshot=self.snapshot_fn, kill=self.kill)
+                    self.bus.publish("risk_action", {"action": action_id, "ok": ok,
+                                                     "kind": risk.kind})
+            except Exception:
+                log.debug("risk offer failed", exc_info=True)
+            finally:
+                with self._lock:
+                    self._inflight.discard(key)
+
+        try:
+            threading.Thread(target=ask_and_act, name="risk-ask", daemon=True).start()
+        except Exception:
+            with self._lock:
+                self._inflight.discard(key)
 
     def _joined(self):
         page = self.last_page
@@ -164,20 +212,28 @@ class RiskWire:
             if self._thread is not None and self._thread.is_alive():
                 return
             self._stop.clear()
+            if self._unsubscribe is None:
+                self._unsubscribe = self.bus.subscribe("risk_warning", self.on_risk_warning)
             self._thread = threading.Thread(target=self._loop, name="risk-wire", daemon=True)
             self._thread.start()
 
     def stop(self):
         with self._lock:
             self._stop.set()
+            if self._unsubscribe is not None:
+                self._unsubscribe()
+                self._unsubscribe = None
             thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=0.5)
 
 
 def attach(agent) -> RiskWire:
-    wire = RiskWire(agent.bus)
     bridge = getattr(agent, "bridge", None)
+    proactive = getattr(agent, "proactive", None)
+    wire = RiskWire(agent.bus, ask=getattr(proactive, "ask", None),
+                    call=getattr(bridge, "call", None),
+                    broadcast=getattr(bridge, "broadcast", None))
     if hasattr(bridge, "on_page"):
         bridge.on_page = wire.on_page
     wire.start()
