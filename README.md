@@ -69,22 +69,44 @@ While Ally is talking, say **"Ally, stop"**.
 
 ### Eye tracking
 
-1. Say **"Ally, calibrate my eyes"**. Dots appear on the screen one at a time; look at each one until
-   it moves (about 20 seconds; Esc cancels). Do this again if you move your laptop or chair a lot.
-2. Say **"Ally, I want what I'm looking at magnified"** (or "magnify what I'm looking at", "zoom in
-   here"), or press `<mod>+G`. The whole screen zooms around where your eyes were while you spoke.
-3. While zoomed in, the view follows your eyes: look near an edge and it pans that way; the middle
-   stays still for reading. Move the mouse and it follows the mouse again. Say "follow my eyes" /
-   "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
+1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About 35 seconds: Ally checks that it can
+   see your face, shows 13 dots, then 5 check dots it did not train on. Esc cancels. Do this again if
+   you move your laptop or chair a lot.
+2. Say **"Ally, what am I looking at"** for the area of the screen. On Windows, Ally also names the
+   button, link, or text under that spot. **"this"**, **"that"**, and **"here"** use the same tool.
+3. Say **"Ally, magnify what I'm looking at"** (or "magnify here"), or press `<mod>+G`. The screen
+   zooms around where you looked. While zoomed in, looking near an edge pans that way; the middle
+   stays still for reading. Move the mouse and the view follows the mouse again. Say "follow my eyes"
+   / "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
+4. A yes or no can be answered by looking. Ally shows the choices as large cards (two choices: the
+   left half and the right half). Look at one for a moment.
+5. Say **"Ally, check my eye tracker"** for the 5 check dots only (about 8 seconds), without a full setup.
+
+The check uses plain words:
+
+- **Good**: about 150 pixels or less, and the areas of the screen were right (8 of 9 on a full grid;
+  with 5 dots, all 5).
+- **Okay**: the area is right often enough to trust left, right, or the 3x3 grid, not an exact spot.
+- **Poor**: too many areas were wrong. The next sentence is the likely cause (light, distance, or
+  glasses glare).
+
+If the eyes aren't set up, Ally can't see your face, your look doesn't settle, or the estimate is
+too unsure, Ally uses the mouse pointer and says so.
 
 - Needs `pip install mediapipe opencv-python` and a webcam. The face model downloads once (3.7 MB). Video
   is processed on your computer and never saved; only the calibration (a few numbers) is kept, in `state/`.
+  Mouse clicks can quietly improve the estimate (`gaze.click_learning`, on by default). The click stays
+  on this computer.
+- `[gaze] features` is `v1` until recordings show `v2` is better. A new setup uses whichever you set.
+  `max_radius_px` (default 250) is when Ally stops trusting the eyes and uses the pointer.
 - The camera stays on while Ally runs. Say "Ally, turn off eye tracking" (until Ally restarts), or set
   `gaze.enabled = false`.
-- A webcam is far less precise than a dedicated eye tracker: expect it to land within a few centimeters,
-  which is plenty for magnifying, plus edge panning for the rest. Light on your face helps.
+- A webcam is far less precise than a dedicated eye tracker. Areas of the screen are the useful part.
+  Light on your face helps. `python run.py doctor` reports how old the calibration is, the check, the
+  feature set, and whether the camera index still matches.
 - Exact centering and following the eyes are Windows features. On macOS and Linux, Ally moves the
-  pointer to where you look and zooms there, since those magnifiers follow the pointer.
+  pointer to where you look and zooms there, since those magnifiers follow the pointer. The control
+  name under the gaze point is Windows-only; other systems get the screen area.
 
 ### Noticing struggle (senses)
 
