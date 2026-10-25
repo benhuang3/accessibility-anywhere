@@ -1,4 +1,4 @@
-"""On-screen overlay: highlight, warning card, Yes/No offer bubble."""
+"""On-screen safety panel, help bubble, and highlight."""
 
 from __future__ import annotations
 
@@ -13,27 +13,28 @@ from .layout import (
     INFO_BG,
     INFO_FG,
     RISK_BG,
-    RISK_FG,
     RISK_BORDER,
     DisplayState,
+    PanelState,
     answer_offer,
+    button_labels,
     fit_card,
     highlight_bars,
-    key_to_choice,
     make_card_command,
     make_clear_command,
     make_highlight_command,
     make_offer_command,
-    sanitize_text,
+    split_title,
 )
 
 log = logging.getLogger("ally")
 
 START_TIMEOUT = 3.0
 FONT_FAMILY = "Segoe UI"
-BODY_PT = 28
-TITLE_PT = 32
-BUTTON_PT = 24
+BODY_PX = 26
+TITLE_PX = 32
+BUTTON_PX = 24
+PRIMARY_BG = "#7A4100"
 
 
 def _set_dpi_aware() -> None:
@@ -53,6 +54,10 @@ class Overlay:
         self._q: queue.Queue = queue.Queue()
         self._ready = threading.Event()
         self._state = DisplayState()
+        self._panel = PanelState()
+        self._card_key = None
+        self._bubble_key = None
+        self._focused_offer = None
         self._thread: threading.Thread | None = None
         self._root = None
         self._running = False
@@ -112,6 +117,11 @@ class Overlay:
             _set_dpi_aware()
             root = tk.Tk()
             root.withdraw()
+            # Sizes below are for a 96-DPI screen; scale them so a 200% laptop screen gets the same physical size.
+            try:
+                self._scale = max(1.0, root.winfo_fpixels("1i") / 96.0)
+            except Exception:
+                self._scale = 1.0
             self._tk = tk
             self._root = root
             self._hl_wins: list[Any] = []
@@ -119,7 +129,6 @@ class Overlay:
             self._card_bottom = 0
             self._offer_x = 0
             self._offer_win = None
-            self._current_offer = None
             self._ready.set()
             root.after(20, self._poll)
             root.mainloop()
@@ -165,18 +174,29 @@ class Overlay:
             return
         if kind == "clear":
             self._clear_highlight()
-            self._close_offer()
+            current = self._panel.current_offer
+            if current is not None:
+                self._offers.pop(current.id, None)
+            self._panel.clear()
+            self._render()
             return
         if kind == "highlight":
             self._show_highlight(cmd[1])
             return
         if kind == "card":
-            self._show_card(cmd[1], cmd[2], cmd[3])
+            self._panel.card(cmd[1], cmd[2], cmd[3])
+            self._render()
             return
         if kind == "offer":
             offer = self._offers.get(cmd[1])
-            if offer is not None:
-                self._show_offer(offer)
+            if offer is not None and not getattr(offer, "done", False):
+                current = self._panel.current_offer
+                if current is not None and current.id != offer.id:
+                    self._offers.pop(current.id, None)
+                self._panel.offer(offer.id, getattr(offer, "context", ""), cmd[2])
+                self._render()
+            else:
+                self._offers.pop(cmd[1], None)
             return
 
     @staticmethod
@@ -212,67 +232,159 @@ class Overlay:
                 pass
         self._hl_wins = []
 
-    def _show_card(self, text: str, actions: Sequence[str], kind: str) -> None:
+    def _render(self) -> None:
+        mode, card, offer = self._panel.view
+        self._state.clear_card()
+        if card is not None:
+            self._state.note_card(card.kind)
+        merged_offer = offer if mode == "panel" else None
+        bubble = offer if mode in ("bubble", "card+bubble") else None
+        card_key = (card, merged_offer) if card is not None else None
+
+        # Reuse an early question's window when its warning arrives. There is
+        # never a second risk window during the transition to a merged panel.
+        if merged_offer is not None and self._offer_win is not None:
+            if self._card_win is None:
+                self._card_win, self._offer_win = self._offer_win, None
+            else:
+                self._close_offer()
+            self._bubble_key = None
+        if bubble is None:
+            self._close_offer()
+            self._bubble_key = None
+        if card is None:
+            self._close_card()
+        elif card_key != self._card_key:
+            self._card_win = self._build_panel(self._card_win, card, merged_offer)
+        self._card_key = card_key
+
+        if bubble is not None and bubble != self._bubble_key:
+            self._offer_win = self._build_panel(self._offer_win, None, bubble)
+            self._bubble_key = bubble
+        self._park_offer_below_card()
+
+    def _build_panel(self, win, card, offer):
         tk = self._tk
-        self._close_card()
-        bg = RISK_BG if kind == "risk" else INFO_BG
-        fg = RISK_FG if kind == "risk" else INFO_FG
-        border = RISK_BORDER if kind == "risk" else INFO_FG
-        win = tk.Toplevel(self._root)
-        win.overrideredirect(True)
-        win.attributes("-topmost", True)
-        win.configure(bg=border)
-        inner = tk.Frame(win, bg=bg)
-        inner.pack(fill="both", expand=True, padx=4, pady=4)
+        is_new = win is None
+        had_focus = False
+        if is_new:
+            win = tk.Toplevel(self._root)
+            win.withdraw()
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+        else:
+            focused = win.focus_get()
+            had_focus = focused is not None and focused.winfo_toplevel() == win
+            for child in win.winfo_children():
+                child.destroy()
+        for key in ("<Return>", "<KP_Enter>", "<Escape>"):
+            win.unbind(key)
 
+        risk = card is not None and card.kind == "risk"
+        bg = RISK_BG if risk else INFO_BG
+        win.configure(bg=RISK_BORDER if risk else INFO_FG)
+        surface = tk.Frame(win, bg=bg)
+        surface.pack(fill="both", expand=True, padx=2, pady=2)
+        if risk:
+            tk.Frame(surface, bg=RISK_BORDER, width=self._px(10)).pack(side="left", fill="y")
+        px = self._px
+        inner = tk.Frame(surface, bg=bg)
+        inner.pack(fill="both", expand=True, padx=px(32), pady=px(32))
         sw, sh = self._screen_size()
-        _, y, card_w = fit_card(sw, sh)
-        body = sanitize_text(text)
-        tk.Label(
-            inner,
-            text=body,
-            wraplength=card_w - 8 - 48,
-            font=(FONT_FAMILY, BODY_PT),
-            fg=fg,
-            bg=bg,
-            justify="left",
-            anchor="w",
-        ).pack(padx=24, pady=(20, 16), anchor="w")
+        x, y, width = fit_card(sw, sh)
+        wrap = max(1, width - 4 - px(64) - (px(10) if risk else 0))
 
-        btn_frame = tk.Frame(inner, bg=bg)
-        btn_frame.pack(pady=(0, 20))
+        def label(text, size, color=INFO_FG, weight="normal", pady=(0, 0), family=FONT_FAMILY):
+            tk.Label(inner, text=text, wraplength=wrap,
+                     font=(family, -px(size), weight), fg=color, bg=bg,
+                     justify="left", anchor="w").pack(fill="x", pady=pady)
+
+        if card is not None:
+            if risk:
+                label("Ally safety check", 18, "#6B4E16", pady=(0, px(12)))
+            title, body = split_title(card.text)
+            label(title, TITLE_PX, weight="bold")
+            if body:
+                label(body, BODY_PX, "#2B2B2B", pady=(px(12), 0))
+        if offer is not None:
+            label(offer.prompt, 28, pady=(px(16) if card else 0, 0), family="Segoe UI Semibold")
+        row = tk.Frame(inner, bg=bg)
+        row.pack(pady=(px(24), 0))
         first_btn = None
-        for label in actions:
-            btn = tk.Button(
-                btn_frame,
-                text=label,
-                font=(FONT_FAMILY, BUTTON_PT),
-                bg=INFO_FG if kind == "info" else RISK_BORDER,
-                fg=INFO_BG if kind == "info" else RISK_BG,
-                activebackground=INFO_FG,
-                activeforeground=INFO_BG,
-                relief="flat",
-                width=12,
-                height=2,
-                command=lambda lbl=label: self._card_action(lbl),
-            )
-            btn.pack(pady=8)
-            if first_btn is None:
-                first_btn = btn
+        if offer is not None:
+            labels = button_labels(offer.prompt)
+            for index, (text, choice) in enumerate(zip(labels, ("yes", "no"))):
+                btn = self._button(row, text, lambda c=choice, oid=offer.id: self._pick(oid, c),
+                                   primary=index == 0, gap=24 if index == 0 else 0)
+                if first_btn is None:
+                    first_btn = btn
+            for key, choice in (("<Return>", "yes"), ("<KP_Enter>", "yes"), ("<Escape>", "no")):
+                win.bind(key, lambda _e, c=choice, oid=offer.id: self._pick(oid, c))
+        else:
+            for text in (("OK",) if risk else card.actions):
+                btn = self._button(row, text, lambda lbl=text: self._card_action(lbl))
+                if first_btn is None:
+                    first_btn = btn
 
         win.update_idletasks()
-        h = win.winfo_reqheight()
-        x, _, w = fit_card(sw, sh)
-        self._place(win, x, y, w, h)
-        self._card_win = win
-        self._card_bottom = y + h
-        self._park_offer_below_card()
+        height = win.winfo_reqheight()
+        if card is None and self._card_win is not None:
+            y = self._card_bottom + 12
+        self._place(win, x, y, width, height)
+        if card is not None:
+            self._card_bottom = y + height
+        else:
+            self._offer_x = x
+        if is_new:
+            win.deiconify()
         if first_btn is not None:
-            first_btn.focus_set()
-            win.focus_force()
+            if offer is None:
+                if is_new:
+                    win.focus_force()
+                first_btn.focus_set()
+            elif self._focused_offer != offer.id:
+                win.focus_force()
+                first_btn.focus_set()
+                self._focused_offer = offer.id
+            elif had_focus:
+                # Rebuilding replaces the focused button, but must not steal
+                # focus back from another application for the same decision.
+                first_btn.focus_set()
+        return win
+
+    def _px(self, n: float) -> int:
+        return int(round(n * getattr(self, "_scale", 1.0)))
+
+    def _button(self, row, text: str, command, primary: bool = True, gap: int = 0):
+        tk = self._tk
+        px = self._px
+        # Frames give buttons pixel dimensions; Tk Button.width uses characters.
+        edge = tk.Frame(row, bg=PRIMARY_BG if primary else INFO_FG, width=px(260), height=px(64))
+        edge.pack(side="left", padx=(0, px(gap)))
+        edge.pack_propagate(False)
+        bg, fg = (PRIMARY_BG, INFO_BG) if primary else (INFO_BG, INFO_FG)
+        btn = tk.Button(edge, text=text, font=(FONT_FAMILY, -px(BUTTON_PX)),
+                        bg=bg, fg=fg, activebackground=bg, activeforeground=fg,
+                        relief="flat", borderwidth=0, highlightthickness=0,
+                        command=command)
+        btn.pack(fill="both", expand=True, padx=0 if primary else px(2), pady=0 if primary else px(2))
+        return btn
+
+    def _pick(self, offer_id: int, choice: str) -> str:
+        current = self._panel.current_offer
+        if current is None or current.id != offer_id:
+            return "break"
+        offer = self._offers.pop(offer_id, None)
+        if offer is not None and answer_offer(offer, choice):
+            self._panel.answer(offer_id)
+            self._clear_highlight()
+        else:
+            self._panel.offer_done(offer_id)
+        self._render()
+        return "break"
 
     def _park_offer_below_card(self) -> None:
-        """The offer can arrive before its card; keep the question visible under the warning."""
+        """Non-risk questions stay immediately below a visible card."""
         if self._offer_win is None or self._card_win is None:
             return
         try:
@@ -282,13 +394,13 @@ class Overlay:
             pass
 
     def _card_action(self, label: str) -> None:
+        self._panel.ok()
+        self._render()
         if self.on_action is not None:
             try:
                 self.on_action(label)
             except Exception:
                 log.exception("on_action failed")
-        self._close_card()
-        self._state.clear_card()
 
     def _close_card(self) -> None:
         if self._card_win is not None:
@@ -298,83 +410,7 @@ class Overlay:
                 pass
             self._card_win = None
 
-    def _show_offer(self, offer) -> None:
-        tk = self._tk
-        self._close_offer()
-        self._current_offer = offer
-        bg = INFO_BG
-        fg = INFO_FG
-        win = tk.Toplevel(self._root)
-        win.overrideredirect(True)
-        win.attributes("-topmost", True)
-        win.configure(bg=RISK_BORDER)
-        inner = tk.Frame(win, bg=bg)
-        inner.pack(fill="both", expand=True, padx=4, pady=4)
-
-        prompt = sanitize_text(offer.prompt)
-        sw, sh = self._screen_size()
-        _, y, card_w = fit_card(sw, sh)
-        tk.Label(
-            inner,
-            text=prompt,
-            wraplength=card_w - 8 - 48,
-            font=(FONT_FAMILY, TITLE_PT),
-            fg=fg,
-            bg=bg,
-            justify="left",
-            anchor="w",
-        ).pack(padx=24, pady=(20, 12), anchor="w")
-
-        row = tk.Frame(inner, bg=bg)
-        row.pack(padx=24, pady=(0, 20))
-
-        def pick(choice: str) -> None:
-            if self._current_offer is not None:
-                answer_offer(self._current_offer, choice)
-            self._close_offer()
-
-        yes_btn = tk.Button(
-            row,
-            text="Yes",
-            font=(FONT_FAMILY, BUTTON_PT),
-            bg=RISK_BORDER,
-            fg=RISK_BG,
-            width=12,
-            height=2,
-            relief="flat",
-            command=lambda: pick("yes"),
-        )
-        yes_btn.pack(side="left", padx=(0, 16))
-        no_btn = tk.Button(
-            row,
-            text="No",
-            font=(FONT_FAMILY, BUTTON_PT),
-            bg=INFO_FG,
-            fg=INFO_BG,
-            width=12,
-            height=2,
-            relief="flat",
-            command=lambda: pick("no"),
-        )
-        no_btn.pack(side="left")
-
-        win.bind("<Return>", lambda _e: pick("yes"))
-        win.bind("<KP_Enter>", lambda _e: pick("yes"))
-        win.bind("<Escape>", lambda _e: pick("no"))
-
-        win.update_idletasks()
-        h = win.winfo_reqheight()
-        x, y0, w = fit_card(sw, sh)
-        if self._card_win is not None:
-            y0 = self._card_bottom + 12
-        self._place(win, x, y0, w, h)
-        self._offer_x = x
-        self._offer_win = win
-        yes_btn.focus_set()
-        win.focus_force()
-
     def _close_offer(self) -> None:
-        self._current_offer = None
         if self._offer_win is not None:
             try:
                 self._offer_win.destroy()

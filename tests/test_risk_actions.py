@@ -168,9 +168,21 @@ class WarningActionTests(unittest.TestCase):
             self.bus.publish("risk_warning", self.msg)
             self.assertTrue(self.result_ready.wait(2))
             self.wait_finished(wire)
-            broadcast.assert_called_once_with("showRiskBanner", {"url": self.risk.url,
-                                               "kind": self.risk.kind, "text": self.msg["text"]})
+            calls = [c.args for c in broadcast.call_args_list]
+            self.assertEqual(calls[0], ("exitFullscreen", {"url": self.risk.url}))
+            if not fail:  # a failing broadcast stops there and the ask still runs
+                self.assertEqual(calls[1], ("showRiskBanner", {"url": self.risk.url, "kind": self.risk.kind,
+                                                               "text": self.msg["text"]}))
             wire.stop()
+
+    def test_no_page_banner_while_the_overlay_shows_the_warning(self):
+        broadcast = Mock()
+        wire = self.wire(ask=lambda offer: "no", broadcast=broadcast, overlay_active=lambda: True)
+        self.result_ready.clear()
+        self.bus.publish("risk_warning", self.msg)
+        self.wait_finished(wire)
+        self.assertEqual([c.args[0] for c in broadcast.call_args_list], ["exitFullscreen"])
+        wire.stop()
 
     def test_lifecycle(self):
         ask = Mock(return_value="no")
@@ -183,7 +195,7 @@ class WarningActionTests(unittest.TestCase):
         wire.stop()
         self.bus.publish("risk_warning", self.msg)
         ask.assert_called_once()
-        banner.assert_called_once()
+        self.assertEqual(banner.call_count, 2)  # exitFullscreen + showRiskBanner, once each
 
     def test_attach_collaborators(self):
         agent = SimpleNamespace(bus=self.bus, proactive=SimpleNamespace(ask=Mock()),

@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from helpers import ROOT  # noqa: F401
 
+from ally.contracts import Offer
 from ally.overlay.layout import (
     CommandView,
     DisplayState,
+    PanelState,
     answer_offer,
+    button_labels,
     fit_card,
     highlight_bars,
     key_to_choice,
@@ -19,6 +22,7 @@ from ally.overlay.layout import (
     make_highlight_command,
     make_offer_command,
     sanitize_text,
+    split_title,
     wrap_lines,
 )
 from ally.overlay.overlay import Overlay
@@ -156,6 +160,259 @@ class OverlayCommandEnqueueTests(unittest.TestCase):
         plain = ov._q.get_nowait()
         self.assertEqual(plain, ("offer", 7, "Continue?"))
         self.assertTrue(ov._q.empty())
+
+
+class PanelStateTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = Mock(return_value=10.0)
+        self.state = PanelState(clock=self.clock)
+
+    def test_card_then_risk_offer_is_one_panel(self):
+        self.state.card("Be careful. This page looks risky.", kind="risk")
+        self.clock.return_value = 10.02
+        self.assertEqual(self.state.offer(1, "risk", "Close it?")[0], "panel")
+
+    def test_risk_offer_then_card_is_one_panel(self):
+        self.assertEqual(self.state.offer(1, "risk", "Close it?")[0], "bubble")
+        self.clock.return_value = 10.02
+        self.assertEqual(self.state.card("Be careful.", kind="risk")[0], "panel")
+        self.clock.return_value = 99.0
+        self.assertEqual(self.state.view[0], "panel")
+
+    def test_old_offer_does_not_merge(self):
+        self.state.offer(1, "risk", "Close it?", t=10)
+        self.assertEqual(self.state.card("Be careful.", kind="risk", t=13)[0], "card+bubble")
+
+    def test_merge_boundary(self):
+        for delay, expected in ((1.5, "panel"), (1.501, "card+bubble")):
+            with self.subTest(delay=delay):
+                state = PanelState()
+                state.offer(1, "risk", "Close it?", t=10)
+                self.assertEqual(state.card("Warning.", kind="risk", t=10 + delay)[0], expected)
+
+    def test_visible_risk_card_accepts_later_offer(self):
+        self.state.card("Warning.", kind="risk", t=10)
+        self.assertEqual(self.state.offer(1, "risk", "Close it?", t=20)[0], "panel")
+
+    def test_non_risk_offer_never_merges_in_either_order(self):
+        for card_first in (True, False):
+            with self.subTest(card_first=card_first):
+                state = PanelState()
+                if card_first:
+                    state.card("Warning.", kind="risk")
+                state.offer(1, "browser:example.com", "Make this bigger?")
+                if not card_first:
+                    state.card("Warning.", kind="risk")
+                self.assertEqual(state.view[0], "card+bubble")
+        state.ok()
+        self.assertEqual(state.view[0], "bubble")
+
+    def test_info_card_does_not_merge_or_replace_risk(self):
+        self.state.card("Info.")
+        self.assertEqual(self.state.offer(1, "risk", "Close it?")[0], "card+bubble")
+        self.state.card("Warning.", kind="risk")
+        before = self.state.view
+        self.assertEqual(self.state.card("Ignore this.", kind="info"), before)
+
+    def test_offer_done_and_clear_retain_card(self):
+        self.state.card("Warning.", kind="risk")
+        self.state.offer(1, "risk", "Close it?")
+        self.assertEqual(self.state.offer_done(1)[0], "card")
+        self.assertEqual(self.state.clear()[0], "card")
+        self.state.offer(2, "risk", "Close it?")
+        self.assertEqual(self.state.clear()[0], "card")
+
+    def test_stale_offer_done_does_not_remove_new_offer(self):
+        self.state.card("Warning.", kind="risk")
+        self.state.offer(1, "risk", "First?")
+        self.state.offer(2, "risk", "Second?")
+        self.assertEqual(self.state.offer_done(1)[0], "panel")
+        self.assertEqual(self.state.current_offer.id, 2)
+
+    def test_ok_closes_card_and_clear_does_not_resurrect_it(self):
+        self.state.card("Warning.", kind="risk")
+        self.assertEqual(self.state.ok()[0], "none")
+        self.assertEqual(self.state.clear()[0], "none")
+
+    def test_state_text_is_sanitized_and_capped(self):
+        raw = "Danger\x00\r" + "x" * 1000
+        self.state.card(raw, kind="risk")
+        self.state.offer(1, "risk", raw)
+        for text in (self.state.current_card.text, self.state.current_offer.prompt):
+            self.assertEqual(len(text), 400)
+            self.assertNotIn("\x00", text)
+            self.assertNotIn("\r", text)
+
+
+class PanelTextTests(unittest.TestCase):
+    def test_split_title(self):
+        for text, expected in (
+            ("One sentence.", ("One sentence.", "")),
+            ("First. Second. Third.", ("First.", "Second. Third.")),
+            ("Are you sure? Take your time.", ("Are you sure?", "Take your time.")),
+            ("", ("", "")),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(split_title(text), expected)
+
+    def test_button_labels(self):
+        self.assertEqual(button_labels("Want me to close this page?"), ("Yes, close it", "No, keep it"))
+        self.assertEqual(button_labels("Want me to make this page bigger?"), ("Yes", "No"))
+        self.assertEqual(button_labels(""), ("Yes", "No"))
+
+
+class PanelInteractionTests(unittest.TestCase):
+    def overlay(self):
+        ov = Overlay()
+        ov._render = Mock()
+        ov._clear_highlight = Mock()
+        return ov
+
+    def test_yes_and_no_resolve_once_and_close_panel(self):
+        for choice in ("yes", "no"):
+            with self.subTest(choice=choice):
+                ov = self.overlay()
+                offer = Offer("Want me to close this page?", context="risk")
+                offer.resolve = Mock(wraps=offer.resolve)
+                ov._panel.card("Warning.", kind="risk")
+                ov.offer(offer)
+                ov._handle(ov._q.get_nowait())
+                ov._pick(offer.id, choice)
+                ov._pick(offer.id, choice)
+                offer.resolve.assert_called_once_with(choice, "overlay")
+                self.assertEqual(ov._panel.view[0], "none")
+                ov.clear()
+                ov._handle(ov._q.get_nowait())
+                self.assertEqual(ov._panel.view[0], "none")
+
+    def test_voice_answer_then_clear_returns_to_card(self):
+        ov = self.overlay()
+        offer = Offer("Close it?", context="risk")
+        ov._panel.card("Warning.", kind="risk")
+        ov.offer(offer)
+        ov._handle(ov._q.get_nowait())
+        offer.resolve("yes", "voice")
+        ov.clear()
+        ov._handle(ov._q.get_nowait())
+        self.assertEqual(ov._panel.view[0], "card")
+        self.assertEqual(offer.answered_by, "voice")
+        ov._clear_highlight.assert_called_once()
+
+    def test_voice_wins_race_with_click(self):
+        ov = self.overlay()
+        offer = Offer("Close it?", context="risk")
+        ov._panel.card("Warning.", kind="risk")
+        ov.offer(offer)
+        ov._handle(ov._q.get_nowait())
+        offer.resolve("no", "voice")
+        ov._pick(offer.id, "yes")
+        self.assertEqual(ov._panel.view[0], "card")
+        self.assertEqual((offer.choice, offer.answered_by), ("no", "voice"))
+
+    def test_card_ok_calls_action_and_closes(self):
+        ov = self.overlay()
+        ov.on_action = Mock()
+        ov._panel.card("Warning.", kind="risk")
+        ov._card_action("OK")
+        self.assertEqual(ov._panel.view[0], "none")
+        ov.on_action.assert_called_once_with("OK")
+
+    def test_bubble_answer_keeps_unrelated_card(self):
+        ov = self.overlay()
+        offer = Offer("Make this bigger?", context="browser:example.com")
+        ov._panel.card("Warning.", kind="risk")
+        ov.offer(offer)
+        ov._handle(ov._q.get_nowait())
+        ov._pick(offer.id, "no")
+        self.assertEqual(ov._panel.view[0], "card")
+
+
+class PanelRenderingTests(unittest.TestCase):
+    def overlay(self):
+        ov = Overlay()
+        ov._tk = Mock()
+        ov._root = Mock()
+        ov._screen_size = Mock(return_value=(1200, 900))
+        ov._hl_wins = []
+        ov._card_win = ov._offer_win = None
+        ov._card_bottom = ov._offer_x = 0
+
+        def window(*args, **kwargs):
+            win = Mock()
+            win.winfo_children.return_value = []
+            win.winfo_reqheight.return_value = 420
+            win.focus_get.return_value = None
+            return win
+
+        ov._tk.Toplevel.side_effect = window
+        ov._tk.Button.side_effect = lambda *args, **kwargs: Mock()
+        return ov
+
+    def test_merge_reuses_one_window_in_either_order_and_clear_keeps_it(self):
+        for card_first in (True, False):
+            with self.subTest(card_first=card_first):
+                ov = self.overlay()
+                offer = Offer("Close it?", context="risk")
+                if card_first:
+                    ov.show_card("Warning. Be careful.", kind="risk")
+                ov.offer(offer)
+                if not card_first:
+                    ov.show_card("Warning. Be careful.", kind="risk")
+                while not ov._q.empty():
+                    ov._handle(ov._q.get_nowait())
+                ov._tk.Toplevel.assert_called_once_with(ov._root)
+                win = ov._card_win
+                self.assertIsNotNone(win)
+                self.assertIsNone(ov._offer_win)
+                ov._render()
+                ov.clear()
+                ov._handle(ov._q.get_nowait())
+                self.assertIs(ov._card_win, win)
+                win.destroy.assert_not_called()
+                self.assertEqual(ov._tk.Toplevel.call_count, 1)
+                self.assertEqual(ov._panel.view[0], "card")
+
+    def test_panel_styles_and_keyboard_actions_without_tk(self):
+        for key, choice in (("<Return>", "yes"), ("<KP_Enter>", "yes"), ("<Escape>", "no")):
+            with self.subTest(key=key):
+                ov = self.overlay()
+                offer = Offer("Want me to close this page?", context="risk")
+                ov.show_card("Warning. Be careful.", kind="risk")
+                ov.offer(offer)
+                while not ov._q.empty():
+                    ov._handle(ov._q.get_nowait())
+                win = ov._card_win
+                bindings = {call.args[0]: call.args[1] for call in win.bind.call_args_list}
+                labels = {call.kwargs["text"]: call.kwargs for call in ov._tk.Label.call_args_list}
+                self.assertEqual(labels["Ally safety check"]["fg"], "#6B4E16")
+                self.assertEqual(labels["Warning."]["font"], ("Segoe UI", -32, "bold"))
+                self.assertEqual(labels["Be careful."]["font"], ("Segoe UI", -26, "normal"))
+                self.assertGreater(labels[offer.prompt]["wraplength"], 0)
+                buttons = ov._tk.Button.call_args_list[-2:]
+                self.assertEqual([c.kwargs["text"] for c in buttons], ["Yes, close it", "No, keep it"])
+                self.assertEqual(buttons[0].kwargs["bg"], "#7A4100")
+                self.assertEqual(buttons[1].kwargs["bg"], "#FFFFFF")
+                edges = [c for c in ov._tk.Frame.call_args_list if c.kwargs.get("width") == 260]
+                self.assertTrue(edges)
+                self.assertTrue(all(c.kwargs["height"] >= 64 for c in edges))
+                win.focus_force.reset_mock()
+                ov._render()
+                win.focus_force.assert_not_called()
+                self.assertEqual(bindings[key](None), "break")
+                self.assertEqual((offer.choice, offer.answered_by), (choice, "overlay"))
+                self.assertEqual(ov._panel.view[0], "none")
+                win.destroy.assert_called_once()
+
+    def test_non_risk_bubble_stays_below_card(self):
+        ov = self.overlay()
+        ov.show_card("Warning.", kind="risk")
+        ov.offer(Offer("Make this bigger?", context="browser:example.com"))
+        while not ov._q.empty():
+            ov._handle(ov._q.get_nowait())
+        self.assertEqual(ov._tk.Toplevel.call_count, 2)
+        self.assertIsNotNone(ov._card_win)
+        self.assertIsNotNone(ov._offer_win)
+        self.assertEqual(ov._offer_win.geometry.call_args.args[0], f"+150+{ov._card_bottom + 12}")
 
 
 if __name__ == "__main__":

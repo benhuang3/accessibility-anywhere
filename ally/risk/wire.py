@@ -96,8 +96,10 @@ class Deduper:
 class RiskWire:
     def __init__(self, bus: EventBus, snapshot_fn=process.snapshot_processes,
                  poll_seconds=10.0, clock=time.time, deduper=None, ask=None, call=None,
-                 broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None):
+                 broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None,
+                 overlay_active=None):
         self.bus = bus
+        self.overlay_active = overlay_active or (lambda: False)  # the in-page banner only stands in for it
         self.guardian = guardian        # second opinion from a vision model (consent and budget live inside it)
         self.highlight = highlight      # unused here; marks go to the offer so the overlay draws them
         self.screen_size = screen_size  # () -> (width, height) of the screenshot the guardian saw
@@ -125,10 +127,11 @@ class RiskWire:
             risk = Risk.from_dict(msg["risk"])
         except Exception:
             return
-        if self.broadcast is not None:
+        if self.broadcast is not None and risk.url:
             try:
-                self.broadcast("showRiskBanner", {"url": risk.url, "kind": risk.kind,
-                                                  "text": msg["text"]})
+                self.broadcast("exitFullscreen", {"url": risk.url})
+                if not self.overlay_active():  # one message, not two: the overlay panel already says it
+                    self.broadcast("showRiskBanner", {"url": risk.url, "kind": risk.kind, "text": msg["text"]})
             except Exception:
                 log.debug("risk banner failed", exc_info=True)
         proposal = actions.ask_for(risk)
@@ -359,7 +362,8 @@ def attach(agent) -> RiskWire:
     wire = RiskWire(agent.bus, ask=getattr(proactive, "ask", None),
                     call=getattr(bridge, "call", None),
                     broadcast=getattr(bridge, "broadcast", None),
-                    guardian=guardian, screen_size=screen_size)
+                    guardian=guardian, screen_size=screen_size,
+                    overlay_active=lambda: getattr(agent, "overlay", None) is not None)
     if hasattr(bridge, "on_page"):
         bridge.on_page = wire.on_page
     wire.start()

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 MAX_TEXT_LEN = 400
 CARD_TOP_MARGIN = 40
@@ -13,10 +14,106 @@ HIGHLIGHT_BORDER = 6
 
 INFO_BG = "#FFFFFF"
 INFO_FG = "#1A1A1A"
-RISK_BG = "#FFF4D6"
+RISK_BG = "#FFF8E6"
 RISK_FG = "#1A1A1A"
 RISK_BORDER = "#B26A00"
 HIGHLIGHT_COLOR = "#B26A00"
+MERGE_SECONDS = 1.5
+
+
+def split_title(text: str) -> tuple[str, str]:
+    """Keep the first sentence's punctuation with the title."""
+    text = sanitize_text(text).strip()
+    endings = [i for mark in (". ", "? ") if (i := text.find(mark)) >= 0]
+    if not endings:
+        return text, ""
+    end = min(endings) + 1
+    return text[:end], text[end:].strip()
+
+
+def button_labels(prompt: str) -> tuple[str, str]:
+    if sanitize_text(prompt).startswith("Want me to close"):
+        return "Yes, close it", "No, keep it"
+    return "Yes", "No"
+
+
+@dataclass(frozen=True)
+class CardContent:
+    text: str
+    actions: tuple[str, ...]
+    kind: str
+
+
+@dataclass(frozen=True)
+class OfferContent:
+    id: int
+    context: str
+    prompt: str
+
+
+class PanelState:
+    """Presentation state, independent of Tk and of the offer's answer transport."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self.clock = clock
+        self.current_card: CardContent | None = None
+        self.current_offer: OfferContent | None = None
+        self._offer_at = 0.0
+        self.merged = False
+
+    @property
+    def view(self) -> tuple[str, CardContent | None, OfferContent | None]:
+        if self.merged:
+            mode = "panel"
+        elif self.current_card is not None:
+            mode = "card+bubble" if self.current_offer is not None else "card"
+        else:
+            mode = "bubble" if self.current_offer is not None else "none"
+        return mode, self.current_card, self.current_offer
+
+    def card(self, text: str, actions: Sequence[str] = ("OK",), kind: str = "info",
+             t: float | None = None) -> tuple:
+        if self.current_card is not None and self.current_card.kind == "risk" and kind == "info":
+            return self.view
+        now = self.clock() if t is None else t
+        self.current_card = CardContent(sanitize_text(text), tuple(sanitize_text(a) for a in actions), kind)
+        offer = self.current_offer
+        self.merged = bool(kind == "risk" and offer is not None and offer.context == "risk"
+                           and (self.merged or 0 <= now - self._offer_at <= MERGE_SECONDS))
+        return self.view
+
+    def offer(self, offer_id: int, context: str, prompt: str, t: float | None = None) -> tuple:
+        self.current_offer = OfferContent(offer_id, context, sanitize_text(prompt))
+        self._offer_at = self.clock() if t is None else t
+        # A visible warning can accept a new decision at any age. An earlier
+        # question only joins a newly arriving warning within the grace period.
+        self.merged = bool(context == "risk" and self.current_card is not None
+                           and self.current_card.kind == "risk")
+        return self.view
+
+    def offer_done(self, offer_id: int) -> tuple:
+        if self.current_offer is not None and self.current_offer.id == offer_id:
+            self.current_offer = None
+            self.merged = False
+        return self.view
+
+    def answer(self, offer_id: int) -> tuple:
+        """An overlay decision dismisses its merged warning as well."""
+        if self.current_offer is not None and self.current_offer.id == offer_id:
+            if self.merged:
+                self.current_card = None
+            self.offer_done(offer_id)
+        return self.view
+
+    def clear(self) -> tuple:
+        self.current_offer = None
+        self.merged = False
+        return self.view
+
+    def ok(self) -> tuple:
+        self.current_card = None
+        self.merged = False
+        return self.view
 
 
 def fit_card(screen_w: int, screen_h: int) -> tuple[int, int, int]:

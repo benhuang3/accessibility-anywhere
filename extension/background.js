@@ -321,17 +321,28 @@ const ACTIONS = {
   async getTab() {
     return await tabInfo();
   },
-  // Agent found a risk on a page: show the in-page banner on the tab(s) with that URL.
+  // A scam page that took over the screen would hide Ally's warning: put the window back the way people use it.
+  async exitFullscreen({ url }) {
+    const tabs = await chrome.tabs.query({});
+    let left = 0;
+    for (const t of tabs) {
+      if (t.url !== url) continue;
+      try {
+        const w = await chrome.windows.get(t.windowId);
+        if (w.state === "fullscreen") {
+          await chrome.windows.update(t.windowId, { state: "maximized" });
+          left += 1;
+        }
+      } catch { /* window already gone */ }
+    }
+    return { left };
+  },
+  // Agent found a risk on a page and Ally's own overlay is not running: show the in-page banner instead.
   async showRiskBanner({ url, text }) {
     const tabs = await chrome.tabs.query({});
     let shown = 0;
     for (const t of tabs) {
       if (t.url === url) {
-        // A scam page that took over the screen would hide Ally's warning: leave full screen first.
-        try {
-          const w = await chrome.windows.get(t.windowId);
-          if (w.state === "fullscreen") await chrome.windows.update(t.windowId, { state: "normal" });
-        } catch { /* window already gone */ }
         await chrome.tabs.sendMessage(t.id, { kind: "allyRiskBanner", text }).then(() => { shown += 1; }, () => {});
       }
     }
