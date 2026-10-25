@@ -52,7 +52,7 @@ HUD_STEP = 36
 HUD_FOOTER = "Nothing is saved."
 # 3x3 grid, inset from the edges. The setup uses these 9 dots, center first.
 GRID_X = (0.08, 0.50, 0.92)
-GRID_Y = (0.10, 0.50, 0.90)
+GRID_Y = (0.06, 0.50, 0.94)  # near the top and bottom, so up and down is fitted, not stretched
 READY_SECONDS = 3.0
 STEADY_SECONDS = 1.0  # face width and head pose must hold still this long before the first dot
 CAL_SETTLE, CAL_COLLECT = 0.8, 1.5

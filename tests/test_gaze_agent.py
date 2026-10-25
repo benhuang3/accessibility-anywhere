@@ -378,7 +378,7 @@ class LearningTests(unittest.TestCase):
         gaze, _agent = manager()
         screen = gaze.screen
         rnd = np.random.default_rng(3)
-        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.1, 0.5, 0.9) for fx in (0.08, 0.5, 0.92)]
+        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.06, 0.5, 0.94) for fx in (0.08, 0.5, 0.92)]
         trained = []
         for tx, ty in dots:
             for _ in range(8):
@@ -493,7 +493,7 @@ class ToolTests(unittest.TestCase):
         gaze, agent = manager()
         screen = gaze.screen
         rnd = np.random.default_rng(2)
-        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.1, 0.5, 0.9) for fx in (0.08, 0.5, 0.92)]
+        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.06, 0.5, 0.94) for fx in (0.08, 0.5, 0.92)]
         trained = []
         for tx, ty in dots:
             for _ in range(8):

@@ -380,7 +380,7 @@ class PredictScoreTests(unittest.TestCase):
     def test_median_distance_and_region_hits(self):
         rnd = np.random.default_rng(1)
         screen = (1920, 1080)
-        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.1, 0.5, 0.9) for fx in (0.08, 0.5, 0.92)]
+        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.06, 0.5, 0.94) for fx in (0.08, 0.5, 0.92)]
         samples = []
         for tx, ty in dots:
             for _ in range(12):
