@@ -7,19 +7,19 @@
           "kind": "scam_popup",
           "severity": "medium",
           "evidence": "Page signals: a phone number, an alarming claim, a request to call support.",
-          "url": "http://bank.localhost:60218/bank.html",
+          "url": "http://bank.localhost:60672/bank.html",
           "app": "",
           "source": "risk.text",
-          "ts": 1792909666.68305
+          "ts": 1792909999.5443976
         },
         {
           "kind": "payment_field",
           "severity": "medium",
           "evidence": "This page asks for card details and the website is not one I recognize.",
-          "url": "http://bank.localhost:60218/bank.html",
+          "url": "http://bank.localhost:60672/bank.html",
           "app": "",
           "source": "risk.fields",
-          "ts": 1792909666.6843987
+          "ts": 1792909999.5466473
         }
       ]
     },
@@ -42,10 +42,10 @@
           "kind": "scam_popup",
           "severity": "medium",
           "evidence": "Page signals: a phone number, an alarming claim, a request to call support.",
-          "url": "http://support.localhost:60218/support.html",
+          "url": "http://support.localhost:60672/support.html",
           "app": "",
           "source": "risk.text",
-          "ts": 1792909666.9907525
+          "ts": 1792909999.8882372
         }
       ]
     },
@@ -56,10 +56,10 @@
           "kind": "scam_popup",
           "severity": "medium",
           "evidence": "Page signals: a phone number, an alarming claim, a request to call support.",
-          "url": "http://trap.localhost:60218/trap.html#step2",
+          "url": "http://trap.localhost:60672/trap.html#step2",
           "app": "",
           "source": "risk.text",
-          "ts": 1792909667.0639153
+          "ts": 1792909999.9422648
         }
       ]
     },
@@ -70,10 +70,10 @@
           "kind": "scam_popup",
           "severity": "high",
           "evidence": "Page signals: a phone number, an alarming claim, a request to call support.",
-          "url": "http://trap.localhost:60218/trap.html#trapped",
+          "url": "http://trap.localhost:60672/trap.html#trapped",
           "app": "",
           "source": "risk.text",
-          "ts": 1792909672.5238814
+          "ts": 1792910005.4586222
         }
       ]
     },
@@ -84,10 +84,10 @@
           "kind": "scam_popup",
           "severity": "high",
           "evidence": "Page signals: a phone number, an alarming claim, a request to call support.",
-          "url": "http://virus.localhost:60218/virus.html",
+          "url": "http://virus.localhost:60672/virus.html",
           "app": "",
           "source": "risk.text",
-          "ts": 1792909672.5972357
+          "ts": 1792910005.5134602
         }
       ]
     }

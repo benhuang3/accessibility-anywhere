@@ -431,8 +431,11 @@ def verify(args) -> None:
                     screenshots.append(destination.relative_to(DEMO).as_posix())
                     # Full-page shots also make the lower cards and decision strip reviewable.
                     metrics = browser.call("Page.getLayoutMetrics")["cssContentSize"]
-                    result = browser.call("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": True,
-                        "clip": {"x": 0, "y": 0, "width": width, "height": metrics["height"], "scale": 1}})
+                    # Expand the viewport so the fixed gradient backdrop is painted throughout.
+                    browser.call("Emulation.setDeviceMetricsOverride", {"width": width,
+                        "height": int(metrics["height"] + .99), "deviceScaleFactor": 1, "mobile": False})
+                    browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+                    result = browser.call("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False})
                     destination = shots / f"index-{scheme}-{width}-full.png"
                     destination.write_bytes(base64.b64decode(result["data"]))
                     screenshots.append(destination.relative_to(DEMO).as_posix())

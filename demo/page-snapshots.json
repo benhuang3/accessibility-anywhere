@@ -1,7 +1,7 @@
 {
   "bank.html": {
     "kind": "pageRisk",
-    "url": "http://bank.localhost:60218/bank.html",
+    "url": "http://bank.localhost:60672/bank.html",
     "title": "Harbor Light Bank \u2014 Restore account access",
     "text": "\u2190 Scam Lab\nHarbor Light Bank\nAccount verification center\n\nACTION REQUIRED\n\nYour account has been locked.\n\nUnusual activity detected. Verify your card and PIN now to prevent permanent closure. Do not close this window.\n\nCall support immediately at 1-800-555-0142 if you need help restoring access.\n\nRestore access\nCard number\nCard PIN\nSecurity code\nVerify and unlock account\nYour account\n\nHarbor Light Everyday Checking\n\nAccess temporarily suspended\n\nOur verification team needs your complete card information before online access can be restored.\n\nPlease keep this session open until your technician confirms completion.\n\nFictional bank. Use made-up details only. This form sends and saves nothing.",
     "overlay_text": "",
@@ -37,7 +37,7 @@
   },
   "index.html": {
     "kind": "pageRisk",
-    "url": "http://localhost:60218/index.html",
+    "url": "http://localhost:60672/index.html",
     "title": "Scam Lab \u00b7 Ally",
     "text": "Skip to scenarios\n\u2733\nally\nScam Lab\nLocal demo playground\n\nA little clarity. A safer click.\n\nLet\u2019s spot the scam.\nTogether.\n\nAlly helps protect against scare pop-ups, risky payment pages, browser traps, and remote-access scams.\n\n\u2197\n\nMade for a live walkthrough\n\nYou explore.\nAlly looks out for you.\n\nOpen a scenario and watch the real Ally warning. All businesses and phone numbers here are fictional.\n\nStart the walkthrough\n\u2192\nChoose a scenario\n\nThe warning signs, in plain sight.\n\n!\nScare tactic\n\u2197\nThe virus alert\n\nWatch for a high warning when a pop-up pairs a frightening claim with a support number.\n\nOpen virus alert\n\u2192\n\u25a4\nPayment pressure\n\u2197\nThe locked account\n\nWatch for card-field warnings, then a joined warning with a remote tool and an option to call a trusted person.\n\nOpen bank page\n\u2192\n\u293a\nBrowser tricks\n\u2197\nThe page that won\u2019t let go\n\nWatch for a warning as the page traps Back, asks for fullscreen, and repeats dialogs.\n\nOpen browser trap\n\u2192\n\u2318\nRemote access\n\u2197\nThe \u201chelpful\u201d technician\n\nWatch for the fake-scan warning when Event Viewer opens during a remote session.\n\nOpen support session\n\u2192\n\u2311\nSafe comparison\n\u2197\nA little everyday shopping\n\nWatch Ally stay quiet through a simple, pay-at-pickup checkout with no pressure.\n\nOpen small shop\n\u2192\n\u224b\nSafe comparison\n\u2197\nReading about the risk\n\nWatch Ally stay quiet on a news article that discusses scams without demanding action.\n\nOpen news article\n\u2192\nHow Ally decides\nLocal rules first\n\nNotice warning signs.\n\nOptional AI second look\n\nReview a flagged screen.\n\nA calm warning\n\nYou choose what happens.\n\nA familiar voice\n\nCall a trusted person, if set up.\n\nBuilt to demonstrate care, without the scare.\n\nFictional scenarios \u00b7 Nothing is sent or installed.",
     "overlay_text": "",
@@ -48,7 +48,7 @@
   },
   "news.html": {
     "kind": "pageRisk",
-    "url": "http://news.localhost:60218/news.html",
+    "url": "http://news.localhost:60672/news.html",
     "title": "The Willow Gazette \u2014 A calmer conversation about online scams",
     "text": "\u2190 Scam Lab\nThe Willow Gazette\nOur community, thoughtfully told.\n\nCOMMUNITY / DIGITAL LIFE\n\nA calmer conversation about online scams\n\nAt the neighborhood library, a new workshop makes room for questions, shared stories, and a moment to pause.\n\nBy Rowan Vale \u00b7 Community desk\nFictional reporting for the Scam Lab demonstration\n\nThe reading room was full of conversation on Saturday as neighbors gathered to learn about tech-support scams. The workshop focused on the pressure people feel when a surprising message appears on a screen.\n\nOne example was a fake virus alert. The facilitator explained that a frightening message in a web page is a claim, rather than a diagnosis of the computer. Participants practiced taking a breath and stepping away before deciding what to do next.\n\n\u201cHaving someone you trust to talk with can make a confusing moment feel manageable.\u201d\n\nThe group also discussed payment requests involving gift cards and invitations to share control of a computer. No accounts were opened, no tools were installed, and no personal details were collected during the session.\n\nIdeas from the reading room\nTake time to consider an unexpected request.\nAsk a trusted person for another perspective.\nUse contact details you already know when checking a claim.\n\nAnother workshop is planned for the next library open day. The organizers hope that familiarity, patience, and conversation will help neighbors feel more comfortable online.",
     "overlay_text": "",
@@ -59,7 +59,7 @@
   },
   "shop.html": {
     "kind": "pageRisk",
-    "url": "http://shop.localhost:60218/shop.html",
+    "url": "http://shop.localhost:60672/shop.html",
     "title": "Field & Fern \u2014 Pickup checkout",
     "text": "\u2190 Scam Lab\nField & Fern\nSmall-batch candles. A little everyday joy.\n\nYOUR BASKET / PICKUP CHECKOUT\n\nSomething lovely, ready for you.\n\nReserve your candles online and pay when you collect them in the shop.\n\nWho\u2019s picking up?\nYour name\nEmail for your pickup note\nPickup day\nTomorrow, during shop hours\nThe following day, during shop hours\n\nPay in the shop when you pick up your order.\n\nReserve for pickup \u00b7 $28.00\nYour order\nLavender soy candle\n\nTwo hand-poured candles\n\nCotton wick \u00b7 Reusable jar\n\nSubtotal\n$28.00\nPickup\nFree\nDue at pickup\n$28.00\n\nQuestions? Visit us during shop hours, Tuesday\u2013Saturday.\n\nField & Fern is a fictional shop. Reservations stay in this demo; nothing is saved or sent.",
     "overlay_text": "",
@@ -95,7 +95,7 @@
   },
   "support.html": {
     "kind": "pageRisk",
-    "url": "http://support.localhost:60218/support.html",
+    "url": "http://support.localhost:60672/support.html",
     "title": "CedarBridge Assist \u2014 Support session",
     "text": "\u2190 Scam Lab\nCedarBridge Assist\nPersonal device support\nSession CB-READY \u00b7 Technician waiting\nYour support session is ready.\n\nSecurity alert: suspicious activity has been found. Do not close this window. Call support now at 1-833-555-0166 and stay on the line.\n\nInstall the remote support tool\n\nLet your technician see and control your computer so they can \u201csecure\u201d your account.\n\nInstall CedarBridge Connect\nOpen Event Viewer\n\nKeep the remote tool running. Open the system\u2019s Event Viewer and look at the red errors under Custom Views \u2192 Administrative Events.\n\nShow your technician the errors\n\nThese ordinary system entries will be presented as \u201cproof\u201d that your computer needs urgent repairs.\n\nFictional support instructions. The install button only shows a local message.\n\nWhat the technician calls a \u201cscan\u201d\n\nThis illustration is ordinary event-log output, not a virus scan.\n\nSystem events \u00b7 illustration\nLevel\tSource\n\u25cf Error\tApplication\n\u25cf Error\tDevice service\n\u25b3 Warning\tBackground task\n\u24d8 Information\tSession started\n\nFor the live beat, the presenter opens the real Event Viewer while an already installed remote tool runs.",
     "overlay_text": "",
@@ -106,7 +106,7 @@
   },
   "trap.html": {
     "kind": "pageRisk",
-    "url": "http://trap.localhost:60218/trap.html#step2",
+    "url": "http://trap.localhost:60672/trap.html#step2",
     "title": "Harbor Light Secure Desk \u2014 Session verification",
     "text": "\u2190 Scam Lab\nHarbor Light Secure Desk\nSession verification\n\nVERIFICATION PENDING\n\nSecurity alert: stay on this page.\n\nYour device has been flagged. Do not close this window. Call support at 1-888-555-0100 immediately.\n\nActivate secure viewing to continue your verification in fullscreen.\n\nActivate secure viewing\n\nFictional demo. This button starts browser tricks and repeated dialogs. Press Esc or use \u201cStop demo & leave\u201d to release them.",
     "overlay_text": "",
@@ -128,7 +128,7 @@
   },
   "trap.html (active)": {
     "kind": "pageRisk",
-    "url": "http://trap.localhost:60218/trap.html#trapped",
+    "url": "http://trap.localhost:60672/trap.html#trapped",
     "title": "Harbor Light Secure Desk \u2014 Session verification",
     "text": "\u2190 Scam Lab\nHarbor Light Secure Desk\nSession verification\n\nVERIFICATION PENDING\n\nSecurity alert: stay on this page.\n\nYour device has been flagged. Do not close this window. Call support at 1-888-555-0100 immediately.\n\nActivate secure viewing to continue your verification in fullscreen.\n\nActivate secure viewing\n\nFictional demo. This button starts browser tricks and repeated dialogs. Press Esc or use \u201cStop demo & leave\u201d to release them.\n\nSECURITY ALERT\n\nYour device is locked. Do not close this window. Call support immediately at 1-888-555-0100.\n\nSecure viewing is required. Dismissing this message will not end your verification.\n\nDismiss message\nStop demo & leave",
     "overlay_text": "SECURITY ALERT\n\nYour device is locked. Do not close this window. Call support immediately at 1-888-555-0100.\n\nSecure viewing is required. Dismissing this message will not end your verification.\n\nDismiss message\nStop demo & leave",
@@ -150,7 +150,7 @@
   },
   "virus.html": {
     "kind": "pageRisk",
-    "url": "http://virus.localhost:60218/virus.html",
+    "url": "http://virus.localhost:60672/virus.html",
     "title": "AsterShield Security Center \u2014 Device alert",
     "text": "\u2190 Scam Lab\n\nASTERSHIELD SECURITY CENTER\n\nDevice protection\n\nScanning your device for threats\u2026\n\nAsterShield \u00b7 Critical security alert\n!\nYour computer has been locked.\n\nVirus detected. Your passwords and personal files are at risk. Do not close or restart this window.\n\nContact support immediately to prevent further damage. An AsterShield technician is waiting to restore your protection.\n\nCall support: 1-800-555-0173\n\nSecurity reference: AS-THREAT\nFictional demo notice. No scan has taken place.",
     "overlay_text": "AsterShield \u00b7 Critical security alert\n!\nYour computer has been locked.\n\nVirus detected. Your passwords and personal files are at risk. Do not close or restart this window.\n\nContact support immediately to prevent further damage. An AsterShield technician is waiting to restore your protection.\n\nCall support: 1-800-555-0173\n\nSecurity reference: AS-THREAT\nFictional demo notice. No scan has taken place.",
