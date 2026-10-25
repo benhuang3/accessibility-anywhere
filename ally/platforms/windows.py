@@ -28,7 +28,7 @@ import time
 import wave
 
 from ..registry import ToolError
-from .base import NO_WINDOW, Platform, edge_speed, is_64bit_python, popen, run, which
+from .base import NO_WINDOW, Platform, ease_pan, is_64bit_python, popen, run, which
 
 log = logging.getLogger("ally.os.windows")
 
@@ -527,9 +527,21 @@ class _MagThread(threading.Thread):
                             apply_view(self.level, *xy)
                     elif self.follow == "eyes" and self.gaze is not None:
                         g = self.gaze()
-                        if g is not None:
+                        # A gap means the view was following the mouse. Start the dwell again,
+                        # and don't carry an old velocity into the new look.
+                        pan = getattr(self, "_eye_pan", None)
+                        if pan is None or now - pan["tick"] > 0.25:
+                            pan = {"held": (0.0, 0.0), "vel": (0.0, 0.0), "tick": now}
+                        pan["tick"] = now
+                        self._eye_pan = pan
+                        if g is None:
+                            nx, ny = 0.5, 0.5
+                        else:
+                            nx, ny = g[0] / max(w, 1), g[1] / max(h, 1)
+                        vx, vy, pan["held"] = ease_pan(nx, ny, pan["held"], pan["vel"], dt)
+                        pan["vel"] = (vx, vy)
+                        if vx or vy:
                             vw, vh = w / self.level, h / self.level
-                            vx, vy = edge_speed(g[0] / w), edge_speed(g[1] / h)
                             pos[0] = min(max(pos[0] + vx * vw * self.pan_speed * dt, 0.0), w - vw)
                             pos[1] = min(max(pos[1] + vy * vh * self.pan_speed * dt, 0.0), h - vh)
                             xy = (int(pos[0]), int(pos[1]))

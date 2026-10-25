@@ -54,13 +54,52 @@ def popen(argv: list[str], stdin_bytes: bytes | None = None) -> subprocess.Popen
     return p
 
 
+# The gaze has to sit in the edge band this long before the view starts to move.
+EDGE_DWELL = 0.3
+# How quickly the pan velocity eases toward its target. A look that only brushes the edge
+# does not kick the view, and a change of speed never jumps.
+PAN_EASE = 0.2
+
+
 def edge_speed(n: float, band: float = 0.18) -> float:
-    """Pan speed for eyes at fraction n (0..1) across the view: 0 in the middle, up to -1/+1 at an edge."""
+    """Pan speed for eyes at fraction n (0..1) across the view: 0 in the middle, up to -1/+1 at an edge.
+
+    The ramp is quadratic in how far into the edge band the gaze is, so a look just inside
+    the band barely moves the view.
+    """
     if n < band:
-        return -min(1.0, (band - n) / band)
+        depth = min(1.0, (band - n) / band)
+        return -(depth * depth)
     if n > 1 - band:
-        return min(1.0, (n - (1 - band)) / band)
+        depth = min(1.0, (n - (1 - band)) / band)
+        return depth * depth
     return 0.0
+
+
+def ease_pan(nx: float, ny: float, held: tuple[float, float], vel: tuple[float, float], dt: float,
+             dwell: float = EDGE_DWELL, smooth: float = PAN_EASE) -> tuple[float, float, tuple[float, float]]:
+    """Velocity for one magnifier frame, and how long the gaze has already sat in each edge.
+
+    `nx` and `ny` are where the eyes are, as a fraction of the screen. Panning on an axis
+    stays at rest until the gaze has been in that edge for `dwell` seconds. The velocity
+    then eases toward the quadratic edge speed, so it never jumps.
+    """
+    tx, ty = edge_speed(nx), edge_speed(ny)
+    dt = max(0.0, float(dt))
+    hx = (held[0] + dt) if tx else 0.0
+    hy = (held[1] + dt) if ty else 0.0
+    if hx < dwell:
+        tx = 0.0
+    if hy < dwell:
+        ty = 0.0
+    alpha = 1.0 if smooth <= 0 else min(1.0, dt / smooth)
+    vx = vel[0] + (tx - vel[0]) * alpha
+    vy = vel[1] + (ty - vel[1]) * alpha
+    if abs(vx) < 1e-3:
+        vx = 0.0
+    if abs(vy) < 1e-3:
+        vy = 0.0
+    return vx, vy, (hx, hy)
 
 
 def next_level(current: float, up: bool, steps: list[float] = MAG_STEPS) -> float:

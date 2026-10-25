@@ -79,7 +79,7 @@ RANGES = {
     ("confirm", "max_answer_seconds"): (1, 15), ("confirm", "speed"): (0.6, 1.5),
     ("confirm", "warning_speed"): (0.6, 1.5), ("voice", "max_seconds"): (1, 60),
     ("voice", "silence_seconds"): (0.3, 5), ("voice", "follow_up_seconds"): (0, 60), ("gaze", "camera"): (0, 9),
-    ("gaze", "fps"): (5, 30), ("gaze", "pan_speed"): (0.1, 5), ("gaze", "max_radius_px"): (20, 4000),
+    ("gaze", "fps"): (5, 30), ("gaze", "pan_speed"): (0.1, 2.0), ("gaze", "max_radius_px"): (20, 4000),
     ("senses", "fps"): (2, 30), ("senses", "calibrate_seconds"): (5, 60), ("senses", "window_seconds"): (1, 30),
     ("senses", "cooldown_seconds"): (0, 600), ("senses", "min_confidence"): (0, 1),
     ("senses", "decline_seconds"): (30, 600),

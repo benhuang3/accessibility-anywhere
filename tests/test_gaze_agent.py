@@ -18,8 +18,11 @@ from ally.gaze_helper import RecentFeatures, adopt_model, apply_click, classify_
 from ally.registry import ToolError
 from ally.senses import clickable
 from ally.senses.manager import Senses
+from ally.platforms.base import ease_pan, edge_speed
+from ally.rules import match
 from ally.tools.gaze_tools import (calibration_words, check_eye_tracker, check_words, choose_by_looking,
-                                   looking_text, where_am_i_looking)
+                                   eye_follow_speed, looking_text, replace_toml_key, resolve_pan_speed,
+                                   where_am_i_looking)
 
 
 class _Stdin:
@@ -351,6 +354,92 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(loaded["offset"], saved["offset"])
         self.assertIsNotNone(corrector)
         self.assertEqual(classify_command("reload"), ("reload", None))
+
+
+class PanSpeedTests(unittest.TestCase):
+    def test_the_edge_ramp_is_quadratic(self):
+        self.assertEqual(edge_speed(0.5), 0.0)
+        self.assertAlmostEqual(edge_speed(0.0), -1.0)
+        self.assertAlmostEqual(edge_speed(1.0), 1.0)
+        # Halfway into the 18% band used to be half speed. It is now a quarter.
+        self.assertAlmostEqual(edge_speed(0.09), -0.25)
+        self.assertGreater(edge_speed(0.17), -0.02)
+        self.assertLess(abs(edge_speed(0.17)), abs((0.18 - 0.17) / 0.18))
+
+    def test_panning_waits_then_eases(self):
+        held, vel = (0.0, 0.0), (0.0, 0.0)
+        for _ in range(2):
+            vx, vy, held = ease_pan(0.0, 0.5, held, vel, 0.1)
+            vel = (vx, vy)
+            self.assertEqual((vx, vy), (0.0, 0.0))
+        self.assertLess(held[0], 0.3)
+        vx, vy, held = ease_pan(0.0, 0.5, held, vel, 0.1)
+        self.assertGreaterEqual(held[0], 0.3)
+        self.assertLess(vx, 0.0)
+        self.assertGreater(vx, -1.0)  # eased in, not a jump to full speed
+        self.assertEqual(vy, 0.0)
+        prev = vx
+        for _ in range(30):
+            vx, vy, held = ease_pan(0.0, 0.5, held, (vx, vy), 0.05)
+        self.assertLess(vx, prev)
+        self.assertAlmostEqual(vx, -1.0, places=2)
+        # Leaving the edge eases back to rest. It does not stop dead.
+        stopped, vy, held = ease_pan(0.5, 0.5, held, (vx, vy), 0.05)
+        self.assertEqual(held, (0.0, 0.0))
+        self.assertLess(stopped, 0.0)
+        self.assertGreater(stopped, vx)
+
+    def test_speed_words_and_a_saved_live_change(self):
+        self.assertEqual(resolve_pan_speed("slow", 0.35), 0.2)
+        self.assertEqual(resolve_pan_speed("medium", 1.0), 0.35)
+        self.assertEqual(resolve_pan_speed("fast", 0.2), 1.0)
+        self.assertEqual(resolve_pan_speed("slower", 0.35), 0.2)
+        self.assertEqual(resolve_pan_speed("faster", 0.35), 0.5)
+        self.assertEqual(resolve_pan_speed("0.5", 0.35), 0.5)
+        self.assertEqual(resolve_pan_speed(2, 0.35), 2.0)
+        self.assertEqual(resolve_pan_speed("slower", 0.1), 0.1)
+        self.assertEqual(resolve_pan_speed("faster", 2.0), 2.0)
+        with self.assertRaises(ToolError):
+            resolve_pan_speed("very fast", 0.35)
+        with self.assertRaises(ToolError):
+            resolve_pan_speed(3, 0.35)
+
+        text = (
+            "# keep me\n[agent]\nname = \"Ally\"\n\n[gaze]\n"
+            "enabled = true\n"
+            "pan_speed = 1.0            # how fast the view moves\n"
+            "camera = 0\n\n[speech]\nrate = 1.0\n"
+        )
+        updated = replace_toml_key(text, "gaze", "pan_speed", "0.25")
+        self.assertIn("pan_speed = 0.25            # how fast the view moves", updated)
+        self.assertIn('name = "Ally"', updated)
+        self.assertIn("camera = 0", updated)
+        self.assertIn("rate = 1.0", updated)
+        self.assertIn("# keep me", updated)
+        self.assertEqual(updated.count("pan_speed"), 1)
+
+        gaze, agent = manager()
+        saved = {}
+
+        def save_config(body):
+            saved["text"] = body
+            agent.config.data["gaze"]["pan_speed"] = 0.25
+            return True, [], []
+
+        applied = {}
+        agent.config.read_text = lambda: text
+        agent.save_config = save_config
+        agent.platform = types.SimpleNamespace(
+            set_gaze_source=lambda latest, pan_speed=1.0: applied.update(speed=pan_speed, latest=latest))
+        agent.config.data["gaze"]["pan_speed"] = 0.35
+        said = eye_follow_speed(types.SimpleNamespace(agent=agent), "slower")
+        self.assertIn("0.2", said)
+        self.assertIn("pan_speed = 0.2            # how fast the view moves", saved["text"])
+        self.assertEqual(applied["speed"], 0.2)
+        self.assertIs(applied["latest"].__self__, gaze)
+        self.assertEqual(match("follow my eyes slower").actions, [("eye_follow_speed", {"speed": "slower"})])
+        self.assertEqual(match("follow my eyes faster").actions, [("eye_follow_speed", {"speed": "faster"})])
+        self.assertEqual(match("follow my eyes").actions, [("magnifier_follow", {"target": "eyes"})])
 
 
 class DoctorTests(unittest.TestCase):

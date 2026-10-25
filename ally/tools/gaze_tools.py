@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from typing import Annotated, Literal
 
@@ -241,3 +242,106 @@ def magnifier_follow(ctx, target: Literal["eyes", "mouse"]):
     if target == "eyes" and ctx.agent.gaze.status() != "tracking":
         raise ctx.agent.gaze.problem()
     return ctx.os.set_follow(target)
+
+
+# Named speeds. "medium" is the calm default. slower/faster step from whatever is saved now.
+PAN_SPEEDS = {"slow": 0.2, "medium": 0.35, "fast": 1.0}
+PAN_MIN, PAN_MAX = 0.1, 2.0
+
+
+def resolve_pan_speed(speed, current: float) -> float:
+    """slower, faster, slow, medium, fast, or a number from 0.1 to 2.0."""
+    if isinstance(speed, str):
+        word = speed.strip().lower()
+        if word in PAN_SPEEDS:
+            return PAN_SPEEDS[word]
+        if word == "slower":
+            return max(PAN_MIN, round(float(current) - 0.15, 2))
+        if word == "faster":
+            return min(PAN_MAX, round(float(current) + 0.15, 2))
+        try:
+            speed = float(word)
+        except ValueError:
+            raise ToolError("Say slower, faster, slow, medium, fast, or a number from 0.1 to 2.")
+    try:
+        value = float(speed)
+    except (TypeError, ValueError):
+        raise ToolError("Say slower, faster, slow, medium, fast, or a number from 0.1 to 2.")
+    if isinstance(speed, bool) or not PAN_MIN <= value <= PAN_MAX:
+        raise ToolError("Eye-follow speed must be from 0.1 to 2.")
+    return round(value, 2)
+
+
+def replace_toml_key(text: str, section: str, key: str, literal: str) -> str:
+    """Replace `key = ...` inside [section]. The comment on that line, and every other line, stay.
+
+    The key is added at the end of the section when it is missing.
+    """
+    lines = text.splitlines(keepends=True)
+    header = f"[{section}]"
+    start = None
+    for i, line in enumerate(lines):
+        if line.strip() == header:
+            start = i + 1
+            break
+    if start is None:
+        extra = "" if (not text or text.endswith("\n")) else "\n"
+        return text + extra + f"[{section}]\n{key} = {literal}\n"
+    pattern = re.compile(rf"^(\s*){re.escape(key)}\s*=")
+    end = len(lines)
+    for i in range(start, len(lines)):
+        stripped = lines[i].strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            end = i
+            break
+        raw = lines[i].rstrip("\r\n")
+        code, hash_mark, comment = raw.partition("#")
+        if not pattern.match(code):
+            continue
+        newline = lines[i][len(raw):]
+        body = f"{pattern.match(code).group(1)}{key} = {literal}"
+        if hash_mark:
+            gap = code[len(code.rstrip()):] or " "
+            lines[i] = f"{body}{gap}#{comment}{newline}"
+        else:
+            lines[i] = f"{body}{newline}"
+        return "".join(lines)
+    lines.insert(end, f"{key} = {literal}\n")
+    return "".join(lines)
+
+
+def _save_gaze_key(ctx, key: str, literal: str) -> None:
+    """Write one [gaze] value back to config.toml, then reload it."""
+    cm = ctx.agent.config
+    text = cm.read_text()
+    updated = replace_toml_key(text, "gaze", key, literal)
+    save = getattr(ctx.agent, "save_config", None)
+    if save is not None:
+        ok, errors, _warnings = save(updated)
+    else:
+        ok, errors, _warnings = cm.save_text(updated)
+    if not ok:
+        raise ToolError("Couldn't save that setting: " + "; ".join(errors))
+
+
+def _fmt_speed(value: float) -> str:
+    text = f"{value:.2f}".rstrip("0").rstrip(".")
+    return text if "." in text else text + ".0"
+
+
+@tool
+def eye_follow_speed(ctx, speed: Annotated[str, "slower, faster, slow, medium, fast, or a number from 0.1 to 2.0."]):
+    """Set how fast the magnified view pans when the user looks toward an edge.
+
+    Use for "follow my eyes slower", "follow my eyes faster", or when they name a speed.
+    Applies immediately and is saved, so it stays after Ally restarts.
+    """
+    current = float(ctx.agent.config.data.get("gaze", {}).get("pan_speed", 0.35))
+    value = resolve_pan_speed(speed, current)
+    _save_gaze_key(ctx, "pan_speed", _fmt_speed(value))
+    ctx.agent.platform.set_gaze_source(ctx.agent.gaze.latest, value)
+    if isinstance(speed, str) and speed.strip().lower() == "slower":
+        return f"The view will follow your eyes more slowly ({_fmt_speed(value)})."
+    if isinstance(speed, str) and speed.strip().lower() == "faster":
+        return f"The view will follow your eyes a little faster ({_fmt_speed(value)})."
+    return f"The view will follow your eyes at speed {_fmt_speed(value)}."

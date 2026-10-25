@@ -110,9 +110,11 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
 2. Say **"Ally, what am I looking at"** for the area of the screen. On Windows, Ally also names the
    button, link, or text under that spot. **"this"**, **"that"**, and **"here"** use the same tool.
 3. Say **"Ally, magnify what I'm looking at"** (or "magnify here"), or press `<mod>+G`. The screen
-   zooms around where you looked. While zoomed in, looking near an edge pans that way; the middle
-   stays still for reading. Move the mouse and the view follows the mouse again. Say "follow my eyes"
-   / "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
+   zooms around where you looked. While zoomed in, looking near an edge pans that way, calmly, and
+   only after the look has stayed there for a moment. The middle stays still for reading. Say
+   **"follow my eyes slower"** or **"follow my eyes faster"** to change that speed (saved as
+   `[gaze] pan_speed`, default 0.35). Move the mouse and the view follows the mouse again. Say
+   "follow my eyes" / "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
 4. A yes or no can be answered by looking. Ally shows the choices as large cards (two choices: the
    left half and the right half). Look at one for a moment.
 5. Say **"Ally, check my eye tracker"** for the 5 check dots only (about 12 seconds), without a full setup.

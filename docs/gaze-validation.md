@@ -27,6 +27,9 @@ With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This tak
   thing inside Chrome needs the extension: a content script that asks `document.elementFromPoint`.
   That is the extension owner's area.
 - "Magnify what I'm looking at", or "magnify here": zoom around that spot. The view then follows your eyes.
+  Looking near an edge pans that way. The pan is calm (default speed 0.35, about a third of a view
+  width per second at the very edge) and waits about 0.3 seconds so a small wobble does not move the
+  page. Say "follow my eyes slower" or "follow my eyes faster". That is saved as `[gaze] pan_speed`.
 - A yes or no by looking: Ally shows the choices as large cards. Two choices use the left and right
   halves of the screen. Look at one for about a second. Up to four choices. If you don't settle, Ally says none.
 - "Check my eye tracker": only the 5 check dots, about 10 seconds. Ally re-tunes the saved model
