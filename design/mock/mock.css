@@ -1,25 +1,50 @@
-/* Ally companion: the bear and its speech card. Colours come from ../tokens/tokens.css. */
+/* Ally companion: the bear and its speech card.
+   The card uses its own fixed light palette (not the theme-switching tokens), so it renders
+   identically in light and dark mode. Every text pair below meets WCAG AAA (7:1) unless noted. */
 
 :root {
+  color-scheme: light;
+
+  /* page (presentation only) */
   --page: #F4F0EA;
   --stage: #EAE4DB;
-  --card: var(--ally-surface-raised);
-  --hairline: #ECE5DA;
-  --quiet: #F1EBE2;
-  --quiet-hover: #E8E0D4;
+  --page-ink: #1F2937;
+  --page-ink-soft: #4B5563;
+
+  /* card */
+  --card: #FFFFFF;
+  --card-shadow: 0 12px 32px rgb(15 23 42 / 0.10), 0 2px 6px rgb(15 23 42 / 0.05);
+  --title: #111827;          /* 17.7:1 on white */
+  --text: #374151;           /* 10.3:1 on white */
+  --divider: #E5E7EB;
+
+  /* status badge: urgency lives only here */
+  --badge-bg: #FEF3C7;
+  --badge-ink: #78350F;      /* AAA on #FEF3C7 (spec #B45309 is 4.5:1; darkened to reach 7:1) */
+  --badge-icon: #D97706;
+  --good: #15803D;
+
+  /* buttons */
+  --primary: #115E59;        /* white on it: 7.6:1 */
+  --primary-hover: #0D4D49;
+  --primary-ink: #FFFFFF;
+  --secondary: #F3F1EC;
+  --secondary-hover: #E9E6DF;
+  --secondary-line: #D6D3CD;
+  --secondary-ink: #1F2937;  /* 13.0:1 on #F3F1EC */
+  --disabled: #F3F4F6;
+  --disabled-ink: #6B7280;   /* 4.4:1: disabled controls are exempt from WCAG contrast; still readable */
+  --disabled-line: #D1D5DB;
+  --focus: #1D4ED8;
+
+  /* footer actions */
+  --link-primary: #115E59;   /* 7.6:1 on white */
+  --link: #4B5563;           /* 7.6:1 on white */
 
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
   --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 72px;
 
-  --r-card: 22px;
-  --r-tuck: 6px;
-  --r-btn: 14px;
-
-  --shadow-card:
-    0 1px 1px rgb(46 37 35 / 0.04),
-    0 3px 8px rgb(46 37 35 / 0.05),
-    0 18px 44px -10px rgb(46 37 35 / 0.18);
-  --shadow-soft: 0 1px 2px rgb(46 37 35 / 0.05), 0 10px 24px -8px rgb(46 37 35 / 0.14);
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -27,147 +52,156 @@ body {
   margin: 0;
   padding: var(--space-8) var(--space-7) 96px;
   background: var(--page);
-  color: var(--ally-ink);
-  font: 400 18px/1.5 var(--ally-font);
+  color: var(--page-ink);
+  font: 400 18px/1.5 var(--font);
 }
 .sprite { display: none; }
-.ico { width: 22px; height: 22px; flex: none; }
+.ico { width: 20px; height: 20px; flex: none; }
 
 /* ---------- page chrome (presentation only) ---------- */
 .intro, .states, .specs, .hero { max-width: 1240px; margin-inline: auto; }
 .intro { max-width: 760px; margin-bottom: var(--space-7); }
-.intro-kicker { margin: 0 0 var(--space-2); color: var(--ally-primary-strong); font-weight: 600; font-size: 16px; }
-.intro h1 { margin: 0 0 var(--space-3); font-size: 40px; line-height: 1.15; letter-spacing: -0.02em; font-weight: 650; }
-.intro-lede { margin: 0; color: var(--ally-ink-soft); font-size: 19px; line-height: 1.6; }
-.section-h { margin: 0 0 var(--space-2); font-size: 26px; letter-spacing: -0.01em; font-weight: 650; }
-.section-sub { margin: 0 0 var(--space-6); color: var(--ally-ink-soft); max-width: 680px; }
+.intro-kicker { margin: 0 0 var(--space-2); color: var(--primary); font-weight: 600; font-size: 16px; }
+.intro h1 { margin: 0 0 var(--space-3); font-size: 40px; line-height: 1.15; letter-spacing: -0.02em; font-weight: 700; color: var(--title); }
+.intro-lede { margin: 0; color: var(--page-ink-soft); font-size: 19px; line-height: 1.6; }
+.section-h { margin: 0 0 var(--space-2); font-size: 26px; letter-spacing: -0.01em; font-weight: 700; color: var(--title); }
+.section-sub { margin: 0 0 var(--space-6); color: var(--page-ink-soft); max-width: 680px; }
 .states, .specs { margin-top: var(--space-8); }
 
 /* ---------- hero scene ---------- */
 .scene {
   position: relative;
-  min-height: 640px;
+  min-height: 660px;
   border-radius: 28px;
   background: linear-gradient(180deg, #E6E0D7, #DDD6CB);
   overflow: hidden;
 }
 .window {
   position: absolute; top: var(--space-6); left: var(--space-6); right: 300px; bottom: var(--space-6);
-  background: #fff; border-radius: 14px; box-shadow: var(--shadow-soft); overflow: hidden;
+  background: #fff; border-radius: 14px; box-shadow: 0 10px 24px -8px rgb(46 37 35 / 0.14); overflow: hidden;
 }
 .window-bar { display: flex; align-items: center; gap: 7px; height: 44px; padding: 0 var(--space-4); background: #F3F1EE; border-bottom: 1px solid #E7E3DD; }
 .window-bar span { width: 11px; height: 11px; border-radius: 50%; background: #D9D3CA; }
-.url { margin-left: var(--space-4); padding: 6px 14px; border-radius: 8px; background: #fff; color: #8A817A; font-size: 14px; }
+.url { margin-left: var(--space-4); padding: 6px 14px; border-radius: 8px; background: #fff; color: #6B6259; font-size: 14px; }
 .window-page { height: calc(100% - 44px); background: #9A3A33; display: grid; place-items: center; }
 .fake-alert { width: 62%; display: grid; gap: 16px; justify-items: center; }
 .fake-line { height: 18px; border-radius: 9px; background: rgb(255 255 255 / 0.7); }
 .fake-line.w60 { width: 60%; height: 34px; } .fake-line.w80 { width: 80%; } .fake-line.w40 { width: 40%; }
 .fake-cta { margin-top: 10px; width: 46%; height: 52px; border-radius: 8px; background: #fff; }
-.scene .ally { position: absolute; right: var(--space-6); bottom: var(--space-5); }
+.scene .ally { position: absolute; right: var(--space-6); bottom: var(--space-6); }
 
 /* ---------- states grid ---------- */
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); }
 .stage {
-  margin: 0; min-height: 560px; padding: var(--space-5); gap: var(--space-5);
+  margin: 0; min-height: 580px; padding: var(--space-5); gap: var(--space-5);
   display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end;
   border-radius: 24px; background: var(--stage);
 }
-.stage figcaption { align-self: flex-start; color: var(--ally-ink-soft); font-size: 15px; }
-.stage figcaption strong { color: var(--ally-ink); font-weight: 600; }
+.stage figcaption { align-self: flex-start; color: var(--page-ink-soft); font-size: 15px; }
+.stage figcaption strong { color: var(--page-ink); font-weight: 600; }
 
 /* ---------- the component ---------- */
-.ally { display: flex; align-items: flex-end; }
-.ally-bear { width: 152px; height: auto; margin-left: -18px; position: relative; z-index: 1; flex: none; }
-.ally-compact .ally-bear { width: 120px; margin-left: -14px; }
+/* Bear and card share one bottom baseline; the card sits 12px left of the bear. */
+.ally { display: flex; align-items: flex-end; gap: 12px; }
+.ally-bear { width: 140px; height: auto; flex: none; }
+.ally-compact .ally-bear { width: 112px; }
 
 .ally-card {
-  width: 456px;
+  width: 440px;
   background: var(--card);
-  border-radius: var(--r-card) var(--r-card) var(--r-tuck) var(--r-card);
-  box-shadow: var(--shadow-card);
+  color: var(--text);
+  border: 0;
+  border-radius: 20px 20px 4px 20px;   /* tight corner nearest the bear */
+  box-shadow: var(--card-shadow);
   overflow: hidden;
-  margin-bottom: 44px; /* the tight corner meets the bear at chest height */
 }
-.ally-compact .ally-card { width: auto; margin-bottom: 36px; }
-.stage .ally:not(.ally-compact) .ally-card { width: 410px; }
+.stage .ally:not(.ally-compact) .ally-card { width: 400px; }
+.ally-compact .ally-card { width: auto; }
 
-.ally-status {
-  display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-4) var(--space-5) 0;
-  font-size: 17px; font-weight: 600;
-  color: var(--ally-ink-soft);
+/* Rule 2: urgency in words. Amber is confined to this badge. */
+.ally-status { padding: var(--space-5) var(--space-5) 0; }
+.badge {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  background: var(--badge-bg); color: var(--badge-ink);
+  font-size: 16px; font-weight: 700; line-height: 1.2;
 }
-[data-tone="risk"] .ally-status {
-  padding: 13px var(--space-5);
-  background: var(--ally-caution-wash);
-  color: var(--ally-caution-ink);
-}
-[data-tone="caution"] .ally-status { color: var(--ally-caution-ink); }
+.badge .ico { color: var(--badge-icon); width: 18px; height: 18px; }
 
-.ally-body { padding: var(--space-4) var(--space-5) var(--space-5); }
-.ally-title { margin: 0; font-size: 27px; line-height: 1.25; font-weight: 650; letter-spacing: -0.012em; text-wrap: balance; }
-.ally-text { margin: var(--space-2) 0 0; font-size: 20px; line-height: 1.45; color: var(--ally-ink-soft); text-wrap: pretty; }
-.ally-ask { margin: var(--space-4) 0 0; font-size: 20px; font-weight: 600; }
-.ally-why { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: 14px; background: var(--quiet); }
-.ally-why p { margin: 0; font-size: 19px; line-height: 1.45; color: var(--ally-ink); }
-.ally-why p + p { margin-top: var(--space-2); color: var(--ally-ink-soft); }
+.ally-body { padding: var(--space-3) var(--space-5) var(--space-5); }
+.ally-title { margin: 0; color: var(--title); font-size: 26px; line-height: 1.25; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+.ally-text { margin: var(--space-2) 0 0; color: var(--text); font-size: 19px; line-height: 1.45; text-wrap: pretty; }
+.ally-ask { margin: 20px 0 10px; color: var(--title); font-size: 19px; line-height: 1.45; font-weight: 600; }
+.ally-why { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: 12px; background: #F9FAFB; }
+.ally-why p { margin: 0; color: var(--text); font-size: 18px; line-height: 1.45; }
+.ally-why p + p { margin-top: var(--space-2); }
 
-.ally-actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-top: var(--space-5); }
-
+/* Rule 3: one button language. */
+.ally-actions { display: flex; gap: 12px; margin-top: 20px; }
+.ally-ask + .ally-actions { margin-top: 0; }
 .btn {
-  min-height: var(--ally-touch-min);
-  padding: 0 var(--space-4);
+  flex: 1;
+  height: 64px;
+  padding: 0 var(--space-3);
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
-  border: 0; border-radius: var(--r-btn);
-  font: 600 20px/1.2 var(--ally-font);
+  border: 1px solid transparent; border-radius: 14px;
+  font: 700 18px/1.2 var(--font);
+  white-space: nowrap;
   cursor: pointer;
   transition: background-color 120ms ease, transform 120ms ease;
 }
-.btn:active { transform: translateY(1px); }
-.btn-primary { background: var(--ally-primary); color: var(--ally-primary-ink); box-shadow: 0 1px 0 rgb(0 0 0 / 0.06), inset 0 1px 0 rgb(255 255 255 / 0.12); }
-.btn-primary:hover { background: var(--ally-primary-strong); }
-.btn-quiet { background: var(--quiet); color: var(--ally-ink); }
-.btn-quiet:hover { background: var(--quiet-hover); }
-.btn[disabled] { cursor: default; color: var(--ally-ink-soft); white-space: nowrap; padding: 0 var(--space-3); }
-.btn:focus-visible, .link:focus-visible { outline: 3px solid var(--ally-focus); outline-offset: 3px; }
+.btn:active:not([disabled]) { transform: translateY(1px); }
+.btn-primary { background: var(--primary); color: var(--primary-ink); }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-quiet { background: var(--secondary); color: var(--secondary-ink); border-color: var(--secondary-line); }
+.btn-quiet:hover { background: var(--secondary-hover); }
+.btn[disabled] {
+  background: var(--disabled); color: var(--disabled-ink);
+  border: 1px dashed var(--disabled-line);
+  cursor: not-allowed;
+}
+.btn:focus-visible, .link:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 
 .countdown {
   width: 18px; height: 18px; border-radius: 50%;
-  background: conic-gradient(var(--ally-ink-soft) 0 80%, transparent 80% 100%);
+  background: conic-gradient(var(--disabled-ink) 0 80%, transparent 80% 100%);
   -webkit-mask: radial-gradient(circle, transparent 5px, #000 5.5px);
           mask: radial-gradient(circle, transparent 5px, #000 5.5px);
 }
 
+/* Rule 4: extras stay quiet. Inset divider aligned with the card padding. */
 .ally-more {
   display: flex; justify-content: space-between; align-items: center;
-  padding: var(--space-2) var(--space-4) var(--space-3);
-  border-top: 1px solid var(--hairline);
+  margin: 0 var(--space-5);
+  padding: var(--space-2) 0 var(--space-3);
+  border-top: 1px solid var(--divider);
 }
 .link {
   display: inline-flex; align-items: center; gap: var(--space-2);
-  min-height: 44px; padding: 0 var(--space-2);
+  min-height: 44px; padding: 0 var(--space-1);
   border: 0; background: none; border-radius: 10px;
-  font: 600 18px/1 var(--ally-font); color: var(--ally-ink-soft); cursor: pointer;
+  font: 600 18px/1 var(--font); color: var(--link); cursor: pointer;
 }
-.link-primary { color: var(--ally-primary-strong); }
+.link-primary { color: var(--link-primary); }
 .link:hover { text-decoration: underline; text-underline-offset: 4px; }
 
 .ally-toast {
   display: flex; align-items: center; gap: var(--space-3);
   padding: 18px var(--space-5);
-  font-size: 20px; font-weight: 600; white-space: nowrap;
+  color: var(--title); font-size: 19px; font-weight: 600; white-space: nowrap;
 }
-[data-tone="good"] .ally-toast .ico { color: var(--ally-good); }
+[data-tone="good"] .ally-toast .ico { color: var(--good); width: 22px; height: 22px; }
 .dots { display: inline-flex; gap: 5px; }
-.dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--ally-primary); opacity: 0.35; animation: pulse 1.2s infinite ease-in-out; }
+.dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); opacity: 0.35; animation: pulse 1.2s infinite ease-in-out; }
 .dots i:nth-child(2) { animation-delay: 0.15s; } .dots i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes pulse { 0%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
 
 /* ---------- rules ---------- */
 .rules { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-5); margin: 0; }
-.rules div { padding: var(--space-5); border-radius: 18px; background: #fff; box-shadow: var(--shadow-soft); }
-.rules dt { font-weight: 650; margin-bottom: var(--space-2); }
-.rules dd { margin: 0; color: var(--ally-ink-soft); font-size: 16px; line-height: 1.55; }
+.rules div { padding: var(--space-5); border-radius: 18px; background: #fff; box-shadow: var(--card-shadow); }
+.rules dt { font-weight: 700; color: var(--title); margin-bottom: var(--space-2); }
+.rules dd { margin: 0; color: var(--text); font-size: 16px; line-height: 1.55; }
 
 @media (prefers-reduced-motion: reduce) { .dots i { animation: none; opacity: 0.8; } .btn { transition: none; } }
 @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } .rules { grid-template-columns: 1fr 1fr; } }
