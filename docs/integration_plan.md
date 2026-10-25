@@ -140,6 +140,20 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 22:27 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `0a248f1`
+
+**Changed:** reading-aid tuning after Hayden tried it. 463 tests pass.
+- **Edge delay:** looking near an edge waits 0.6 s before the view moves (was 0.3 s).
+- **Top speed:** the new `[gaze] max_pan_speed` (default 0.35 screen widths a second) caps every
+  pan. The trip back to the start of a line may peak at twice that, and takes longer when it would.
+- **New defaults:**
+  - `[gaze] pan_speed` defaults to 0.85. The named speeds are slow 0.4, medium 0.85 and fast 1.5.
+  - "Magnify what I'm looking at" opens at 1.5x.
+- **Code:** `Platform.set_gaze_source(latest, pan_speed, max_speed=None)` gained `max_speed`, and
+  None keeps the saved cap. `ally/agent.py` passes it from config, on the same two lines as before.
+- **Ganesh:** `risk-branch` also changes `ally/agent.py`, `ally/config.py` and
+  `ally/default_config.toml`. A dry-run merge is clean.
+
 ### Oct 24, 22:15 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commits `141222f`, `878a894`
 
 **Changed:** the eye-following magnifier is now a reading aid, and the live eye tracker runs the v5
