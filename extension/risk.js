@@ -12,8 +12,47 @@
   if (skip || window.top !== window) return;
 
   const MAX_TEXT = 20000;
-  const MAX_RESENDS = 3;
+  const MAX_RESENDS = 6;
   const MAX_FIELDS = 40;
+
+  const SIGNAL_KEYS = [
+    "pushState", "replaceState", "backTrap", "beforeunload", "fullscreenRequests",
+    "keyboardLock", "contextMenuBlocked", "dialogs", "popups", "pointerLock",
+  ];
+  const SIGNAL_BOOLS = new Set(["beforeunload", "keyboardLock", "contextMenuBlocked", "pointerLock"]);
+  let latestSignals = {};
+
+  function acceptSignals(detail) {
+    try {
+      const raw = JSON.parse(detail);
+      if (!raw || typeof raw !== "object") return;
+      const out = {};
+      for (const key of SIGNAL_KEYS) {
+        const v = raw[key];
+        if (SIGNAL_BOOLS.has(key)) {
+          if (typeof v === "boolean") out[key] = v;
+        } else if (typeof v === "number" && Number.isFinite(v)) {
+          out[key] = Math.min(99, Math.max(0, Math.floor(v)));
+        }
+      }
+      latestSignals = out;
+      schedule();
+    } catch {
+      /* hostile or malformed detail */
+    }
+  }
+
+  document.addEventListener("ally-risk-signals", (e) => {
+    if (e && typeof e.detail === "string") acceptSignals(e.detail);
+  });
+
+  function signalsSig() {
+    return SIGNAL_KEYS.map((k) => {
+      const v = latestSignals[k];
+      if (v === undefined) return "-";
+      return typeof v === "boolean" ? (v ? "1" : "0") : String(v);
+    }).join(",");
+  }
 
   // Descriptors only (name, id, placeholder, label, autocomplete, type). What the user typed is never read.
   function describeFields() {
@@ -53,6 +92,7 @@
       kind: "pageRisk", url: loc.href, title: document.title || "", text,
       overlay_text: overlayText(), fullscreen: !!document.fullscreenElement,
       has_tel_link: !!document.querySelector('a[href^="tel:"]'), fields: describeFields(),
+      signals: { ...latestSignals },
     };
   }
 
@@ -61,7 +101,7 @@
 
   function report(isResend) {
     const snap = snapshot();
-    const sig = `${snap.text.length}:${snap.overlay_text.length}:${snap.fields.length}:${snap.fullscreen}`;
+    const sig = `${snap.text.length}:${snap.overlay_text.length}:${snap.fields.length}:${snap.fullscreen}:${signalsSig()}`;
     if (sig === lastSig) return;
     if (isResend && resends >= MAX_RESENDS) return;
     if (isResend) resends += 1;
