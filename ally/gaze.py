@@ -17,11 +17,13 @@ import json
 import logging
 import statistics
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
 from pathlib import Path
 
+from . import gaze_model
 from .claude import ssl_context
 from .hotkeys import python_for_children
 from .paths import CODE_ROOT
@@ -29,6 +31,13 @@ from .platforms.base import NO_WINDOW
 from .registry import ToolError
 
 log = logging.getLogger("ally.gaze")
+
+# A fixation is a look that stays inside a box this size (width + height, pixels) for 0.2 s.
+FIXATION_RADIUS = 150
+# High uncertainty, with the face still in view, for this long: offer a re-tune, then stay quiet.
+UNSURE_OFFER_AFTER = 10.0
+RETUNE_OFFER_EVERY = 300.0
+RETUNE_OFFER = "Your position changed. Say check my eye tracker to re-tune it."
 
 FACE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/"
                   "float16/latest/face_landmarker.task")
@@ -53,6 +62,63 @@ def download_face_model(path: Path, timeout: float = 60) -> None:
     tmp.replace(path)
 
 
+def choice_index(x: float, y: float, screen, n: int) -> int:
+    """Which large area a point is in. 2: left/right. 3: columns. 4: quadrants, top-left first."""
+    w = max(int(screen[0]), 1)
+    h = max(int(screen[1]), 1)
+    x = min(max(float(x), 0.0), w - 1.0)
+    y = min(max(float(y), 0.0), h - 1.0)
+    n = int(n)
+    if n <= 2:
+        return 0 if x < w / 2.0 else 1
+    if n == 3:
+        return min(2, int(3 * x / w))
+    col = 0 if x < w / 2.0 else 1
+    row = 0 if y < h / 2.0 else 1
+    return row * 2 + col
+
+
+def ongoing_choice(points, screen, n: int, now: float, hold: float = 0.8, gap: float = 0.4):
+    """Area index the latest points have stayed in for `hold` seconds, or None.
+
+    Region-sized areas, so this still works when the tracker is only okay.
+    """
+    now = float(now)
+    rows = [p for p in points if now - (float(hold) + 0.6) <= p[0] <= now]
+    if len(rows) < 2 or now - rows[-1][0] > gap:
+        return None
+    idx = choice_index(rows[-1][1], rows[-1][2], screen, n)
+    # The unbroken run of looks in this area that ends at the newest point. Frames arrive about
+    # every 50-100 ms, so a run that started `hold` seconds ago spans up to one frame less than
+    # `hold`; allow that much (cutting the window at `hold` first made a dwell almost never count).
+    start = rows[-1][0]
+    for prev, cur in zip(reversed(rows[:-1]), reversed(rows[1:])):
+        if cur[0] - prev[0] > gap or choice_index(prev[1], prev[2], screen, n) != idx:
+            break
+        start = prev[0]
+    if rows[-1][0] - start + 0.1 < float(hold):
+        return None
+    return idx
+
+
+def cursor_pos() -> tuple[int, int] | None:
+    """The mouse pointer, on Windows. None when it can't be read."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        pt = POINT()
+        if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+            return int(pt.x), int(pt.y)
+    except Exception:
+        return None
+    return None
+
+
 class GazeManager:
     def __init__(self, agent):
         self.agent = agent
@@ -72,6 +138,9 @@ class GazeManager:
         self._crashes: list[float] = []
         self._signature = None
         self._gave_up = False
+        self.screen = (1920, 1080)
+        self._unsure_since: float | None = None
+        self._retune_offer_at = 0.0
 
     @property
     def cfg(self) -> dict:
@@ -111,7 +180,8 @@ class GazeManager:
                 self.error = "eye tracking and face sensing need: pip install mediapipe opencv-python"
             return
         signature = (int(self.cfg.get("camera", 0)), int(self.cfg.get("fps", 20)), self.wanted(),
-                     self.senses_wanted(), self._senses_fps())
+                     self.senses_wanted(), self._senses_fps(), str(self.cfg.get("features", "v1")),
+                     bool(self.cfg.get("click_learning", True)))
         if signature == self._signature and (self.running or self._gave_up):
             return
         self._signature, self._gave_up, self._crashes = signature, False, []
@@ -131,7 +201,9 @@ class GazeManager:
                     return
             args = {"model": str(self.model_path), "calibration": str(self.calibration_path),
                     "camera": int(self.cfg.get("camera", 0)), "fps": int(self.cfg.get("fps", 20)),
-                    "gaze": self.wanted(), "signals": self.senses_wanted(), "signals_fps": self._senses_fps()}
+                    "gaze": self.wanted(), "signals": self.senses_wanted(), "signals_fps": self._senses_fps(),
+                    "features": self.cfg.get("features", "v1"),
+                    "click_learning": bool(self.cfg.get("click_learning", True))}
             try:
                 self.proc = subprocess.Popen(
                     [python_for_children(), "-m", "ally.gaze_helper", json.dumps(args)], cwd=str(CODE_ROOT),
@@ -151,7 +223,13 @@ class GazeManager:
             except ValueError:
                 continue
             if "x" in msg:
-                self.points.append((float(msg["t"]), int(msg["x"]), int(msg["y"])))
+                row = (float(msg["t"]), int(msg["x"]), int(msg["y"]))
+                if msg.get("r") is not None:
+                    try:
+                        row = row + (float(msg["r"]),)
+                    except (TypeError, ValueError):
+                        pass
+                self.points.append(row)
                 self.face_at = time.time()
             elif "f" in msg:
                 self.face_at = time.time()
@@ -173,6 +251,12 @@ class GazeManager:
             elif msg.get("ready"):
                 self.ready, self.error = True, ""
                 self.calibrated, self.error_px = bool(msg.get("calibrated")), msg.get("error_px")
+                scr = msg.get("screen")
+                if isinstance(scr, (list, tuple)) and len(scr) >= 2:
+                    try:
+                        self.screen = (int(scr[0]), int(scr[1]))
+                    except (TypeError, ValueError):
+                        pass
                 log.info("eye tracker on (%s)", "calibrated" if self.calibrated else "needs calibration")
             elif msg.get("camera_off"):
                 # The reader thread must not wait on the helper: closing stdin from here can deadlock.
@@ -235,6 +319,12 @@ class GazeManager:
         senses = getattr(self.agent, "senses", None)
         return int(senses.cfg.get("fps", 10)) if senses is not None else 10
 
+    def on_click(self, t: float, x: int, y: int) -> bool:
+        """Tell the camera helper about a mouse click so it can learn. The click stays on this computer."""
+        if not bool(self.cfg.get("click_learning", True)):
+            return False
+        return self.send(f"click {float(t):.3f} {int(x)} {int(y)}")
+
     def send(self, line: str) -> bool:
         """One command line to the camera helper ("calibrate", "hud on", "hud [...]", "hud off")."""
         proc = self.proc
@@ -296,19 +386,19 @@ class GazeManager:
         if s == "starting":
             return ToolError("The eye tracker is still starting. Try again in a few seconds.")
         if s == "needs calibration":
-            return ToolError("The eye tracker needs a 20-second setup first. Say: calibrate my eyes.")
+            return ToolError("The eye tracker needs a setup first. Say: calibrate my eyes.")
         return ToolError("I can't see your eyes. Face the screen and the camera, then try again.")
 
     def latest(self, max_age: float = 0.3) -> tuple[int, int] | None:
         """The newest gaze point, if it's fresh (used by the magnifier to pan with the eyes)."""
         if not self.points:
             return None
-        t, x, y = self.points[-1]
+        t, x, y = self.points[-1][0], self.points[-1][1], self.points[-1][2]
         return (x, y) if time.time() - t <= max_age else None
 
     def point(self, t0: float, t1: float) -> tuple[int, int]:
         """Median gaze point between two wall-clock times (steady even if the eyes flicked away)."""
-        pts = [(x, y) for t, x, y in list(self.points) if t0 <= t <= t1]
+        pts = [(item[1], item[2]) for item in list(self.points) if t0 <= item[0] <= t1]
         if len(pts) < 3:
             raise self.problem() if self.status() != "tracking" else ToolError(
                 "I couldn't follow your eyes just then. Look at the spot and try again.")
@@ -331,7 +421,152 @@ class GazeManager:
                 pass
         return self.point(now - 1.0, now)
 
-    def calibrate(self, timeout: float = 90) -> dict:
+    def target(self, t0: float | None = None, t1: float | None = None) -> dict:
+        """Where the user is looking in a time window, or over the last 1.5 s.
+
+        Returns x, y, radius_px, confidence, region, source ("eyes" or "mouse") and why.
+        The mouse pointer is used when the eyes aren't calibrated, aren't visible, didn't hold
+        still, or the uncertainty is above [gaze] max_radius_px.
+        """
+        why = self._eyes_blocked()
+        if why:
+            self._note_uncertainty(False)
+            return self._from_mouse(why)
+        now = time.time()
+        explicit = t0 is not None and t1 is not None
+        if not explicit:
+            said = getattr(self.agent, "last_utterance", None)
+            if said and now - float(said[1]) < 20:
+                t0, t1 = float(said[0]) - 0.3, float(said[1]) + 0.2
+            else:
+                t0, t1 = now - 1.5, now
+        found = self._fixation(float(t0), float(t1))
+        if found is None and not explicit:
+            said = getattr(self.agent, "last_utterance", None)
+            if said and now - float(said[1]) < 20:
+                found = self._fixation(now - 1.5, now)
+        if found is None:
+            self._note_uncertainty(False)
+            return self._from_mouse("Your eyes didn't stay on one spot, so this is the mouse pointer.")
+        point, radius = found
+        limit = self._max_radius()
+        if radius > limit:
+            self._note_uncertainty(True)
+            return self._from_mouse("The eye tracker isn't sure enough, so this is the mouse pointer.")
+        self._note_uncertainty(False)
+        x, y = int(round(point["x"])), int(round(point["y"]))
+        region = gaze_model.region(x, y, self.screen)
+        span = max(limit * 2.0, 1.0)
+        confidence = round(max(0.0, min(1.0, 1.0 - float(radius) / span)), 2)
+        self.last_point = {"x": x, "y": y, "samples": point.get("samples"),
+                           "spread_px": int(round(point.get("spread_px") or 0)), "source": "eyes",
+                           "radius_px": radius, "region": region}
+        return {"x": x, "y": y, "radius_px": round(float(radius), 1), "confidence": confidence,
+                "region": region, "source": "eyes", "why": ""}
+
+    def _note_uncertainty(self, unsure: bool) -> None:
+        """Offer a re-tune when the eyes stay too unsure, with the face still visible, for ~10 s."""
+        now = time.time()
+        if not unsure:
+            self._unsure_since = None
+            return
+        if self._unsure_since is None:
+            self._unsure_since = now
+            return
+        if now - self._unsure_since < UNSURE_OFFER_AFTER:
+            return
+        if now - self._retune_offer_at < RETUNE_OFFER_EVERY:
+            return
+        self._retune_offer_at = now
+        self._offer_retune()
+
+    def _offer_retune(self) -> None:
+        events = getattr(self.agent, "events", None)
+        if events is not None:
+            try:
+                events.add("gaze", RETUNE_OFFER)
+            except Exception:
+                log.exception("couldn't record the eye-tracker re-tune offer")
+        speaker = getattr(self.agent, "speaker", None)
+        if speaker is not None:
+            try:
+                speaker.say(RETUNE_OFFER)
+            except Exception:
+                log.exception("couldn't say the eye-tracker re-tune offer")
+
+    def _eyes_blocked(self) -> str | None:
+        if not self.wanted():
+            return "Eye tracking is off, so this is the mouse pointer."
+        if not self.ready or self.status() == "error":
+            return "The eye tracker isn't ready, so this is the mouse pointer."
+        if not self.calibrated:
+            return "The eye tracker isn't set up, so this is the mouse pointer."
+        if time.time() - self.face_at >= 2.0:
+            return "I can't see your eyes, so this is the mouse pointer."
+        return None
+
+    def _fixation(self, t0: float, t1: float):
+        rows = [item for item in list(self.points) if t0 <= item[0] <= t1]
+        if len(rows) < 2:
+            return None
+        found = gaze_model.fixation([(item[0], item[1], item[2]) for item in rows], t0, t1, FIXATION_RADIUS)
+        if not found:
+            return None
+        radii = [float(item[3]) for item in rows if len(item) > 3 and found["start"] <= item[0] <= found["end"]]
+        if radii:
+            radius = float(statistics.median(radii))
+        elif self.error_px:
+            radius = float(self.error_px)
+        else:
+            radius = 200.0
+        return found, radius
+
+    def _from_mouse(self, why: str) -> dict:
+        x, y = self._cursor()
+        region = gaze_model.region(x, y, self.screen)
+        self.last_point = {"x": x, "y": y, "samples": 0, "spread_px": None, "source": "mouse", "region": region}
+        return {"x": x, "y": y, "radius_px": None, "confidence": 0.0, "region": region,
+                "source": "mouse", "why": why}
+
+    def _cursor(self) -> tuple[int, int]:
+        senses = getattr(self.agent, "senses", None)
+        pointer = getattr(senses, "pointer", None) if senses is not None else None
+        if isinstance(pointer, (tuple, list)) and len(pointer) >= 2 and None not in (pointer[0], pointer[1]):
+            return int(pointer[0]), int(pointer[1])
+        found = cursor_pos()
+        return found if found is not None else (0, 0)
+
+    # ------------------------------------------------------------ answering offers by looking
+    def attach_bus(self, bus) -> None:
+        """Let the user answer the proactive layer's yes/no offers (ally.contracts.Offer) by looking."""
+        bus.subscribe("offer", self._on_offer)
+
+    def _on_offer(self, offer) -> None:
+        # Runs on the coordinator's thread, which waits for the answer: never block it here.
+        if not self.cfg.get("answer_offers", True) or self._eyes_blocked():
+            return
+        if self.error_px and float(self.error_px) > self._max_radius():
+            return  # the saved check says the eyes aren't reliable enough to answer with
+        threading.Thread(target=self._answer_offer, args=(offer,), name="gaze-offer", daemon=True).start()
+
+    def _answer_offer(self, offer) -> None:
+        options = [str(o).capitalize() for o in getattr(offer, "options", ("yes", "no"))]
+        try:
+            picked = self.choose(options, timeout=float(getattr(offer, "timeout", 8.0)),
+                                 stop=lambda: bool(getattr(offer, "done", False)))
+        except Exception:
+            log.debug("couldn't show the offer for a look-to-answer", exc_info=True)
+            return
+        if picked and offer.resolve(picked.lower(), by="eyes"):  # first answer wins
+            self.agent.events.add("gaze", f"answered {picked} by looking")
+
+    def _max_radius(self) -> float:
+        try:
+            return float(self.cfg.get("max_radius_px", 250))
+        except (TypeError, ValueError):
+            return 250.0
+
+    def calibrate(self, timeout: float = 120) -> dict:
         """Show the dots and wait for the result: {"calibrated": bool, "error_px" or "why"}."""
         if not self.wanted():
             self.set_enabled(True)
@@ -347,3 +582,43 @@ class GazeManager:
         if not self._calib_done.wait(timeout):
             raise ToolError("Calibration took too long.")
         return self._calib_result or {"calibrated": False, "why": "the eye tracker stopped"}
+
+    def check(self, timeout: float = 40) -> dict:
+        """Run only the 5 check dots and wait for the words and the saved validation numbers."""
+        if not self.wanted():
+            self.set_enabled(True)
+        end = time.monotonic() + 20
+        while not self.ready:
+            if time.monotonic() > end or (self.error and not self.running):
+                raise self.problem()
+            time.sleep(0.2)
+        self._calib_done.clear()
+        self._calib_result = None
+        if not self.send("check"):
+            raise ToolError("The eye tracker stopped. Try again in a few seconds.")
+        if not self._calib_done.wait(timeout):
+            raise ToolError("The eye tracker check took too long.")
+        return self._calib_result or {"calibrated": False, "why": "the eye tracker stopped"}
+
+    def choose(self, options, timeout: float = 8.0, hold: float = 0.8, clock=None, sleep=None, stop=None):
+        """Show the options and return the one the gaze stays on for `hold` seconds, or None.
+
+        stop: optional callable; when it returns True (the question was answered another way), the
+        cards close and None is returned.
+        """
+        options = [" ".join(str(item).split()) for item in options]
+        if not 2 <= len(options) <= 4 or not all(options):
+            raise ToolError("Choose two, three, or four options.")
+        clock = clock or time.time
+        sleep = sleep or time.sleep
+        self.send("choose " + json.dumps({"options": options, "seconds": float(timeout)}))
+        deadline = clock() + float(timeout)
+        try:
+            while clock() < deadline and not (stop is not None and stop()):
+                idx = ongoing_choice(list(self.points), self.screen, len(options), clock(), hold)
+                if idx is not None:
+                    return options[idx]
+                sleep(0.05)
+            return None
+        finally:
+            self.send("choose off")

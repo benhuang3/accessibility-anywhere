@@ -89,6 +89,7 @@ class Agent:
         self.proactive = Coordinator(self.bus, lambda n, a, src: self.call_tool(n, a, source=src), self.habits,
                                      self.proactive_context, self.proactive_cfg,
                                      ui=NullUI(self.events), voice=NullVoice(self.speaker), events=self.events)
+        self.gaze.attach_bus(self.bus)  # offers can be answered by looking at Yes or No ([gaze] answer_offers)
         self.sensors: list = []  # Hayden's senses run as self.senses; the patch's own sensors are not used
         self.overlay = None      # Ganesh's overlay plugs in here when ally/overlay lands
         self.hotkeys = HotkeyManager(self)
