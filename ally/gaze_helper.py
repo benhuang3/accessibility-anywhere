@@ -1844,7 +1844,7 @@ def main(argv: list[str]) -> int:
     sig_period = 1.0 / max(2, min(30, int(cfg.get("signals_fps", 10))))
     period = 1.0 / max(5, min(30, int(cfg.get("fps", 20)))) if gaze_on else sig_period
     last_sig, hud, hud_rows = 0.0, False, []
-    smooth = gaze_model.OneEuro()
+    smooth = gaze_model.GazeSmoother()
     calib: Calibration | None = None
     card: CardWindow | None = None
     choices: ChoiceBoard | None = None
@@ -1869,7 +1869,7 @@ def main(argv: list[str]) -> int:
             emit({"calibrated": False, "why": "cancelled"})
             calib.close()
             calib = None
-            smooth = gaze_model.OneEuro()
+            smooth = gaze_model.GazeSmoother()
         try:
             if kind == "calibrate" and calib is None:
                 poses = 3 if payload is None else pose_count(payload)
@@ -2059,7 +2059,7 @@ def main(argv: list[str]) -> int:
                     emit({"calibrated": False, "why": "cancelled"})
                 calib.close()
                 calib = None
-                smooth = gaze_model.OneEuro()
+                smooth = gaze_model.GazeSmoother()
             continue
 
         if feat is None or feat[1] < MIN_OPEN:
@@ -2084,10 +2084,10 @@ def main(argv: list[str]) -> int:
                 radius_model = model
             x = min(max(x, -0.05 * size[0]), 1.05 * size[0])
             y = min(max(y, -0.05 * size[1]), 1.05 * size[1])
-            sx, sy = smooth(np.array([x, y]), now)
+            radius = round(float(gaze_model.radius_px(radius_model, vector)), 1)
+            sx, sy = smooth.update(np.array([x, y]), now, radius)
             px = int(min(max(sx, 0), size[0] - 1))
             py = int(min(max(sy, 0), size[1] - 1))
-            radius = round(float(gaze_model.radius_px(radius_model, vector)), 1)
             emit({"t": round(now, 3), "x": px, "y": py, "r": radius})
             dot.set_view(*view)
             dot.update(px, py, radius, face=True, calibrated=True)
