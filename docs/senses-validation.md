@@ -10,7 +10,7 @@ python run.py stop
 
 The face model has to be on disk already at `state/models/face_landmarker.task`. Start Ally once so it can download that file, then stop Ally again. That download is the only network use this feature should need.
 
-Recordings store numbers only (face scores, mouse and keyboard events, labels). They do not store pictures.
+Recordings store numbers only: face scores, landmarks, blendshapes, the face matrix, mouse and keyboard events, and labels. They do not store pictures.
 
 ## Self-check (about 60 seconds)
 
@@ -26,16 +26,29 @@ The left-eye and right-eye lines are the mirroring check. Closing the left eye s
 
 The other lines use the `[senses]` thresholds that are in effect: smile against `smile_gate`, blink against `blink_gate`, head turn against `pose_gate` (the turn has to be above that angle), lean against `lean_ratio` (face width compared with the resting face), and light against `light_floor`.
 
-## Record the matrix
+## Record a session
 
-Record five people. Each person does four sessions: glasses on and off, in bright light and in dim light. That is 20 files. An alias is letters, digits, `_` or `-`.
+Record five people if you are filling the matrix. Each person does four sessions: glasses on and off, in bright light and in dim light. That is 20 files. An alias is letters, digits, `_` or `-`.
+
+One session, full script, once:
 
 ```
 python -m ally.senses.matrix record --person ada --glasses no --light bright
+```
+
+The same person in the other three conditions:
+
+```
 python -m ally.senses.matrix record --person ada --glasses no --light dim
 python -m ally.senses.matrix record --person ada --glasses yes --light bright
 python -m ally.senses.matrix record --person ada --glasses yes --light dim
 ```
+
+A full session is about 5 minutes (4 minutes 38 seconds of script, plus a moment while the camera starts). The card on screen and the terminal walk through the same parts.
+
+`--camera N` picks the camera. `--run NAME` groups files under one folder. The default folder name is the time in UTC.
+
+`--repeat N` runs the scripted block that many times after the one calibration, so one person can give more squint examples. Each extra pass adds a bit over 4 minutes. `--parts NAME,NAME` runs only those parts, in the order you name them, still after one calibration. The default is the full script once.
 
 Optional free use, for false positives during ordinary work. Minutes of normal computer use, labeled as no struggle:
 
@@ -43,25 +56,57 @@ Optional free use, for false positives during ordinary work. Minutes of normal c
 python -m ally.senses.matrix record --person ada --glasses no --light bright --free 5
 ```
 
-`--camera N` picks the camera. `--run NAME` groups files under one folder. The default folder name is the time in UTC.
+Optional, and only if the person wants to say so: `--eyes monolid|double|hooded|unsure` and `--age under40|40to64|65plus`. Glasses is already on the command. Eye shape, age, and glasses are the physical things that change how eyes look to the camera, and the benchmark reports errors for each group. The recorder does not ask for race, ethnicity, or skin color.
 
-Optional, and only if the person wants to say so: `--eyes monolid|double|hooded|unsure` and `--age under40|40to64|65plus`. Glasses is already on the command. Eye shape, age, and glasses are the physical things that change how eyes look to the camera, and the benchmark reports errors for each group. The recorder does not ask for race, ethnicity, or skin color. On the metadata line, `eyes` and `age` are those values, or null when they were left off.
+```
+python -m ally.senses.matrix record --person ada --glasses no --light bright --eyes hooded --age 40to64 --repeat 2
+```
 
-Each session writes `state/senses_runs/<run>/<alias>-<glasses>-<light>.jsonl`. The first line is metadata: alias, glasses, light, camera index, screen size, the `[senses]` settings in effect, and the git commit. Later lines are helper numbers, input events, and labels (`start`, `end`, `expect`). Ctrl+C keeps what was already written. A partial label is not scored as a miss.
+## What is stored
 
-The script on screen, and in the terminal:
+Each session writes `state/senses_runs/<run>/<alias>-<glasses>-<light>.jsonl`. One JSON object per line. Numbers and short text only. No picture, no pixels, and no video. Ctrl+C keeps what was already written. A partial label is not scored as a miss.
 
-1. 15 s of reading normal text. This builds the baseline. It is not scored.
-2. Then each action below, with a 3 s rest between them. Rests are not scored.
-3. Read normal text (expect no struggle), 8 s.
-4. Read tiny text naturally (scored on its own, not as a false positive or a miss), 8 s.
-5. Squint as if the text were too small (expect a squint), 8 s.
-6. Smile, laugh, look down at a phone, close only the left eye, close only the right eye, turn the head (each expects no struggle), 8 s each. The two eye closes are also the mirroring check in the recording.
-7. Lean in (expect a lean), 8 s.
-8. Lean in and squint (expect a struggle), 10 s.
-9. If `--free` was set, that many minutes of normal use (expect no struggle).
+The first line has `"rec": "meta"`:
+
+- `alias`, `glasses` (`yes` or `no`), `light` (`bright` or `dim`)
+- `eyes` (`monolid`, `double`, `hooded`, `unsure`, or null)
+- `age` (`under40`, `40to64`, `65plus`, or null)
+- `camera`, `screen` (width and height), `senses` (the settings in effect), `commit`, `started`
+
+Later lines:
+
+- `"rec": "helper"` from the camera helper, about 15 times a second while a face is visible. `t` is the time. `f` is the summary scores: `squint_l`, `squint_r`, `smile`, `blink`, `blink_l`, `blink_r`, `yaw`, `pitch`, `width`, `light`. The same line also has `lm` (478 landmarks, each `[x, y, z]`, 4 decimals), `bs` (every blendshape by name, 4 decimals), `mat` (the 16 numbers of the face matrix, or null), and `w` and `h` (frame width and height). Live Ally does not ask for `lm`, `bs`, `mat`, `w`, or `h`.
+- `"rec": "input"` for mouse and keyboard events (counts and times, not the keys).
+- `"rec": "label"` with `name`, `start`, `end`, and `expect` for each part. A part cut off with Ctrl+C has `"partial": true`.
 
 If a second face is at least 70 percent as wide as the largest face, that frame is stored as "no face", so two people are not mixed into one set of numbers.
+
+## The parts
+
+The parts run in this order. A 3 second rest sits between them. Rests are not scored. The rest before "Lean and squint" is longer (32 seconds with the default settings) so an earlier detection can finish. Calibration is not repeated. Squint parts are not next to each other.
+
+1. Read normally, 15 s. Builds the baseline. Not scored.
+2. Normal text. Read a sentence. Do not squint or lean. Expect no struggle. 8 s.
+3. Bottom. Read a line at the bottom of the screen. The card sits on that edge. Expect no struggle. 8 s.
+4. Soft squint. Squint a little, the way you would at text that is slightly too small. Expect a squint. 8 s.
+5. Smile. Expect no struggle. 8 s.
+6. Small text. Read it naturally. Do not act. Scored on its own, not as a false positive or a miss. 8 s.
+7. Top. Read a line at the top of the screen. The card sits on that edge. Expect no struggle. 8 s.
+8. Squint. Hold a squint as if the text were too small. Expect a squint. 8 s.
+9. Fast blinks. Blink quickly, several times. Expect no struggle. 8 s.
+10. Lean a little, as you would to read. Do not squint. Expect a lean. 8 s.
+11. Wink with either eye, a few times. Expect no struggle. 8 s.
+12. Small text again, for 20 s. Read it naturally. Do not act. Scored on its own.
+13. Laugh. Expect no struggle. 8 s.
+14. Tired. Let your eyelids feel heavy and keep reading. Expect no struggle. 8 s.
+15. Lean in close. Do not squint. Expect a lean. 8 s.
+16. Phone. Look down at a phone in your lap, then look back. Expect no struggle. 8 s.
+17. Left eye only. Expect no struggle. 8 s. This is also the mirroring check.
+18. Sit back. Lean back in the chair and keep reading. Expect no struggle. 8 s.
+19. Right eye only. Expect no struggle. 8 s. This is also the mirroring check.
+20. Turn the head left, then right. Expect no struggle. 8 s.
+21. Lean and squint. Expect a struggle. 10 s.
+22. If `--free` was set, that many minutes of normal use. Expect no struggle.
 
 ## Score the recordings
 
@@ -113,7 +158,7 @@ A struggle is counted in the segment that contains its timestamp.
 - **Stray signal.** A squint or lean signal during a segment that expected none. Reported per kind (`squint`, `lean`) and tier (`strong`, `weak`).
 - **Signal miss.** An expected kind that never produced that signal. A strong miss is an expected kind with no strong signal. A weak miss is an expected kind with neither a strong nor a weak signal.
 - **Latency.** Seconds from the start of the segment to the first matching signal or struggle. The run table shows the mean.
-- **Natural reading.** The tiny-text segment. It is listed on its own. A struggle there is not a false positive and a quiet face there is not a miss. Use it to see what unprompted small text looks like.
+- **Natural reading.** The two tiny-text parts (8 s and 20 s). They are listed on their own. A struggle there is not a false positive and a quiet face there is not a miss. Use them to see what unprompted small text looks like.
 - **Rests and calibration.** Not scored. If calibration cannot build a baseline, that file is reported as a baseline failure and is not treated as a perfect zero.
 - **Held-out counts.** From tune. These are the honest false positives and misses on people the search did not fit. The snippet by itself is the fit on the whole set.
 - **Margin.** How far the nearest tuned knob can move toward more sensitivity before a new struggle false positive appears.
