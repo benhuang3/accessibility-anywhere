@@ -166,6 +166,14 @@ to know or do. Agents: read the newest entries before starting work.
 - Still to do tonight: tab switching ("go to the other tab"), "show me where to click", form helper, "keep
   reading". Reload the extension and open tabs after pulling.
 
+### Oct 25, 02:56 PT — Ben H (via Claude Code) — `main`, demo and pitch plan
+
+**Changed:** new `docs/DEMO_PLAN.md` (docs only, no code). The 3-minute script, roles, fallbacks, Q&A
+prep and gaps to close before judging.
+**For everyone:** the track list needs fixing on Devpost. Presage, MLH Gen AI and .Tech domain prizes
+don't exist at this event; the Anthropic track is "Claude for Public Benefit". Owners for the pre-judging
+gaps are in section 7.
+
 ### Oct 25, 01:45 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `dece59e`
 
 **Pushed to `benh/os-layer` (not yet on `main`).** "Bigger" now makes a clear difference (Ben H: at least 30%).
