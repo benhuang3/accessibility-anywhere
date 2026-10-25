@@ -214,6 +214,17 @@ def report(paths, out=None):
         writer.writeheader()
         writer.writerows(rows)
     print(f'\nCSV: {output}')
+    print('\nPer-frame metrics: error median/p90 px; jitter median/p90 px; settle median/p90 ms')
+    frame_headers = ['session', 'features', 'phase', 'raw', 'OneEuro', 'smoother']
+    print('| ' + ' | '.join(frame_headers) + ' |\n|' + '|'.join(['---'] * len(frame_headers)) + '|')
+    for row in rows:
+        def frame_cell(method):
+            values = [row.get(f'{method}_error_median_px'), row.get(f'{method}_error_p90_px'),
+                      row.get(f'{method}_jitter_median_px'), row.get(f'{method}_jitter_p90_px'),
+                      row.get(f'{method}_settle_median_ms'), row.get(f'{method}_settle_p90_ms')]
+            return ' / '.join('' if value is None else f'{value:.1f}' for value in values)
+        print('| ' + ' | '.join((Path(row['file']).name, row['features'], row['phase'],
+                                 frame_cell('raw'), frame_cell('one_euro'), frame_cell('smoother'))) + ' |')
     phases = [('validation', 'validation', ''), ('drift', 'drift', ''),
               ('drift', 'drift after retune', 'retuned_')]
     for fs in ('v1', 'v2', 'v3', 'v4'):
