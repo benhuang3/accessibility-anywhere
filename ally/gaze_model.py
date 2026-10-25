@@ -16,8 +16,40 @@ RIGHT_EYE = {'outer': 33, 'inner': 133, 'top': 159, 'bottom': 145, 'iris': 468}
 LEFT_EYE = {'outer': 263, 'inner': 362, 'top': 386, 'bottom': 374, 'iris': 473}
 FEATURES = ['h', 'v', 'look_h', 'look_v', 'yaw', 'pitch', 'tx', 'ty', 'tz']
 FEATURES_V2 = ['right_h', 'right_v', 'left_h', 'left_v', 'left_lid', 'right_lid', 'up_left', 'down_left', 'up_right', 'down_right', 'yaw', 'pitch', 'roll', 'tx', 'ty', 'tz']
+FEATURES_V3 = ['gaze_x', 'gaze_y', 'eye_h', 'eye_v', 'yaw', 'pitch', 'roll', 'tx', 'ty', 'tz']
 MODEL_VERSION = 1
 DEFAULT_FEATURE_SET = 'v1'
+
+def ray_screen_point(origin, direction, screen_mm=(344.0, 193.0), screen_px=(1920, 1080),
+                     plane_z=-1.0):
+    """Intersect a camera-coordinate gaze ray with the screen plane below the camera."""
+    origin, direction = np.asarray(origin, float), np.asarray(direction, float)
+    if abs(direction[2]) < 1e-9:
+        raise ValueError('gaze ray is parallel to screen plane')
+    scale = (plane_z - origin[2]) / direction[2]
+    hit = origin + scale * direction
+    width, height = screen_mm
+    px_w, px_h = screen_px
+    return np.array([(hit[0] / width + .5) * px_w, hit[1] / height * px_h])
+
+def _v3(pts, matrix, rh, rv, lh, lv, width, height, screen_mm):
+    """Project averaged eye rays from the transformed eye centres onto the screen."""
+    if matrix is None:
+        return [0.5 + (lh - rh) / 2, 0.5 + (rv + lv) / 2,
+                (rh + lh) / 2, (rv + lv) / 2, 0, 0, 0, 0, 0, 0]
+    m = np.asarray(matrix, dtype=float).reshape(4, 4)
+    rot, trans = m[:3, :3], m[:3, 3]
+    # Iris displacement as a fraction of eye width approximates the eye's local angle.
+    rays = []
+    for side, h, v in ((-1, rh, rv), (1, lh, lv)):
+        eye = trans + rot @ np.array([side * 3.2, 0.0, 0.0])
+        local = np.array([h * 2.5, v * 2.5, -1.0])
+        rays.append(ray_screen_point(eye, rot @ local, screen_mm, (1, 1)))
+    gaze = np.mean(rays, axis=0).tolist()
+    fwd = rot @ np.array([0.0, 0.0, 1.0])
+    yaw, pitch = math.atan2(fwd[0], fwd[2]), math.atan2(fwd[1], fwd[2])
+    roll = math.atan2(rot[1, 0], rot[0, 0])
+    return gaze + [(rh + lh) / 2, (rv + lv) / 2, yaw, pitch, roll, *trans.tolist()]
 
 def _eye(pts: np.ndarray, idx: dict) -> tuple[float, float, float]:
     """Return iris offsets across/up the eye and its openness, all in eye widths."""
@@ -31,7 +63,7 @@ def _eye(pts: np.ndarray, idx: dict) -> tuple[float, float, float]:
     rel = pts[idx['iris'], :2] - (inner + outer) / 2
     return (float(rel @ ux) / width, float(rel @ uy) / width, float(np.hypot(*pts[idx['top'], :2] - pts[idx['bottom'], :2])) / width)
 
-def _frame_parts(landmarks, blendshapes, matrix, width, height):
+def _frame_parts(landmarks, blendshapes, matrix, width, height, screen_mm=(344.0, 193.0)):
     """Extract both feature versions, openness, and the six head-pose values."""
     pts = np.asarray(landmarks, dtype=float)
     if pts.shape[0] < 478:
@@ -57,21 +89,27 @@ def _frame_parts(landmarks, blendshapes, matrix, width, height):
     openness = min(lo, ro) * (1 - blink)
     v1 = [(lh - rh) / 2, (lv + rv) / 2, (b.get('eyeLookInLeft', 0) + b.get('eyeLookOutRight', 0) - b.get('eyeLookOutLeft', 0) - b.get('eyeLookInRight', 0)) / 2, (b.get('eyeLookUpLeft', 0) + b.get('eyeLookUpRight', 0) - b.get('eyeLookDownLeft', 0) - b.get('eyeLookDownRight', 0)) / 2, yaw, pitch, tx, ty, tz]
     v2 = [rh, rv, lh, lv, lo, ro, b.get('eyeLookUpLeft', 0), b.get('eyeLookDownLeft', 0), b.get('eyeLookUpRight', 0), b.get('eyeLookDownRight', 0), yaw, pitch, roll, tx, ty, tz]
-    return (v1, v2, openness, (yaw, pitch, roll, tx, ty, tz))
+    v3 = _v3(pts, matrix, rh, rv, lh, lv, width, height, screen_mm)
+    return (v1, v2, v3, openness, (yaw, pitch, roll, tx, ty, tz))
 
 def features(landmarks, blendshapes: dict | None, matrix, width: int, height: int) -> tuple[list[float], float] | None:
     """Return the v1 feature vector and eye openness for one normalized landmark frame."""
     p = _frame_parts(landmarks, blendshapes, matrix, width, height)
-    return None if p is None else (p[0], p[2])
+    return None if p is None else (p[0], p[3])
 
 def features_for_model(model, landmarks, blendshapes, matrix, width, height):
     """Return the selected model's feature vector and eye openness, or None for bad landmarks."""
-    p = _frame_parts(landmarks, blendshapes, matrix, width, height)
-    return None if p is None else (p[1] if model.get('features', 'v1') == 'v2' else p[0], p[2])
+    p = _frame_parts(landmarks, blendshapes, matrix, width, height, model.get('screen_mm', (344.0, 193.0)))
+    if p is None:
+        return None
+    fs = model.get('features', 'v1')
+    return (p[2] if fs == 'v3' else p[1] if fs == 'v2' else p[0], p[3])
 
 def expand(f, feature_set='v1'):
     """Expand raw features with the polynomial and interaction terms used by regression."""
     f = np.atleast_2d(np.asarray(f, dtype=float))
+    if feature_set == 'v3':
+        return f
     if feature_set == 'v1':
         h, v, lh, lv = f[:, :4].T
         return np.column_stack([f, h * h, v * v, h * v, lh * lh, lv * lv, lh * lv])
@@ -91,8 +129,8 @@ def _ridge(x: np.ndarray, y: np.ndarray, lam: float, weights=None) -> np.ndarray
 def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET, openness_cutoff=None,
         sample_weights=None):
     """Fit a model from (feature vector, target point) samples across at least six dots."""
-    if feature_set not in ('v1', 'v2'):
-        raise ValueError('feature_set must be v1 or v2')
+    if feature_set not in ('v1', 'v2', 'v3'):
+        raise ValueError('feature_set must be v1, v2 or v3')
     targets = sorted({tuple(t) for _f, t in samples})
     if len(targets) < 6:
         raise ValueError(f'saw your eyes at only {len(targets)} of the dots')
@@ -115,11 +153,11 @@ def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET, openness_cutoff=None,
         return float(np.median(es))
     lam, e = min(((l, err(l)) for l in (0.1, 1.0, 10.0, 100.0)), key=lambda z: z[1])
     coef = _ridge(x, y, lam, weights)
-    pose_start = 10 if feature_set == 'v2' else 4
-    pose_size = 6 if feature_set == 'v2' else 5
+    pose_start = 4 if feature_set == 'v3' else 10 if feature_set == 'v2' else 4
+    pose_size = 6 if feature_set in ('v2', 'v3') else 5
     poses = np.asarray([f[pose_start:pose_start + pose_size] for f, _ in samples], dtype=float)
     calibration_pose = np.median(poses, axis=0).tolist()
-    return {'version': MODEL_VERSION, 'features': feature_set, 'screen': list(screen), 'mean': mean.tolist(), 'std': std.tolist(), 'coef': coef.tolist(), 'offset': [0.0, 0.0], 'lambda': lam, 'error_px': round(e), 'dots': len(targets), 'training_samples': [[list(f), list(t)] for f, t in samples], 'calibration_pose': calibration_pose, 'openness_cutoff': openness_cutoff, 'created': time.time()}
+    return {'version': MODEL_VERSION, 'features': feature_set, 'screen': list(screen), 'screen_mm': [344.0, 193.0], 'mean': mean.tolist(), 'std': std.tolist(), 'coef': coef.tolist(), 'offset': [0.0, 0.0], 'lambda': lam, 'error_px': round(e), 'dots': len(targets), 'training_samples': [[list(f), list(t)] for f, t in samples], 'calibration_pose': calibration_pose, 'openness_cutoff': openness_cutoff, 'created': time.time()}
 
 def retune(model, samples):
     """Return a copy translated by the median target-minus-prediction residual."""
@@ -184,7 +222,7 @@ def is_blink(model, openness):
 def target_head_moved(frames, calibration_pose, feature_set=DEFAULT_FEATURE_SET,
                      threshold_degrees=3.0):
     """Flag a target if yaw/pitch shifts from session pose or varies during the target."""
-    pose_start = 10 if feature_set == 'v2' else 4
+    pose_start = 4 if feature_set == 'v3' else 10 if feature_set == 'v2' else 4
     poses = np.asarray([np.asarray(frame, dtype=float)[pose_start:pose_start + 2]
                         for frame in frames], dtype=float)
     typical = np.asarray(calibration_pose, dtype=float)[:2]
@@ -301,13 +339,14 @@ def radius_px(model, features=None):
     if features is None:
         return base
     f = np.asarray(features, float)
-    ix = 10 if model.get('features') == 'v2' else 4
+    fs = model.get('features')
+    ix = 4 if fs == 'v3' else 10 if fs == 'v2' else 4
     calibration = np.asarray(model.get('calibration_pose', []), dtype=float)
-    pose_size = 6 if model.get('features') == 'v2' else 5
+    pose_size = 6 if fs in ('v2', 'v3') else 5
     if len(f) < ix + pose_size or calibration.shape != (pose_size,):
         return base
     # v1's pose is yaw, pitch, tx, ty, tz (no roll); v2's is yaw, pitch, roll, tx, ty, tz.
-    angles = 3 if model.get('features') == 'v2' else 2
+    angles = 3 if fs in ('v2', 'v3') else 2
     rotation_delta = float(np.linalg.norm(f[ix:ix + angles] - calibration[:angles]))
     rotation_delta = math.degrees(rotation_delta)
     distance = max(abs(float(calibration[-1])), 1e-06)

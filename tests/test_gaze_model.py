@@ -21,6 +21,45 @@ class GazeModelTests(unittest.TestCase):
             a[ids['iris'], :2] = [0.5 + h * 0.2, 0.5 + v * 0.2]
         return a
 
+    def test_v3_ray_intersects_known_screen_point(self):
+        hit = gm.ray_screen_point((0, 0, 40), (0.1, 0.05, -1), (344, 193), (1920, 1080), -1)
+        self.assertAlmostEqual(hit[0], 982.8837, delta=0.1)
+        self.assertAlmostEqual(hit[1], 11.4715, delta=0.1)
+
+    def test_v3_geometric_gaze_is_stable_across_head_pose(self):
+        target = np.array([0.08, 0.09])
+        vectors = []
+        v1 = []
+        for yaw, tx, tz in ((0, 0, 40), (math.radians(12), 4, 45)):
+            c, s = math.cos(yaw), math.sin(yaw)
+            rot = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+            trans = np.array([tx, 0, tz])
+            lm = self.landmarks()
+            for side, ids in ((-1, gm.RIGHT_EYE), (1, gm.LEFT_EYE)):
+                eye = trans + rot @ np.array([side * 3.2, 0, 0])
+                desired = np.array([(target[0] - .5) * 344, target[1] * 193, -1]) - eye
+                local = rot.T @ desired
+                h, v = local[0] / -local[2] / 2.5, local[1] / -local[2] / 2.5
+                lm[ids['iris'], 0] = .5 + h * .2
+                lm[ids['iris'], 1] = .5 + v * .2
+            mat = np.eye(4)
+            mat[:3, :3], mat[:3, 3] = rot, trans
+            v3 = gm.features_for_model({'features': 'v3'}, lm, {}, mat, 640, 480)[0]
+            v1.append(gm.features(lm, {}, mat, 640, 480)[0])
+            vectors.append(v3[:2])
+        self.assertLess(np.linalg.norm(np.asarray(vectors[0]) - vectors[1]), .02)
+        self.assertGreater(np.linalg.norm(np.asarray(v1[0][:2]) - v1[1][:2]), .02)
+
+    def test_v3_fit_recovers_known_screen_mapping(self):
+        samples = []
+        for x, y in ((100, 100), (960, 100), (1820, 100), (100, 540), (960, 540),
+                      (1820, 540), (100, 980), (960, 980), (1820, 980)):
+            f = [x / 1920, y / 1080, 0, 0, 0, 0, 0, 0, 40, 0]
+            samples.append((f, (x, y)))
+        model = gm.fit(samples, (1920, 1080), 'v3')
+        for f, target in samples:
+            self.assertLess(np.linalg.norm(np.asarray(gm.predict(model, f)) - target), 50)
+
     def test_per_eye_feature_directions(self):
         zero = gm.features_for_model({'features': 'v2'}, self.landmarks(), {}, None, 640, 480)[0]
         moved = gm.features_for_model({'features': 'v2'}, self.landmarks(0.1, 0.1, 0.1, 0.1), {'eyeLookUpLeft': 0.7, 'eyeLookUpRight': 0.6}, None, 640, 480)[0]
@@ -245,7 +284,7 @@ class GazeModelTests(unittest.TestCase):
             p.write_text('\n'.join((json.dumps(r) for r in records)), encoding='utf-8')
             rows = gaze_eval.evaluate(p)
             validation = [row for row in rows if row['phase'] == 'validation']
-            self.assertEqual({row['features'] for row in validation}, {'v1', 'v2'})
+            self.assertEqual({row['features'] for row in validation}, {'v1', 'v2', 'v3'})
             self.assertTrue(all(row['error_px'] < 50 for row in validation), validation)
             gaze_eval.report([p], Path(td) / 'gaze_eval.csv')
             self.assertTrue((Path(td) / 'gaze_eval.csv').is_file())
