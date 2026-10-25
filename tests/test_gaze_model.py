@@ -65,6 +65,18 @@ class GazeModelTests(unittest.TestCase):
         shifted[6] = 1.0
         self.assertLess(gm.radius_px(pose_model, shifted), 1.2 * base_radius)
 
+    def test_retune_applies_median_translation_without_refitting(self):
+        samples = [([x / 1920, y / 1080, 0, 0, 0, 0, 0, 0, 1], (x, y))
+                   for x, y in [(100, 100), (960, 100), (1820, 100), (100, 540), (960, 540), (1820, 540), (100, 980), (960, 980), (1820, 980)]]
+        model = gm.fit(samples, (1920, 1080))
+        shifted = [(f, (gm.predict(model, f)[0] + 600, gm.predict(model, f)[1] - 350)) for f, _ in samples[:5]]
+        tuned = gm.retune(model, shifted)
+        self.assertEqual(tuned['coef'], model['coef'])
+        self.assertAlmostEqual(tuned['offset'][0], 600, delta=1)
+        self.assertAlmostEqual(tuned['offset'][1], -350, delta=1)
+        self.assertAlmostEqual(gm.predict(tuned, samples[0][0])[0] - gm.predict(model, samples[0][0])[0], 600, delta=1)
+        self.assertEqual(model.get('offset'), [0.0, 0.0])
+
     def test_fixation(self):
         pts = [(i * 0.05, 100 + i % 2, 100) for i in range(8)] + [(0.4, 500, 500)] + [(0.45 + i * 0.05, 300, 300) for i in range(14)]
         f = gm.fixation(pts, 0, 1.2, 5)

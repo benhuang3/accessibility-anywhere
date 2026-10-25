@@ -112,13 +112,23 @@ def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET):
     pose_size = 6 if feature_set == 'v2' else 5
     poses = np.asarray([f[pose_start:pose_start + pose_size] for f, _ in samples], dtype=float)
     calibration_pose = np.median(poses, axis=0).tolist()
-    return {'version': MODEL_VERSION, 'features': feature_set, 'screen': list(screen), 'mean': mean.tolist(), 'std': std.tolist(), 'coef': coef.tolist(), 'lambda': lam, 'error_px': round(e), 'dots': len(targets), 'training_samples': [[list(f), list(t)] for f, t in samples], 'calibration_pose': calibration_pose, 'created': time.time()}
+    return {'version': MODEL_VERSION, 'features': feature_set, 'screen': list(screen), 'mean': mean.tolist(), 'std': std.tolist(), 'coef': coef.tolist(), 'offset': [0.0, 0.0], 'lambda': lam, 'error_px': round(e), 'dots': len(targets), 'training_samples': [[list(f), list(t)] for f, t in samples], 'calibration_pose': calibration_pose, 'created': time.time()}
+
+def retune(model, samples):
+    """Return a copy translated by the median target-minus-prediction residual."""
+    residuals = [np.asarray(target, float) - np.asarray(predict(model, f), float) for f, target in samples]
+    if len(residuals) < 3:
+        raise ValueError('retuning needs at least three targets')
+    tuned = dict(model)
+    tuned['offset'] = np.median(np.asarray(residuals), axis=0).tolist()
+    return tuned
 
 def predict(model: dict, f) -> tuple[float, float]:
     """Predict the screen pixel position for one feature vector."""
     raw = expand(f, model.get('features', 'v1'))
     x = np.column_stack([np.ones(len(raw)), (raw - np.array(model['mean'])) / np.array(model['std'])])
     p = (x @ np.array(model['coef']))[0]
+    p += np.asarray(model.get('offset', [0.0, 0.0]), dtype=float)
     return (float(p[0]), float(p[1]))
 
 def clean_samples(samples, min_openness=0.12, jump_threshold=0.08, preserve_openness=False):
