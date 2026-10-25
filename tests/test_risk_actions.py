@@ -1,5 +1,6 @@
 from helpers import ROOT  # noqa: F401
 
+import queue
 import threading
 import unittest
 from types import SimpleNamespace
@@ -65,6 +66,24 @@ class ActionTests(unittest.TestCase):
             run.assert_called_once_with(["taskkill", "/IM", "AnyDesk.exe", "/F"],
                                          capture_output=True, timeout=10)
 
+    def test_kill_reports_access_denied_and_keeps_boolean_result(self):
+        for stream in ("stdout", "stderr"):
+            for output in (b"ERROR: Access is denied.", "ERROR: Access is denied."):
+                reply = SimpleNamespace(returncode=1, **{stream: output})
+                with self.subTest(stream=stream, output=output), patch("sys.platform", "win32"), \
+                        patch.object(actions.subprocess, "run", return_value=reply):
+                    self.assertEqual(actions._kill_result("QuickAssist.exe"), actions.KillResult(False, True))
+                    self.assertIs(actions._kill("QuickAssist.exe"), False)
+
+    def test_kill_distinguishes_other_results(self):
+        for code, output, expected in ((0, b"SUCCESS", actions.KillResult(True)),
+                                       (1, b"Process not found", actions.KillResult(False)),
+                                       (2, b"Access is denied", actions.KillResult(False))):
+            with self.subTest(code=code), patch("sys.platform", "win32"), \
+                    patch.object(actions.subprocess, "run", return_value=SimpleNamespace(
+                        returncode=code, stdout=output, stderr=b"")):
+                self.assertEqual(actions._kill_result("QuickAssist.exe"), expected)
+
     def test_perform(self):
         risk = Risk("scam_popup", url="https://help.example")
         call = Mock(return_value={"closed": 1})
@@ -120,7 +139,8 @@ class WarningActionTests(unittest.TestCase):
                                             snapshot=wire.snapshot_fn, kill=wire.kill, tab_id=None)
         offer = ask.call_args.args[0]
         self.assertEqual((offer.context, offer.timeout, offer.options), ("risk", 20.0, ("yes", "no")))
-        self.assertEqual(self.results, [{"action": "close_page", "ok": True, "kind": "scam_popup"}])
+        self.assertEqual(self.results, [{"action": "close_page", "ok": True,
+                                         "kind": "scam_popup", "fallback": "none"}])
 
     def test_declines(self):
         for choice in ("no", "timeout", "dismissed"):
@@ -200,11 +220,117 @@ class WarningActionTests(unittest.TestCase):
     def test_attach_collaborators(self):
         agent = SimpleNamespace(bus=self.bus, proactive=SimpleNamespace(ask=Mock()),
                                 bridge=SimpleNamespace(call=Mock(), broadcast=Mock()))
+        agent.proactive.ui = SimpleNamespace(show_card=Mock())
+        agent.proactive.voice = SimpleNamespace(say=Mock())
         with patch.object(RiskWire, "start"):
             wire = attach(agent)
         self.assertIs(wire.ask, agent.proactive.ask)
         self.assertIs(wire.call, agent.bridge.call)
         self.assertIs(wire.broadcast, agent.bridge.broadcast)
+        wire.notify("Closed the page.")
+        agent.proactive.ui.show_card.assert_called_once_with("Closed the page.", actions=("OK",), kind="risk")
+        wire.say("hi")
+        agent.proactive.voice.say.assert_called_with("hi")
+
+
+class CloseFallbackTests(unittest.TestCase):
+    def setUp(self):
+        self.bus = EventBus()
+        self.decisions = queue.Queue()
+        self.results = []
+        self.bus.subscribe("risk_decision", self.decisions.put)
+        self.bus.subscribe("risk_action", self.results.append)
+        self.notify, self.say = Mock(), Mock()
+        self.call = Mock(return_value={"closed": 1})
+        self.snapshot = [{"name": "QuickAssist.exe"}, {"name": "chrome.exe"}]
+        self.wire = RiskWire(self.bus, ask=lambda offer: "yes", call=self.call,
+                             snapshot_fn=lambda: self.snapshot, kill=lambda name: False,
+                             notify=self.notify, say=self.say)
+        self.addCleanup(self.wire.stop)
+        self.bus.subscribe("risk", lambda risk: self.wire.on_risk_warning(
+            {"risk": risk.to_dict(), "text": "Be careful."}))
+
+    def warn(self, risk=None):
+        if risk is None:
+            self.wire._snapshot = self.snapshot
+            self.wire.on_page({"url": "https://chase.com/bank", "tab_id": 42})
+        else:
+            self.wire.on_risk_warning({"risk": risk.to_dict(), "text": "Be careful."})
+        return self.decisions.get(timeout=2)
+
+    def test_access_denied_closes_remembered_bank_tab_and_notifies(self):
+        self.wire.kill = actions._kill
+        with patch("sys.platform", "win32"), patch.object(actions.subprocess, "run", return_value=SimpleNamespace(
+                returncode=1, stdout=b"", stderr=b"Access is denied")), \
+                patch.object(actions, "close_page", wraps=actions.close_page) as close_page:
+            self.warn()
+        close_page.assert_called_once_with(self.call, "https://chase.com/bank", 42)
+        self.call.assert_called_once_with("closeTab", {"url": "https://chase.com/bank", "tabId": 42})
+        message = "I closed the bank page. I can't close Quick Assist myself. Please click the X on its window."
+        self.notify.assert_called_once_with(message)
+        self.say.assert_called_once_with(message)
+        self.assertEqual(self.results, [{"action": "close_tool", "ok": False,
+                                         "kind": "remote_access", "fallback": "closed_page"}])
+
+    def test_no_page_explains_manual_close(self):
+        self.warn(Risk("remote_access", app="Quick Assist", source="risk.process"))
+        message = "I can't close Quick Assist myself. Please click the X on its window, then hang up the phone."
+        self.notify.assert_called_once_with(message)
+        self.say.assert_called_once_with(message)
+        self.call.assert_not_called()
+        self.assertEqual(self.results[0]["fallback"], "none")
+        self.assertFalse(self.results[0]["ok"])
+
+    def test_failed_page_close_does_not_claim_it_closed(self):
+        self.call.return_value = {"closed": 0}
+        self.warn()
+        self.assertIn("then hang up the phone", self.notify.call_args.args[0])
+        self.assertEqual(self.results[0]["fallback"], "none")
+        self.assertFalse(self.results[0]["ok"])
+
+    def test_successful_tool_close_confirms_without_closing_page(self):
+        self.wire.kill = Mock(return_value=True)
+        self.warn()
+        self.wire.kill.assert_called_once_with("QuickAssist.exe")
+        self.notify.assert_called_once_with("Closed Quick Assist.")
+        self.say.assert_called_once_with("Closed Quick Assist.")
+        self.call.assert_not_called()
+        self.assertTrue(self.results[0]["ok"])
+        self.assertEqual(self.results[0]["fallback"], "none")
+
+    def test_successful_page_close_confirms(self):
+        self.warn(Risk("scam_popup", url="https://help.example"))
+        self.notify.assert_called_once_with("Closed the page.")
+        self.say.assert_called_once_with("Closed the page.")
+        self.assertTrue(self.results[0]["ok"])
+
+    def test_confirm_close_uses_the_same_fallback(self):
+        self.wire.ask = Mock(side_effect=("no", "yes"))
+        self.warn()
+        self.assertEqual(self.wire.ask.call_count, 2)
+        self.assertEqual(self.wire.ask.call_args.args[0].options, ("Close it", "Keep it open"))
+        self.assertIn("I closed the bank page.", self.notify.call_args.args[0])
+        self.assertEqual(self.results[0]["fallback"], "closed_page")
+
+    def test_notify_failure_preserves_result_speech_and_yes_decision(self):
+        self.notify.side_effect = RuntimeError("no display")
+        self.wire.say = Mock(side_effect=RuntimeError("no voice"))
+        decision = self.warn()
+        self.assertEqual(decision["answer"], "yes")
+        self.assertEqual(self.results[0]["fallback"], "closed_page")
+        self.wire.say.assert_called_once_with(self.notify.call_args.args[0])
+
+    def test_missing_process_still_protects_the_page(self):
+        self.wire.snapshot_fn = lambda: []
+        self.warn()
+        self.assertEqual(self.results[0]["fallback"], "closed_page")
+        self.assertFalse(self.results[0]["ok"])
+
+    def test_guardian_reviewed_joined_risk_still_protects_the_page(self):
+        self.warn(Risk("remote_access", "high", url="https://chase.com/bank",
+                       app="Quick Assist", source="risk.guardian"))
+        self.call.assert_called_once_with("closeTab", {"url": "https://chase.com/bank", "tabId": None})
+        self.assertEqual(self.results[0]["fallback"], "closed_page")
 
 
 class JoinedMultiToolTests(unittest.TestCase):

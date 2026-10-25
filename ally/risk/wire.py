@@ -7,7 +7,7 @@ import time
 
 from ally.contracts import EventBus, Offer, Risk
 from . import actions, behavior, contact, domains, fields, joined, process, soft, text
-from .copy import render
+from .copy import load_copy, render
 from .guardian import Evidence
 
 log = logging.getLogger("ally")
@@ -125,7 +125,7 @@ class RiskWire:
     def __init__(self, bus: EventBus, snapshot_fn=process.snapshot_processes,
                  poll_seconds=10.0, clock=time.time, deduper=None, ask=None, call=None,
                  broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None,
-                 overlay_active=None, review_timeout_s=10.0, contact=None):
+                 overlay_active=None, review_timeout_s=10.0, contact=None, notify=None, say=None):
         self.contact = contact  # (name, send(text) -> bool) for "Tell <name>" on high warnings, or None
         self.auto_alert = bool(contact and len(contact) > 3 and contact[3])
         self._last_auto_alert = None
@@ -141,6 +141,8 @@ class RiskWire:
         self.call = call
         self.broadcast = broadcast
         self.kill = kill
+        self.notify = notify or (lambda message: None)
+        self.say = say or (lambda message: None)
         self._inflight = set()
         self._generation = 0
         self._unsubscribe = None
@@ -217,11 +219,11 @@ class RiskWire:
                 with self._lock:
                     current = generation == self._generation and not self._stop.is_set()
                 if answer == "yes" and current:
-                    ok = actions.perform(action_id, risk, self.call,
-                                         snapshot=self.snapshot_fn, kill=self.kill, tab_id=tab_id)
+                    ok, fallback = self._perform_action(action_id, risk, tab_id)
                     self.bus.publish("risk_action", {"action": action_id, "ok": ok,
-                                                     "kind": risk.kind})
-                    snooze_seconds = 0
+                                                     "kind": risk.kind, "fallback": fallback})
+                    # Page reports can repeat while the tool remains open; avoid another prompt straight away.
+                    snooze_seconds = HOLD_SECONDS if action_id == "close_tool" and not ok else 0
             except Exception:
                 answer, snooze_seconds = "timeout", TIMEOUT_SNOOZE_SECONDS
                 log.debug("risk offer failed", exc_info=True)
@@ -244,6 +246,33 @@ class RiskWire:
             with self._lock:
                 self._inflight.discard(key)
                 self.deduper.snooze(key, TIMEOUT_SNOOZE_SECONDS)
+
+    def _perform_action(self, action_id, risk, tab_id) -> tuple[bool, str]:
+        ok = actions.perform(action_id, risk, self.call,
+                             snapshot=self.snapshot_fn, kill=self.kill, tab_id=tab_id)
+        fallback, message_key = "none", None
+        if ok:
+            message_key = "closed_tool" if action_id == "close_tool" else "closed_page"
+        elif action_id == "close_tool":
+            # Guardian review changes the source of a joined warning but retains its payment-page URL.
+            if (risk.source in ("risk.joined", "risk.guardian")
+                    and (risk.url or tab_id is not None)
+                    and actions.close_page(self.call, risk.url, tab_id)):
+                fallback = "closed_page"
+            message_key = "tool_close_failed_page" if fallback == "closed_page" else "tool_close_failed"
+        if message_key:
+            try:
+                tool = " ".join(text.redact(risk.app or "the remote-control tool").split())[:80]
+                message = load_copy()["confirm_close"][message_key].format(tool=tool)
+            except Exception:
+                log.debug("risk result wording failed", exc_info=True)
+            else:
+                for callback in (self.notify, self.say):
+                    try:
+                        callback(message)
+                    except Exception:
+                        log.debug("risk result message failed", exc_info=True)
+        return ok, fallback
 
     def _call_url(self) -> str:
         url = self.contact[2] if self.contact and len(self.contact) > 2 else ""
@@ -565,6 +594,18 @@ def _make_contact(agent):
 def attach(agent) -> RiskWire:
     bridge = getattr(agent, "bridge", None)
     proactive = getattr(agent, "proactive", None)
+    def notify(message):
+        # Looked up on each use: the overlay can replace NullUI after the wire attaches.
+        ui = getattr(getattr(agent, "proactive", None), "ui", None)
+        if ui is not None:
+            # An existing risk card rejects info cards, including after an API answer.
+            ui.show_card(message, actions=("OK",), kind="risk")
+
+    def say(message):
+        voice = getattr(getattr(agent, "proactive", None), "voice", None)
+        if voice is not None and hasattr(voice, "say"):
+            voice.say(message)
+
     guardian, screen_size = None, None
     try:
         guardian, screen_size = _make_guardian(agent)
@@ -575,7 +616,7 @@ def attach(agent) -> RiskWire:
                     broadcast=getattr(bridge, "broadcast", None),
                     guardian=guardian, screen_size=screen_size,
                     overlay_active=lambda: getattr(agent, "overlay", None) is not None,
-                    contact=_make_contact(agent))
+                    contact=_make_contact(agent), notify=notify, say=say)
     if hasattr(bridge, "on_page"):
         bridge.on_page = wire.on_page
     wire.start()

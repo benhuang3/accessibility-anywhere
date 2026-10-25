@@ -14,6 +14,11 @@
 title = "Are you sure?"
 body = "Scammers often say it's safe to continue."
 spoken = "Let's pause. Scammers often say it's safe to continue."
+# Action results use the same wording on screen and aloud.
+closed_tool = "Closed {tool}."
+closed_page = "Closed the page."
+tool_close_failed_page = "I closed the bank page. I can't close {tool} myself. Please click the X on its window."
+tool_close_failed = "I can't close {tool} myself. Please click the X on its window, then hang up the phone."
 [[confirm_close.actions]]
 id = "close_page"
 label = "Close it"

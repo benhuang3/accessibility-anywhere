@@ -1,14 +1,15 @@
 import queue
 import threading
 import unittest
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from helpers import ROOT  # noqa: F401
 
 from ally.contracts import EventBus, Risk
 from ally.overlay.layout import button_labels
 from ally.overlay.overlay import Overlay
-from ally.risk.wire import Deduper, PAUSE_SECONDS, RiskWire
+from ally.risk.wire import Deduper, PAUSE_SECONDS, RiskWire, attach
 
 
 SCAM = {"url": "https://help.example/scam", "tab_id": 42,
@@ -204,6 +205,23 @@ class CooldownTests(unittest.TestCase):
         self.assertEqual(killed, ["AnyDesk.exe"])
         self.assertTrue(wire.deduper.fresh(risk))
 
+    def test_failed_tool_close_holds_repeated_page_warnings_for_two_minutes(self):
+        wire = self.make_wire(("yes", "yes"), kill=lambda name: False)
+        wire.snapshot_fn = lambda: [{"name": "QuickAssist.exe"}]
+        wire.poll_once()
+        page = {"url": "https://chase.com/bank", "tab_id": 42}
+        wire.on_page(page)
+        self.assertEqual(self.decisions.get(timeout=2), {
+            "key": ("chase.com", "remote_access"), "answer": "yes", "snooze_seconds": 120})
+        for self.now in (10, 60, 119):
+            wire.poll_once()
+            wire.on_page(page)
+        self.assertEqual(len(self.offers), 1)
+        self.now = 120
+        wire.on_page(page)
+        self.assertEqual(self.decisions.get(timeout=2)["answer"], "yes")
+        self.assertEqual(len(self.offers), 2)
+
     def test_deduper_snooze_uses_the_injected_clock_and_app_key(self):
         deduper = Deduper(clock=lambda: self.now)
         risk = Risk("remote_access", app="AnyDesk")
@@ -218,6 +236,17 @@ class CooldownTests(unittest.TestCase):
 
 
 class ConfirmationOverlayTests(unittest.TestCase):
+    def test_result_card_replaces_a_still_visible_risk_warning(self):
+        overlay = Overlay()
+        overlay.show_card("Warning. Be careful.", kind="risk")
+        agent = SimpleNamespace(bus=EventBus(), proactive=SimpleNamespace(ui=overlay))
+        with patch("ally.risk.wire._make_guardian", return_value=(None, None)), \
+                patch.object(RiskWire, "start"):
+            wire = attach(agent)
+        wire.notify("Closed the page.")
+        self.assertEqual(overlay._q.get_nowait()[1], "Warning. Be careful.")
+        self.assertEqual(overlay._q.get_nowait(), ("card", "Closed the page.", ("OK",), "risk"))
+
     def test_confirmation_replaces_answered_offer_and_renders_custom_labels(self):
         bus, offers, done = EventBus(), [], threading.Event()
         bus.subscribe("risk_decision", lambda msg: done.set())

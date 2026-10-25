@@ -63,7 +63,30 @@
     }
 
     function mediaButton(label) {
-      return Array.from(document.querySelectorAll(`[aria-label^="${label}"]`)).find(visible);
+      // Buttons inside the control bar we hid still count: they are only visibility-hidden, and click() works.
+      return Array.from(document.querySelectorAll(`[aria-label^="${label}"]`)).find((element) =>
+        visible(element) || (element.closest(".ally-hidden") && element.getClientRects().length > 0));
+    }
+
+    // Meet can join before its pre-join buttons render, so keep trying (once each) for the first minute, in or out of the call.
+    function mediaOn() {
+      if (Date.now() - started > 60000) return;
+      if (!cameraClicked) {
+        const camera = mediaButton("Turn on camera");
+        if (camera) {
+          cameraClicked = true;
+          camera.click();
+          mediaChangedAt = Date.now();
+        }
+      }
+      if (!microphoneClicked) {
+        const microphone = mediaButton("Turn on microphone");
+        if (microphone) {
+          microphoneClicked = true;
+          microphone.click();
+          mediaChangedAt = Date.now();
+        }
+      }
     }
 
     function scan() {
@@ -86,23 +109,8 @@
             }
           }
         }
+        mediaOn();
         if (!joinClicked && !leave) {
-          if (!cameraClicked) {
-            const camera = mediaButton("Turn on camera");
-            if (camera) {
-              cameraClicked = true;
-              camera.click();
-              mediaChangedAt = Date.now();
-            }
-          }
-          if (!microphoneClicked) {
-            const microphone = mediaButton("Turn on microphone");
-            if (microphone) {
-              microphoneClicked = true;
-              microphone.click();
-              mediaChangedAt = Date.now();
-            }
-          }
           const join = Array.from(document.querySelectorAll('button, [role="button"]')).find((element) =>
             visible(element) && ["Join now", "Ask to join", "Join"].includes(element.innerText.trim()));
           if (join) {

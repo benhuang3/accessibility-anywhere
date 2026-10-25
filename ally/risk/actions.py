@@ -1,5 +1,6 @@
 """Risk actions, with external effects supplied by the caller."""
 
+from dataclasses import dataclass
 import subprocess
 import sys
 
@@ -22,12 +23,25 @@ def close_page(call, url, tab_id=None) -> bool:
         return False
 
 
-def _kill(name) -> bool:
+@dataclass(frozen=True)
+class KillResult:
+    ok: bool
+    access_denied: bool = False
+
+
+def _kill_result(name) -> KillResult:
     if sys.platform != "win32":
-        return False
+        return KillResult(False)
     result = subprocess.run(["taskkill", "/IM", name, "/F"],
                             capture_output=True, timeout=10)
-    return result.returncode == 0
+    output = " ".join(str(getattr(result, stream, "") or "")
+                      for stream in ("stdout", "stderr")).lower()
+    return KillResult(result.returncode == 0,
+                      result.returncode == 1 and "access is denied" in output)
+
+
+def _kill(name) -> bool:
+    return _kill_result(name).ok
 
 
 def close_tool(tool_label, snapshot=process.snapshot_processes, kill=_kill) -> int:

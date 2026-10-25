@@ -174,6 +174,7 @@ No changes to `proactive.py` or `contracts.py`. The coordinator's `handle_risk` 
 
 - **Live-tested on one laptop only** (Windows 11, 200% scaling, Chrome). Not tested on other DPIs, multiple monitors, Edge, or macOS/Linux.
 - **Remote-tool closing** has never been run against a real AnyDesk or TeamViewer; process names are partly unverified (Quick Assist confirmed).
+- **Elevated remote tools can refuse closing** (Quick Assist returned access denied). If no matching process closes, Ally closes the known bank/card tab for a joined warning, reports whether that worked, and asks the person to close the tool with its X. Failed tool closes hold the warning key for two minutes to avoid repeated prompts from page reports; successful closes clear it immediately.
 - **False alarms on real sites** were measured on home pages only (500 sites): 3 remain (ubuntu.com, archive.ph, archive.is: a brand and
   a scare word on the same page, medium, which the second opinion can clear). Deeper pages (help centres, checkout, account pages) are
   not swept yet. The behavior recorder flagged none of the 500 sites.
