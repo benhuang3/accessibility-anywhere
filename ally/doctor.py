@@ -88,6 +88,66 @@ def describe_calibration(model, camera, features="v1", now=None) -> tuple[str, s
     return status, f"{lead}; {check}; features {feat}; {cam_bit}"
 
 
+def voice_checks(cfg: dict, online: bool = True) -> list[tuple[str, str, str]]:
+    """Cartesia voice, the fallback voice, and how spoken yes/no answers will be heard."""
+    out = []
+    sp, vo, cf = cfg["speech"], cfg["voice"], cfg.get("confirm", {})
+    key = bool(os.environ.get("CARTESIA_API_KEY", "").strip())
+    voice_id = sp.get("cartesia_voice_id", "")
+    wants = sp["engine"] in ("auto", "cartesia")
+    if sp["engine"] == "off":
+        out.append(("warn", "Voice", "speech.engine is off: Ally won't speak offers or warnings"))
+    elif wants and not key:
+        out.append(("warn" if sp["engine"] == "cartesia" else "ok", "Voice",
+                    "built-in voice (add CARTESIA_API_KEY to .env for the Cartesia voice)"))
+    elif wants and not voice_id:
+        out.append(("warn", "Voice", "Cartesia key set, but no voice: set [speech] cartesia_voice_id "
+                    "(python run.py voices lists them). Using the built-in voice."))
+    elif wants and online:
+        from .speech import CartesiaError, cartesia_tts, resolve_voice, wav_seconds
+
+        try:
+            vid = resolve_voice(voice_id)
+            err, used = "", ""
+            for m in (sp.get("cartesia_model", "sonic-3.6"), sp.get("cartesia_fallback_model", "sonic-3")):
+                try:
+                    audio = cartesia_tts("Ally is ready.", vid, m, speed=float(cf.get("speed", 0.9)),
+                                         emotion=sp.get("emotion", ""), timeout=10)
+                    used = f"{m}, {wav_seconds(audio):.1f} s of audio"
+                    break
+                except CartesiaError as e:
+                    err = str(e)
+                    if not e.bad_request:
+                        break
+            out.append(("ok", "Cartesia voice", f"works ({used})") if used else
+                       ("warn", "Cartesia voice", f"{err[:300]}; Ally will use the built-in voice"))
+        except CartesiaError as e:
+            out.append(("warn", "Cartesia voice", f"{str(e)[:300]}; Ally will use the built-in voice"))
+    elif wants:
+        out.append(("ok", "Cartesia voice", "key and voice set (not tested offline)"))
+    else:
+        out.append(("ok", "Voice", "built-in voice (speech.engine = system)"))
+
+    from .voice import has_whisper
+
+    stt = []
+    if vo.get("engine") != "off":
+        if key and vo.get("engine") in ("auto", "cartesia"):
+            stt.append("Cartesia Ink")
+        if has_whisper() and vo.get("engine") in ("auto", "whisper", "cartesia"):
+            stt.append("offline Whisper")
+    mic = importable("sounddevice")[0] and has("numpy")
+    if not cf.get("enabled", True):
+        out.append(("warn", "Spoken questions", "[confirm] enabled = false: offers use the buttons only"))
+    elif not stt or not mic:
+        missing = ("speech-to-text (CARTESIA_API_KEY or pip install faster-whisper)" if not stt else
+                   "a microphone recorder (pip install sounddevice numpy)")
+        out.append(("warn", "Spoken questions", f"no {missing}: Ally asks out loud, answers come from the buttons"))
+    else:
+        out.append(("ok", "Spoken questions", "answers heard with " + ", then ".join(stt)))
+    return out
+
+
 def run_checks(home=None, online: bool = True) -> list[tuple[str, str, str]]:
     paths = Paths(home)
     load_env_file(paths.env_file)
@@ -131,14 +191,7 @@ def run_checks(home=None, online: bool = True) -> list[tuple[str, str, str]]:
                 hint = " Fix: pip install certifi (or run 'Install Certificates.command' for python.org Python on Mac)."
             out.append(("fail" if e.status in (401, 403) else "warn", "Claude API", f"{e}{hint}"[:400]))
 
-    if cm.data["speech"]["engine"] == "cartesia" or cm.data["voice"]["engine"] in ("auto", "cartesia"):
-        ck = bool(os.environ.get("CARTESIA_API_KEY"))
-        if cm.data["speech"]["engine"] == "cartesia" and not ck:
-            out.append(("warn", "Cartesia", "speech.engine is cartesia but CARTESIA_API_KEY isn't set"))
-        elif cm.data["speech"]["engine"] == "cartesia" and not cm.data["speech"]["cartesia_voice_id"]:
-            out.append(("warn", "Cartesia", "set speech.cartesia_voice_id (from https://play.cartesia.ai)"))
-        elif ck:
-            out.append(("ok", "Cartesia", "key set"))
+    out.extend(voice_checks(cm.data, online))
 
     port = int(cm.data["agent"]["port"])
     h = health(port)

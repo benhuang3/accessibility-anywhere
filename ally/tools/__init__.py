@@ -7,4 +7,6 @@ BUILTIN_MODULES = [
     "ally.tools.senses_tools",
     "ally.tools.speech_tools",
     "ally.tools.system_tools",
+    "ally.tools.ui_text_tools",
+    "ally.tools.voice_tools",
 ]

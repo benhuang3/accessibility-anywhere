@@ -17,3 +17,6 @@ faster-whisper>=1.0
 # on first use. mediapipe brings its own OpenCV (opencv-contrib-python); if you already have
 # opencv-python, install mediapipe with --no-deps plus: absl-py flatbuffers protobuf matplotlib
 mediapipe>=0.10.20
+
+# Windows UI Automation: read and edit the text/bounds of elements in native apps (ally/platforms/win_uia.py).
+comtypes>=1.2      # Windows-only; COM bridge to the UIAutomationCore type library

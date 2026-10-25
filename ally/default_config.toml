@@ -49,12 +49,37 @@ How to act:
 """
 
 [speech]
-engine = "system"          # "system" (built-in voice), "cartesia" (natural voice, needs CARTESIA_API_KEY), "off"
+engine = "auto"            # "auto" = Cartesia when CARTESIA_API_KEY and a voice are set, else the built-in voice;
+                           # "cartesia"; "system" (built-in voice only); "off"
 rate = 1.0                 # 0.5 = slow, 2.0 = fast
 voice = ""                 # optional system voice, e.g. "Samantha" (Mac) or "Microsoft Zira Desktop" (Windows)
 max_chars = 4000           # longest text read in one go
-cartesia_voice_id = ""     # copy a voice ID from https://play.cartesia.ai
+cartesia_voice_id = ""     # a Cartesia voice ID or name, e.g. "Tessa". List them: python run.py voices
 cartesia_model = "sonic-3.6"
+cartesia_fallback_model = "sonic-3"  # tried when cartesia_model is rejected; then the built-in voice
+emotion = "calm"           # Cartesia emotion for ordinary speech ("" = let the voice decide)
+cache_prompts = true       # keep Cartesia audio for Ally's short fixed prompts (works offline; never page text)
+cartesia_timeout_seconds = 4  # give up on Cartesia and use the built-in voice after this long
+cartesia_retry_seconds = 30   # after a network failure, use the built-in voice this long before retrying
+
+# Spoken yes/no questions: proactive offers ("Want me to make this bigger?") and risk warnings.
+# Ally speaks, then listens for an answer. The on-screen Yes / No buttons always work too, and the
+# first answer wins. Silence or an unclear answer never counts as yes.
+[confirm]
+enabled = true
+listen_seconds = 8         # how long to wait for an answer to start
+listen_delay_ms = 250      # pause after Ally stops talking before listening (so it doesn't hear itself)
+max_answer_seconds = 5     # longest answer recorded (an answer that starts in time is always heard out)
+eager_answers = true       # act on a clear "yes" / "no" after a short pause instead of the full one
+eager_silence_ms = 450     # that short pause
+reask = true               # an unclear answer gets one re-ask in different words, then the buttons
+say_no_reply = true        # after "no", say "No problem. I'll leave it as is."
+speed = 0.9                # questions are a little slower than normal speech (times speech.rate)
+warning_speed = 0.85       # risk warnings are slower still, with a pause before the question
+emotion = "calm"           # Cartesia emotion for questions; "sympathetic" is used after a miss
+chime = false              # a short tone before each question
+prerender = true           # render the fixed prompts with Cartesia at start, so they play instantly
+log_latency = true         # write timings to logs/voice_latency.jsonl
 
 [voice]
 engine = "auto"            # speech-to-text: "auto", "cartesia" (needs CARTESIA_API_KEY), "whisper" (offline), "off"
@@ -137,6 +162,22 @@ rearm_seconds = 20         # a signal waits this long before firing again
 "<mod>+g" = "magnify_where_i_look"  # magnify where your eyes are (eye tracker)
 "<mod>+e" = "Describe what is on my screen in two short sentences."
 "<mod>+a" = "open_dashboard"
+
+[proactive]
+# Ally notices when you're struggling (squinting, leaning in, clicking the same spot, backspacing a lot)
+# and offers help. Say "yes" or click Yes. Things you accept twice on a site are done automatically next time.
+enabled = true
+overlay = true                 # on-screen highlight + Yes/No bubble (needs the overlay module; off-safe until then)
+voice_confirm = true           # ask out loud and listen for yes/no
+senses_behavior = true         # mouse/keyboard signals (needs pynput)
+senses_vision = false          # webcam squint/lean (needs mediapipe + opencv-python + face_landmarker.task)
+camera_index = 0
+min_confidence = 0.6           # 0..1, how sure before offering
+fusion_window_seconds = 4      # signals this close together count as one moment
+cooldown_seconds = 30          # at most one offer per app/site in this time
+offer_timeout_seconds = 8      # no answer = no change
+auto_apply_after = 2           # accepted this many times on a site = do it automatically
+context_poll_seconds = 1.5
 
 # Applied when Ally starts and on every page you open in Chrome.
 [profile]

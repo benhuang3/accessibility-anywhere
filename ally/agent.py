@@ -1,5 +1,5 @@
-"""The agent process: wires config, tools, brain, browser bridge, hotkeys, speech, the always-on
-listener, the eye tracker and the server."""
+"""The agent process: wires config, tools, brain, browser bridge, hotkeys, speech, spoken yes/no
+questions, the always-on listener, the eye tracker and the server."""
 
 from __future__ import annotations
 
@@ -8,12 +8,15 @@ import os
 import signal
 import threading
 import time
+import urllib.parse
 
 from . import __version__, keys
 from .brain import Brain, Reply
 from .bridge import Bridge
 from .config import ConfigManager
+from .contracts import ContractError, EventBus, parse_event
 from .context import Context
+from .habits import HabitMemory
 from .gaze import GazeManager
 from .hotkeys import HotkeyManager
 from .listener import WakeListener
@@ -21,6 +24,7 @@ from .log import EventLog, set_level, setup_logging
 from .macros import Macros
 from .paths import Paths, load_env_file
 from .platforms import get_platform
+from .proactive import Coordinator, NullUI, NullVoice
 from .registry import Outcome, PluginLoader, Registry, ToolError
 from .senses.manager import Senses
 from .server import PortBusy, start_server
@@ -28,6 +32,7 @@ from .speech import Speaker
 from .state import State, load_or_create_token
 from .tools import BUILTIN_MODULES
 from .voice import VoiceInput
+from .voice_confirm import VoiceConfirm, install as install_voice
 
 log = logging.getLogger("ally")
 
@@ -59,7 +64,8 @@ class Agent:
         self._apply_settings(initial=True)
 
         self.platform = get_platform()
-        self.speaker = Speaker(self.platform, lambda: self.config.data["speech"])
+        self.speaker = Speaker(self.platform, lambda: self.config.data["speech"],
+                               cache_dir=self.paths.cache_dir / "voice")
         rate = self.state.get("speech_rate")
         if isinstance(rate, (int, float)):
             self.speaker.rate_override = float(rate)
@@ -68,9 +74,23 @@ class Agent:
         self.voice = VoiceInput(self)
         self.listener = WakeListener(self)
         self.senses = Senses(self)  # before gaze: the camera helper sends it face numbers
+        # Spoken offers and yes/no answers (say / ask_yes_no for the Brain). Borrows the listener's mic.
+        self.confirm = VoiceConfirm(self.speaker, lambda: self.config.data, listener=self.listener,
+                                    events=self.events, state=self.state, log_dir=self.paths.log_dir)
+        install_voice(self.confirm)
         self.gaze = GazeManager(self)
         self.platform.set_gaze_source(self.gaze.latest, float(self.config.data["gaze"].get("pan_speed", 1.0)))
         self.last_utterance: tuple[float, float] | None = None  # (start, end) of the last spoken request
+        # ---- proactive layer (see docs/integration_plan.md): bus -> coordinator -> overlay/voice -> tools.
+        # Hayden's senses feeds the bus through on_struggle(); risk and simulate feed it via /api/event.
+        self.bus = EventBus()
+        self.habits = HabitMemory(self.paths.state_dir / "habits.json",
+                                  int(self.proactive_cfg().get("auto_apply_after", 2)))
+        self.proactive = Coordinator(self.bus, lambda n, a, src: self.call_tool(n, a, source=src), self.habits,
+                                     self.proactive_context, self.proactive_cfg,
+                                     ui=NullUI(self.events), voice=NullVoice(self.speaker), events=self.events)
+        self.sensors: list = []  # Hayden's senses run as self.senses; the patch's own sensors are not used
+        self.overlay = None      # Ganesh's overlay plugs in here when ally/overlay lands
         self.hotkeys = HotkeyManager(self)
         self.start_hotkeys = start_hotkeys
         if not start_hotkeys:
@@ -99,6 +119,7 @@ class Agent:
             self.listener.apply()
             self.senses.apply()
             self.gaze.apply()
+            threading.Thread(target=self.confirm.prerender, name="voice-prerender", daemon=True).start()
             self.platform.set_gaze_source(self.gaze.latest, float(cfg["gaze"].get("pan_speed", 1.0)))
             self.push_profile()
 
@@ -241,12 +262,13 @@ class Agent:
                       "error": self.brain.last_error, "has_key": self.brain.client().configured},
             "browser": self.bridge.status(),
             "hotkeys": self.hotkeys.info(),
-            "speech": {"engine": cfg["speech"]["engine"], "speaking": self.speaker.speaking,
-                       "rate": self.speaker.rate(), "error": self.speaker.last_error},
+            "speech": self.speaker.info(),
+            "confirm": self.confirm.info(),
             "voice": {"available": ok_voice, "detail": voice_why, "listening": self.voice.listening},
             "listener": self.listener.info(),
             "gaze": self.gaze.info(),
             "senses": self.senses.info(),
+            "proactive": dict(self.proactive.status(), overlay=bool(self.overlay)),
             "screen": {"magnify": self.platform.magnify_level, "color": self.platform.color},
             "config": {"error": self.config.error, "errors": self.config.errors, "warnings": self.config.warnings},
             "plugins": {"folder": str(self.plugins.folder), "errors": self.plugins.errors},
@@ -265,6 +287,54 @@ class Agent:
                 "errors": self.config.errors, "warnings": self.config.warnings}
 
     # ------------------------------------------------------------- lifecycle
+    # ------------------------------------------------------------- proactive
+    def proactive_cfg(self) -> dict:
+        return self.config.data.get("proactive", {}) or {}
+
+    def proactive_context(self) -> dict:
+        """What the user is looking at: {"app", "site", "in_browser"} (habit memory is keyed on this)."""
+        in_browser = bool(self.bridge.chrome_focused)
+        site = (urllib.parse.urlsplit(self.bridge.tab.get("url") or "").hostname or "") if in_browser else ""
+        title = ""
+        try:
+            title = self.platform.frontmost_app() or ""
+        except Exception:
+            pass
+        app = title.rsplit(" - ", 1)[-1] if " - " in title else title  # "Inbox - Google Chrome" -> "Google Chrome"
+        return {"app": app, "site": site, "in_browser": in_browser, "window": title}
+
+    def on_struggle(self, data: dict) -> None:
+        """Bridge: Hayden's senses calls this with a struggle dict; forward it onto the bus."""
+        d = dict(data)
+        d.setdefault("type", "struggle")
+        self.publish_event(d)
+
+    def publish_event(self, data: dict) -> dict:
+        """POST /api/event and `run.py simulate`: inject a struggle/risk/answer as if a sensor sent it."""
+        try:
+            topic, msg = parse_event(data)
+        except (ContractError, TypeError, ValueError) as e:
+            return {"ok": False, "error": str(e)}
+        n = self.bus.publish(topic, msg)
+        return {"ok": True, "topic": topic, "delivered": n}
+
+    def start_proactive(self) -> None:
+        """Start the proactive coordinator. The overlay plugs in when ally/overlay exists; sensors
+        are separate (Hayden's senses via on_struggle, risk/simulate via /api/event)."""
+        if self.proactive_cfg().get("overlay", True):
+            try:
+                from .overlay import Overlay
+
+                ov = Overlay()
+                if ov.start():
+                    self.overlay = self.proactive.ui = ov
+                else:
+                    self.events.add("error", ov.error)
+            except Exception as e:
+                log.debug("overlay unavailable: %s", e)
+        self.proactive.start()
+        self.events.add("start", "Proactive help is on.")
+
     def start(self) -> None:
         port = int(self.config.data["agent"]["port"])
         self.httpd = start_server(self, port)  # raises PortBusy
@@ -275,11 +345,14 @@ class Agent:
         self.listener.apply()
         self.senses.apply()
         self.gaze.apply()
+        if self.proactive_cfg().get("enabled", True):
+            self.start_proactive()
         threading.Thread(target=self._housekeeping, name="housekeeping", daemon=True).start()
         threading.Thread(target=self._startup_extras, name="startup", daemon=True).start()
 
     def _startup_extras(self) -> None:
         self.platform.warm_up()
+        threading.Thread(target=self.confirm.prerender, name="voice-prerender", daemon=True).start()
         self.apply_profile()
         if self.config.data["agent"].get("announce_start", True):
             name = self.config.data["agent"]["name"]
@@ -334,8 +407,9 @@ class Agent:
     def close(self) -> None:
         self._stop.set()
         log.info("Ally stopping (code %s)", self.exit_code)
-        for step in (self.hotkeys.stop, self.listener.stop, self.senses.stop, self.gaze.stop, self.speaker.stop,
-                     self.platform.shutdown, self.bridge.close_all):
+        extra = [self.proactive.stop] + ([self.overlay.stop] if self.overlay else [])
+        for step in (*extra, self.confirm.cancel, self.hotkeys.stop, self.listener.stop, self.senses.stop,
+                     self.gaze.stop, self.speaker.stop, self.platform.shutdown, self.bridge.close_all):
             try:
                 step()
             except Exception:

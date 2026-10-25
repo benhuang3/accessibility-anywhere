@@ -79,6 +79,11 @@ RULES = [
          full=r"(zoom out|smaller|shrink|make (it|this|that|the text|text|things|everything) smaller|too big|"
               r"it's too big)",
          loose=r"\b(smaller|zoom out|too big|shrink)\b"),
+    Rule("enlarge_this", [("enlarge_text", {"goal": "bigger"})],
+         full=r"(enlarge|blow up) (this|this text|the text)( here| please)?|"
+              r"make (this text|the words?) (bigger|larger)|"
+              r"make (this|the text) (bigger|larger) (here|in front( of me)?)",
+         loose=r"\b(enlarge this|make (this|the text) bigger here)\b"),
     Rule("read_selection", [("read_selection", {})],
          full=r"read (the |my )?(selection|selected( text)?|highlighted( text)?|this text)( to me| aloud| out loud)?",
          loose=r"\bread\b.*\b(selection|selected|highlighted)\b"),

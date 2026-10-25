@@ -339,18 +339,25 @@ class Senses:
         return self._emit(struggle)
 
     def target(self, struggle: Struggle) -> dict:
-        """Where it happened: the app in front, the website (if Chrome is in front), the pointer."""
-        target = {"app": None, "site": None, "window": None, "x": None, "y": None, "box": None}
+        """Where it happened: the app in front, the website (if Chrome is in front), the pointer.
+
+        Unknown text is "" (ally.contracts.Target turns None into the text "None", which made the
+        coordinator treat every struggle as a web page). "app" is the program's name and "window"
+        its title, split as Agent.proactive_context does, so habits are kept per app, not per window.
+        """
+        target = {"app": "", "site": "", "window": "", "x": None, "y": None, "box": None}
         try:
-            target["app"] = self.agent.platform.frontmost_app()
+            title = self.agent.platform.frontmost_app() or ""
         except Exception:
-            pass
+            title = ""
+        target["app"] = title.rsplit(" - ", 1)[-1] if " - " in title else title  # "Inbox - Google Chrome"
+        target["window"] = title
         bridge = getattr(self.agent, "bridge", None)
         try:
             if bridge is not None and bridge.chrome_focused:
                 url = str(bridge.tab.get("url") or "")
-                target["site"] = urllib.parse.urlsplit(url).hostname or None
-                target["window"] = bridge.tab.get("title") or None
+                target["site"] = urllib.parse.urlsplit(url).hostname or ""
+                target["window"] = bridge.tab.get("title") or title
         except Exception:
             pass
         x, y = struggle.target.get("x"), struggle.target.get("y")

@@ -782,10 +782,20 @@ class WindowsPlatform(Platform):
         except Exception:
             return None
 
+    def read_focused_box(self) -> tuple | None:
+        """Screen rectangle of the element with keyboard focus, via UI Automation, or None."""
+        from . import win_uia
+
+        el = win_uia.focused_element()
+        return el.get("bounds") if el else None
+
     def checks(self):
         out = []
         out.append(("ok", "64-bit Python", "yes") if is_64bit_python() else
                    ("warn", "64-bit Python", "no: the magnifier and color filters need 64-bit Python"))
+        from . import win_uia
+
+        out.extend(win_uia.checks())
         try:
             ctypes.WinDLL("Magnification.dll")
             out.append(("ok", "Magnification API", "available"))

@@ -423,6 +423,54 @@ const ACTIONS = {
     chrome.tts.stop();
     return true;
   },
+  async setTabTitle({ title }) {
+    const t = await activeTab();
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId: t.id },
+      func: (next) => {
+        if (typeof globalThis.__allyOrigTitle !== "string") globalThis.__allyOrigTitle = document.title;
+        document.title = String(next);
+        return document.title;
+      },
+      args: [String(title == null ? "" : title)],
+    });
+    return { title: r ? r.result : String(title) };
+  },
+  async rewriteElement({ selector = "title", text = "" }) {
+    const t = await activeTab();
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId: t.id },
+      func: (sel, next) => {
+        const el = document.querySelector(sel);
+        if (!el) return { ok: true, matched: 0 };
+        const edits = (globalThis.__allyTextEdits = globalThis.__allyTextEdits || {});
+        if (!(sel in edits)) edits[sel] = el.textContent;
+        el.textContent = String(next);
+        return { ok: true, matched: 1 };
+      },
+      args: [String(selector || "title"), String(text == null ? "" : text)],
+    });
+    return r ? r.result : { ok: true, matched: 0 };
+  },
+  async restoreText() {
+    const t = await activeTab();
+    await chrome.scripting.executeScript({
+      target: { tabId: t.id },
+      func: () => {
+        if (typeof globalThis.__allyOrigTitle === "string") {
+          document.title = globalThis.__allyOrigTitle;
+          delete globalThis.__allyOrigTitle;
+        }
+        const edits = globalThis.__allyTextEdits || {};
+        for (const sel of Object.keys(edits)) {
+          const el = document.querySelector(sel);
+          if (el) el.textContent = edits[sel];
+        }
+        globalThis.__allyTextEdits = {};
+      },
+    });
+    return { restored: true };
+  },
   async speak({ text, rate = 1 }) {
     chrome.tts.speak(String(text || "").slice(0, 30000), { rate: clamp(Number(rate) || 1, 0.1, 10) });
     return true;

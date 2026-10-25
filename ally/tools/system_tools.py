@@ -58,7 +58,15 @@ def reset_all(ctx):
             done.append("page")
         except ToolError as e:
             problems.append(str(e))
+        try:
+            ctx.browser.call("restoreText")
+        except ToolError as e:
+            problems.append(str(e))
     p = ctx.os
+    try:
+        p.clear_text_overlays()
+    except ToolError as e:
+        problems.append(str(e))
     try:
         if p.magnify_level > 1.0:
             p.magnify(1.0)

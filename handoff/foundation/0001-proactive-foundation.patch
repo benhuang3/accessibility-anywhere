@@ -1,0 +1,2096 @@
+From aaf069325d451cc6c676d2fc498153fa1d908a80 Mon Sep 17 00:00:00 2001
+From: Ganesh K <ganeshkarayi@gmail.com>
+Date: Sat, 24 Oct 2026 00:14:10 -0700
+Subject: [PATCH] Add proactive layer foundation: contracts, bus, brain,
+ habits, senses, overlay, voice confirm
+
+- ally/contracts.py: Struggle/Risk/Offer/Accommodation + thread-safe EventBus
+- ally/proactive.py: signal fusion, cooldown, offers, habit auto-apply, risk warnings
+- ally/habits.py: per app/site accept/decline memory (state/habits.json)
+- ally/senses/: rage-click, retype, hesitation, squint, lean detectors (+ pynput/MediaPipe wiring)
+- ally/overlay/: Tk topmost highlight, Yes/No bubble, warning card
+- ally/voice_confirm.py: speak offer, listen for yes/no
+- ally/risk/: starter scam text / URL / remote-access heuristics
+- POST /api/event, /api/habits; run.py simulate|habits; [proactive] config
+- tests/test_proactive.py (21 tests); FOUNDATION.md team guide
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013wvQbJzLpz4p8QJ4Dh2D2F
+---
+ .gitignore                |   1 +
+ FOUNDATION.md             |  80 ++++++++++
+ ally/agent.py             |  71 ++++++++-
+ ally/cli.py               |  59 ++++++-
+ ally/config.py            |   6 +
+ ally/contracts.py         | 219 +++++++++++++++++++++++++
+ ally/default_config.toml  |  16 ++
+ ally/habits.py            |  97 +++++++++++
+ ally/overlay/__init__.py  |   3 +
+ ally/overlay/__main__.py  |   3 +
+ ally/overlay/window.py    | 212 ++++++++++++++++++++++++
+ ally/proactive.py         | 327 ++++++++++++++++++++++++++++++++++++++
+ ally/risk/__init__.py     |  69 ++++++++
+ ally/senses/__init__.py   |   5 +
+ ally/senses/behavior.py   | 139 ++++++++++++++++
+ ally/senses/vision.py     | 172 ++++++++++++++++++++
+ ally/server.py            |   9 ++
+ ally/voice_confirm.py     |  76 +++++++++
+ requirements-optional.txt |   4 +
+ tests/test_proactive.py   | 245 ++++++++++++++++++++++++++++
+ 20 files changed, 1811 insertions(+), 2 deletions(-)
+ create mode 100644 FOUNDATION.md
+ create mode 100644 ally/contracts.py
+ create mode 100644 ally/habits.py
+ create mode 100644 ally/overlay/__init__.py
+ create mode 100644 ally/overlay/__main__.py
+ create mode 100644 ally/overlay/window.py
+ create mode 100644 ally/proactive.py
+ create mode 100644 ally/risk/__init__.py
+ create mode 100644 ally/senses/__init__.py
+ create mode 100644 ally/senses/behavior.py
+ create mode 100644 ally/senses/vision.py
+ create mode 100644 ally/voice_confirm.py
+ create mode 100644 tests/test_proactive.py
+
+diff --git a/.gitignore b/.gitignore
+index 0998382..d0479fd 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -6,3 +6,4 @@ __pycache__/
+ .venv/
+ venv/
+ .DS_Store
++ally/senses/*.task
+diff --git a/FOUNDATION.md b/FOUNDATION.md
+new file mode 100644
+index 0000000..4c8da63
+--- /dev/null
++++ b/FOUNDATION.md
+@@ -0,0 +1,80 @@
++# Proactive layer: team foundation (Cal Hacks 13.0)
++
++Ally already reacts when you ask it to do something. This layer makes it **notice** when someone is struggling and **offer** help. Everything below already runs end to end. Every piece is a working skeleton, and each owner makes their piece better without touching anyone else's files.
++
++```
++ webcam / mouse / keyboard          Chrome extension / URL checks
++   ally/senses/  (Hayden)             ally/risk/ + extension/  (Ganesh)
++          │  Struggle                         │  Risk
++          ▼                                   ▼
++        ─────────────  agent.bus  (ally/contracts.py)  ─────────────
++                              │
++                    ally/proactive.py  (Ben H)
++        fuse signals → choose a fix for this app/site → habit? → Offer
++                 │                         │                    │
++     ally/overlay/ (Ben W)       ally/voice_confirm.py      agent.call_tool(...)
++     highlight + Yes/No bubble    (Ganesh) says it,         existing Ally tools
++     + warning card               listens for yes/no        (zoom, magnify, read…)
++                                                                │
++                                              ally/habits.py remembers the yes/no answers
++```
++
++## Run it (Windows)
++
++```powershell
++git checkout -b foundation
++git am 0001-proactive-foundation.patch      # or: git apply proactive-foundation.diff
++python -m pip install -r requirements-optional.txt
++python run.py agent                          # terminal 1
++python run.py simulate demo                  # terminal 2: weak squint + lean fuse into an offer
++python run.py simulate answer yes            # or click Yes on the bubble, or say "yes"
++python run.py simulate risk scam_popup high "page says call Microsoft support"
++python run.py habits                         # what it learned
++```
++
++Answer **yes** twice for the same site and the third time Ally applies the fix without asking ("…like last time"). It also does this as soon as you switch to that site.
++
++**Nobody needs a webcam or another teammate's code to work.** Use `simulate` to send any event.
++
++## The contracts (ally/contracts.py): don't break these
++
++| Message | Fields |
++|---|---|
++| `Struggle` | `kind` (squint, lean, rage_click, hesitation, retype, fused), `confidence` 0–1, `target{app, site, window, x, y, box}`, `source`, `detail`, `ts` |
++| `Risk` | `kind` (scam_popup, untrusted_site, remote_access, payment_field), `severity` (low, medium, high), `evidence`, `url`, `app` |
++| `Offer` | `prompt`, `accommodation{key, label, tool, args}`, `context`, `highlight`, `timeout`. **`offer.resolve("yes"/"no", by)`: the first answer wins.** |
++
++Bus topics are `struggle`, `risk`, `answer`, `offer`, `offer_result`, `applied`, `risk_warning` and `context`. Subscribe to `*` to receive all of them.
++
++HTTP: `POST /api/event` takes `{"type":"struggle"|"risk"|"answer", ...}`. `GET /api/habits` lists what Ally learned, and `POST /api/habits {"forget":true}` wipes it. Both need the `X-Ally-Token` header. The Chrome extension can post risks here.
++
++If you need a new field, add it with a default value and post in the group chat.
++
++## Who owns what
++
++| Person | Files | First tasks |
++|---|---|---|
++| **Hayden**: vision | `ally/senses/` | Download [face_landmarker.task](https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task) into `ally/senses/`, then set `senses_vision = true`. Tune `SquintDetector` and `LeanDetector` on real faces, with glasses and in different lighting. Behavior thresholds live in `behavior.py`. Optional and timeboxed: gaze, which goes into `target_here()` in place of the cursor. |
++| **Ben H**: brain and integration | `ally/proactive.py`, `ally/habits.py`, `ally/contracts.py`, `agent.py` wiring | Tune `pick_accommodation` and the prompts. Add per-site habit options beyond zoom (reader view, min font). Merge branches at 1 PM, 6 PM and 10 PM. |
++| **Ganesh**: voice, risk and pitch | `ally/voice_confirm.py`, `ally/risk/`, `extension/` risk scripts | Write an extension content script that sends page text and URL, posts `/api/event` risk, and runs `check_text` and `check_url`. Add a remote-access process check (`check_process_names`). Use Cartesia voice for prompts. |
++| **Ben W**: UI | `ally/overlay/`, `dashboard/` | Run `python -m ally.overlay` for a preview. Make it look great at 200% DPI, add an animated highlight and a "Proactive" dashboard panel (use `/api/status` → `proactive` and `/api/habits`). |
++
++## Settings (config.toml → `[proactive]`)
++
++`enabled`, `overlay`, `voice_confirm`, `senses_behavior`, `senses_vision`, `camera_index`, `min_confidence` (0.6), `fusion_window_seconds` (4), `cooldown_seconds` (30), `offer_timeout_seconds` (8), `auto_apply_after` (2), `context_poll_seconds` (1.5). Changes apply live.
++
++## Tests
++
++```bash
++cd tests && python -m unittest test_config test_registry test_brain test_network test_runtime test_proactive
++```
++
++There are 96 tests in total, including 21 new ones covering contracts, the bus, habits, the full offer flow, the detectors, risk rules, yes/no parsing and the HTTP wiring. Add a test whenever you change a threshold.
++
++## What isn't done yet (honest list)
++
++- The overlay has been rendered and checked on Linux and Xvfb, but **not yet on Windows**. Check that `-transparentcolor` click-through works, along with DPI scaling and multi-monitor setups.
++- Vision has only been checked with synthetic numbers. It needs real-camera tuning.
++- Voice confirm reuses Ally's recorder. If someone presses the voice hotkey while an offer is open, the two will compete for the mic.
++- Risk rules are starter regex and URL heuristics. No extension content script exists yet.
++- Habits are only keyed by site, or by app outside the browser. Nothing is learned when the context is unknown.
+diff --git a/ally/agent.py b/ally/agent.py
+index 6ec8ca7..576dec3 100644
+--- a/ally/agent.py
++++ b/ally/agent.py
+@@ -7,23 +7,28 @@ import os
+ import signal
+ import threading
+ import time
++import urllib.parse
+ 
+ from . import __version__, keys
+ from .brain import Brain, Reply
+ from .bridge import Bridge
+ from .config import ConfigManager
++from .contracts import ContractError, EventBus, parse_event
+ from .context import Context
++from .habits import HabitMemory
+ from .hotkeys import HotkeyManager
+ from .log import EventLog, set_level, setup_logging
+ from .macros import Macros
+ from .paths import Paths, load_env_file
+ from .platforms import get_platform
++from .proactive import Coordinator, NullUI
+ from .registry import Outcome, PluginLoader, Registry, ToolError
+ from .server import PortBusy, start_server
+ from .speech import Speaker
+ from .state import State, load_or_create_token
+ from .tools import BUILTIN_MODULES
+ from .voice import VoiceInput
++from .voice_confirm import VoiceConfirm
+ 
+ log = logging.getLogger("ally")
+ 
+@@ -66,6 +71,15 @@ class Agent:
+         self.start_hotkeys = start_hotkeys
+         if not start_hotkeys:
+             self.hotkeys.status, self.hotkeys.error = "off", "turned off with --no-hotkeys"
++        # ---- proactive layer (see FOUNDATION.md): bus -> coordinator -> overlay/voice -> tools
++        self.bus = EventBus()
++        self.habits = HabitMemory(self.paths.state_dir / "habits.json",
++                                  int(self.proactive_cfg().get("auto_apply_after", 2)))
++        self.proactive = Coordinator(self.bus, lambda n, a, src: self.call_tool(n, a, source=src), self.habits,
++                                     self.proactive_context, self.proactive_cfg, ui=NullUI(self.events),
++                                     voice=VoiceConfirm(self), events=self.events)
++        self.sensors: list = []
++        self.overlay = None
+         self.httpd = None
+         self.started = time.time()
+         self.last_tick = time.time()
+@@ -234,6 +248,9 @@ class Agent:
+             "screen": {"magnify": self.platform.magnify_level, "color": self.platform.color},
+             "config": {"error": self.config.error, "errors": self.config.errors, "warnings": self.config.warnings},
+             "plugins": {"folder": str(self.plugins.folder), "errors": self.plugins.errors},
++            "proactive": dict(self.proactive.status(), sensors=[{"name": type(x).__name__, "error": x.error}
++                                                                for x in self.sensors],
++                              overlay=bool(self.overlay)),
+         }
+ 
+     def tools_info(self) -> list[dict]:
+@@ -258,6 +275,57 @@ class Agent:
+             self.hotkeys.apply(force=True)
+         threading.Thread(target=self._housekeeping, name="housekeeping", daemon=True).start()
+         threading.Thread(target=self._startup_extras, name="startup", daemon=True).start()
++        if self.proactive_cfg().get("enabled", True):
++            self.start_proactive()
++
++    # ------------------------------------------------------------- proactive
++    def proactive_cfg(self) -> dict:
++        return self.config.data.get("proactive", {}) or {}
++
++    def proactive_context(self) -> dict:
++        """What the user is looking at: {"app", "site", "in_browser"} (habit memory is keyed on this)."""
++        in_browser = bool(self.bridge.chrome_focused)
++        site = (urllib.parse.urlsplit(self.bridge.tab.get("url") or "").hostname or "") if in_browser else ""
++        title = ""
++        try:
++            title = self.platform.frontmost_app() or ""
++        except Exception:
++            pass
++        app = title.rsplit(" - ", 1)[-1] if " - " in title else title  # "Inbox - Google Chrome" -> "Google Chrome"
++        return {"app": app, "site": site, "in_browser": in_browser, "window": title}
++
++    def start_proactive(self, sensors: bool = True) -> None:
++        cfg = self.proactive_cfg()
++        if cfg.get("overlay", True):
++            try:
++                from .overlay import Overlay
++                ov = Overlay()
++                if ov.start():
++                    self.overlay = self.proactive.ui = ov
++                else:
++                    self.events.add("error", ov.error)
++            except Exception as e:
++                self.events.add("error", f"overlay failed: {e}")
++        if sensors:
++            from .senses import BehaviorSensor, VisionSensor
++            if cfg.get("senses_behavior", True):
++                self.sensors.append(BehaviorSensor(self.bus))
++            if cfg.get("senses_vision", False):
++                self.sensors.append(VisionSensor(self.bus, int(cfg.get("camera_index", 0))))
++            for s in self.sensors:
++                if not s.start():
++                    self.events.add("error", s.error)
++        self.proactive.start()
++        self.events.add("start", "Proactive help is on.")
++
++    def publish_event(self, data: dict) -> dict:
++        """POST /api/event and `run.py simulate`: inject a struggle/risk/answer as if a sensor sent it."""
++        try:
++            topic, msg = parse_event(data)
++        except (ContractError, TypeError, ValueError) as e:
++            return {"ok": False, "error": str(e)}
++        n = self.bus.publish(topic, msg)
++        return {"ok": True, "topic": topic, "delivered": n}
+ 
+     def _startup_extras(self) -> None:
+         self.platform.warm_up()
+@@ -307,7 +375,8 @@ class Agent:
+     def close(self) -> None:
+         self._stop.set()
+         log.info("Ally stopping (code %s)", self.exit_code)
+-        for step in (self.hotkeys.stop, self.speaker.stop, self.platform.shutdown, self.bridge.close_all):
++        extra = [self.proactive.stop] + [s.stop for s in self.sensors] + ([self.overlay.stop] if self.overlay else [])
++        for step in (*extra, self.hotkeys.stop, self.speaker.stop, self.platform.shutdown, self.bridge.close_all):
+             try:
+                 step()
+             except Exception:
+diff --git a/ally/cli.py b/ally/cli.py
+index 3e44384..9285680 100644
+--- a/ally/cli.py
++++ b/ally/cli.py
+@@ -1,4 +1,4 @@
+-"""Command line: python run.py [start|agent|doctor|install|uninstall|send|tool|status|stop|restart|open|check]"""
++"""Command line: python run.py [start|agent|doctor|install|uninstall|send|tool|status|simulate|habits|stop|restart|open|check]"""
+ 
+ from __future__ import annotations
+ 
+@@ -21,6 +21,13 @@ commands:
+   send "text"        send a request, e.g. python run.py send "make it bigger"
+   tool NAME [JSON]   run one tool, e.g. python run.py tool set_page_zoom '{"zoom": 1.5}'
+   status             show what Ally is doing
++  simulate ...       fake a sensor event (no camera needed), e.g.
++                       python run.py simulate struggle squint 0.8
++                       python run.py simulate struggle rage_click '{"target": {"site": "chase.com"}}'
++                       python run.py simulate risk scam_popup high "page says call Microsoft support"
++                       python run.py simulate answer yes
++                       python run.py simulate demo      (squint + lean together = fused offer)
++  habits [forget]    show (or wipe) what Ally has learned per app/site
+   stop | restart     stop or restart the running agent
+   open               open the dashboard
+   check              validate config.toml without starting
+@@ -55,6 +62,38 @@ def _api(paths: Paths, method: str, path: str, body: dict | None = None, timeout
+         raise SystemExit(f"Ally isn't running on port {port}. Start it with: python run.py")
+ 
+ 
++def simulate_bodies(args: list[str]) -> list[dict]:
++    """Turn `simulate ...` words into /api/event bodies. A trailing JSON object adds/overrides fields."""
++    import time
++    extra = {}
++    if args and args[-1].lstrip().startswith("{"):
++        extra = json.loads(args[-1])
++        args = args[:-1]
++    if not args:
++        raise ValueError("say what to simulate")
++    what, rest = args[0], args[1:]
++    if what == "struggle":
++        if not rest:
++            raise ValueError("struggle KIND [CONFIDENCE]")
++        body = {"type": "struggle", "kind": rest[0], "source": "simulate",
++                "confidence": float(rest[1]) if len(rest) > 1 else 0.8}
++    elif what == "risk":
++        if not rest:
++            raise ValueError("risk KIND [SEVERITY] [EVIDENCE]")
++        body = {"type": "risk", "kind": rest[0], "source": "simulate",
++                "severity": rest[1] if len(rest) > 1 else "high", "evidence": " ".join(rest[2:])}
++    elif what == "answer":
++        body = {"type": "answer", "choice": rest[0] if rest else "yes"}
++    elif what == "demo":
++        now = time.time()
++        return [{"type": "struggle", "kind": "squint", "confidence": 0.45, "source": "simulate", "ts": now, **extra},
++                {"type": "struggle", "kind": "lean", "confidence": 0.4, "source": "simulate", "ts": now, **extra}]
++    else:
++        raise ValueError(f"unknown '{what}'")
++    body.update(extra)
++    return [body]
++
++
+ def main(argv: list[str] | None = None) -> int:
+     if sys.version_info < (3, 11):
+         print("Ally needs Python 3.11 or newer.")
+@@ -119,6 +158,24 @@ def main(argv: list[str] | None = None) -> int:
+         out = _api(paths, "POST", "/api/tool", {"name": a.args[0], "args": args, "speak": True})
+         print(out.get("text") or out.get("error"))
+         return 0 if out.get("ok") else 1
++    if cmd == "simulate":
++        try:
++            bodies = simulate_bodies(a.args)
++        except ValueError as e:
++            print(f"Usage: python run.py simulate struggle|risk|answer|demo ...  ({e})")
++            return 2
++        ok = True
++        for b in bodies:
++            out = _api(paths, "POST", "/api/event", b, timeout=10)
++            print(f"{b['type']} {b.get('kind') or b.get('choice')}: "
++                  + ("sent" if out.get("ok") else f"error: {out.get('error')}"))
++            ok = ok and bool(out.get("ok"))
++        return 0 if ok else 1
++    if cmd == "habits":
++        body = {"forget": True} if a.args[:1] == ["forget"] else {}
++        out = _api(paths, "POST" if body else "GET", "/api/habits", body or None, timeout=10)
++        print(json.dumps(out.get("habits"), indent=2))
++        return 0
+     if cmd == "status":
+         print(json.dumps(_api(paths, "GET", "/api/status", timeout=10), indent=2))
+         return 0
+diff --git a/ally/config.py b/ally/config.py
+index aac7a48..6ebf1bc 100644
+--- a/ally/config.py
++++ b/ally/config.py
+@@ -48,6 +48,10 @@ SPEC = {
+     "tools": {"disabled": list, "timeout_seconds": NUM},
+     "plugins": {"folder": str},
+     "security": {"allowed_extension_ids": list},
++    "proactive": {"enabled": bool, "offer_timeout_seconds": NUM, "cooldown_seconds": NUM,
++                  "fusion_window_seconds": NUM, "min_confidence": NUM, "auto_apply_after": int,
++                  "voice_confirm": bool, "overlay": bool, "senses_behavior": bool, "senses_vision": bool,
++                  "camera_index": int, "context_poll_seconds": NUM},
+ }
+ RANGES = {
+     ("agent", "port"): (1024, 65535), ("brain", "max_steps"): (1, 20), ("brain", "max_tokens"): (256, 64000),
+@@ -55,6 +59,8 @@ RANGES = {
+     ("speech", "max_chars"): (100, 200000), ("voice", "max_seconds"): (1, 60),
+     ("voice", "silence_seconds"): (0.3, 5), ("profile", "page_zoom"): (0, 5), ("profile", "min_font_px"): (0, 72),
+     ("profile", "screen_magnify"): (1, 16), ("tools", "timeout_seconds"): (1, 300),
++    ("proactive", "min_confidence"): (0, 1), ("proactive", "offer_timeout_seconds"): (2, 60),
++    ("proactive", "context_poll_seconds"): (0.5, 30),
+ }
+ 
+ 
+diff --git a/ally/contracts.py b/ally/contracts.py
+new file mode 100644
+index 0000000..c04b404
+--- /dev/null
++++ b/ally/contracts.py
+@@ -0,0 +1,219 @@
++"""Shared message formats and the in-process event bus for the proactive layer.
++
++Everyone codes against THIS file. If you need a new field, add it here (with a default) and tell the team.
++
++    senses/  (Hayden)  --publish-->  Struggle
++    risk/    (Ganesh)  --publish-->  Risk
++    proactive.py (Ben H) subscribes, decides, and creates an Offer
++    overlay/ (Ben W) + voice_confirm.py (Ganesh) show the Offer and call offer.resolve("yes"|"no")
++
++Topics on the bus: "struggle", "risk", "offer", "offer_result", "applied", "context".
++"""
++
++from __future__ import annotations
++
++import itertools
++import logging
++import threading
++import time
++from dataclasses import asdict, dataclass, field
++from typing import Any, Callable
++
++log = logging.getLogger("ally")
++
++STRUGGLE_KINDS = ("squint", "lean", "rage_click", "hesitation", "retype", "fused")
++RISK_KINDS = ("scam_popup", "untrusted_site", "remote_access", "payment_field")
++SEVERITIES = ("low", "medium", "high")
++CHOICES = ("yes", "no", "timeout", "dismissed")
++
++
++class ContractError(ValueError):
++    pass
++
++
++def _clamp01(x) -> float:
++    try:
++        return max(0.0, min(1.0, float(x)))
++    except (TypeError, ValueError):
++        raise ContractError("confidence must be a number from 0 to 1")
++
++
++@dataclass
++class Target:
++    """Where the struggle happened. Fill what you know; everything is optional."""
++    app: str = ""            # e.g. "Google Chrome", "Microsoft Word"
++    site: str = ""           # host only, e.g. "chase.com" ("" outside the browser)
++    window: str = ""         # window title
++    x: int | None = None     # screen point of interest (cursor / gaze), physical pixels
++    y: int | None = None
++    box: tuple[int, int, int, int] | None = None   # (left, top, width, height) to highlight
++
++    @classmethod
++    def from_dict(cls, d: dict | None) -> "Target":
++        d = d or {}
++        box = d.get("box")
++        if box is not None:
++            if not (isinstance(box, (list, tuple)) and len(box) == 4):
++                raise ContractError("target.box must be [left, top, width, height]")
++            box = tuple(int(v) for v in box)
++        return cls(app=str(d.get("app", ""))[:120], site=str(d.get("site", ""))[:200],
++                   window=str(d.get("window", ""))[:200],
++                   x=int(d["x"]) if d.get("x") is not None else None,
++                   y=int(d["y"]) if d.get("y") is not None else None, box=box)
++
++
++@dataclass
++class Struggle:
++    kind: str                                  # one of STRUGGLE_KINDS
++    confidence: float = 0.7                    # 0..1
++    target: Target = field(default_factory=Target)
++    source: str = ""                           # "vision", "behavior", "simulate", ...
++    detail: dict = field(default_factory=dict)  # free-form debug info (blendshape scores etc.)
++    ts: float = field(default_factory=time.time)
++
++    def __post_init__(self):
++        if self.kind not in STRUGGLE_KINDS:
++            raise ContractError(f"struggle kind must be one of {', '.join(STRUGGLE_KINDS)}")
++        self.confidence = _clamp01(self.confidence)
++
++    @classmethod
++    def from_dict(cls, d: dict) -> "Struggle":
++        return cls(kind=str(d.get("kind", "")), confidence=d.get("confidence", 0.7),
++                   target=Target.from_dict(d.get("target")), source=str(d.get("source", ""))[:40],
++                   detail=dict(d.get("detail") or {}), ts=float(d.get("ts") or time.time()))
++
++    def to_dict(self) -> dict:
++        return asdict(self)
++
++
++@dataclass
++class Risk:
++    kind: str                       # one of RISK_KINDS
++    severity: str = "medium"        # low | medium | high
++    evidence: str = ""              # human-readable why, e.g. "page says 'call Microsoft support now'"
++    url: str = ""
++    app: str = ""
++    source: str = ""
++    ts: float = field(default_factory=time.time)
++
++    def __post_init__(self):
++        if self.kind not in RISK_KINDS:
++            raise ContractError(f"risk kind must be one of {', '.join(RISK_KINDS)}")
++        if self.severity not in SEVERITIES:
++            raise ContractError("severity must be low, medium or high")
++
++    @classmethod
++    def from_dict(cls, d: dict) -> "Risk":
++        return cls(kind=str(d.get("kind", "")), severity=str(d.get("severity", "medium")),
++                   evidence=str(d.get("evidence", ""))[:500], url=str(d.get("url", ""))[:500],
++                   app=str(d.get("app", ""))[:120], source=str(d.get("source", ""))[:40],
++                   ts=float(d.get("ts") or time.time()))
++
++    def to_dict(self) -> dict:
++        return asdict(self)
++
++
++@dataclass
++class Accommodation:
++    """A concrete fix = one Ally tool call. key is what habit memory stores."""
++    key: str                         # stable id, e.g. "zoom_in", "page_zoom_150"
++    label: str                       # spoken/shown, e.g. "make it bigger"
++    tool: str                        # Ally tool name
++    args: dict = field(default_factory=dict)
++
++    def to_dict(self) -> dict:
++        return asdict(self)
++
++
++_offer_ids = itertools.count(1)
++
++
++class Offer:
++    """A yes/no question shown on the overlay AND asked by voice. First answer wins."""
++
++    def __init__(self, prompt: str, options=("yes", "no"), accommodation: Accommodation | None = None,
++                 context: str = "", reason: Any = None, timeout: float = 8.0, highlight=None):
++        self.id = next(_offer_ids)
++        self.prompt = prompt
++        self.options = tuple(options)
++        self.accommodation = accommodation
++        self.context = context
++        self.reason = reason            # the Struggle or Risk that caused it
++        self.timeout = timeout
++        self.highlight = highlight      # (l, t, w, h) or None
++        self.created = time.time()
++        self.choice: str | None = None
++        self.answered_by = ""
++        self._done = threading.Event()
++        self._lock = threading.Lock()
++
++    def resolve(self, choice: str, by: str = "") -> bool:
++        """Answer the offer. Returns False if someone already answered."""
++        choice = choice if choice in CHOICES else "no"
++        with self._lock:
++            if self.choice is not None:
++                return False
++            self.choice, self.answered_by = choice, by
++        self._done.set()
++        return True
++
++    def wait(self, timeout: float | None = None) -> str:
++        if not self._done.wait(self.timeout if timeout is None else timeout):
++            self.resolve("timeout", "timer")
++        return self.choice or "timeout"
++
++    @property
++    def done(self) -> bool:
++        return self._done.is_set()
++
++    def to_dict(self) -> dict:
++        return {"id": self.id, "prompt": self.prompt, "options": list(self.options), "context": self.context,
++                "accommodation": self.accommodation.to_dict() if self.accommodation else None,
++                "timeout": self.timeout, "highlight": self.highlight, "choice": self.choice,
++                "answered_by": self.answered_by}
++
++
++class EventBus:
++    """Tiny thread-safe pub/sub. Handlers run on the publisher's thread, so keep them fast
++    (put work on your own queue/thread). A crashing handler is logged, never propagated."""
++
++    def __init__(self):
++        self._subs: dict[str, list[Callable[[Any], None]]] = {}
++        self._lock = threading.Lock()
++
++    def subscribe(self, topic: str, handler: Callable[[Any], None]) -> Callable[[], None]:
++        with self._lock:
++            self._subs.setdefault(topic, []).append(handler)
++
++        def unsubscribe():
++            with self._lock:
++                if handler in self._subs.get(topic, []):
++                    self._subs[topic].remove(handler)
++        return unsubscribe
++
++    def publish(self, topic: str, message: Any = None) -> int:
++        with self._lock:
++            calls = [(h, message) for h in self._subs.get(topic, [])]
++            if topic != "*":  # "*" subscribers get (topic, message) for everything (dashboard/logging)
++                calls += [(h, (topic, message)) for h in self._subs.get("*", [])]
++        for h, msg in calls:
++            try:
++                h(msg)
++            except Exception:
++                log.exception("bus handler for %r failed", topic)
++        return len(calls)
++
++
++def parse_event(data: dict):
++    """Turn a JSON body from POST /api/event into ("struggle", Struggle) / ("risk", Risk) / ("answer", ...)."""
++    t = str(data.get("type", ""))
++    if t == "struggle":
++        return t, Struggle.from_dict(data)
++    if t == "risk":
++        return t, Risk.from_dict(data)
++    if t == "answer":
++        choice = str(data.get("choice", ""))
++        if choice not in CHOICES:
++            raise ContractError("choice must be yes, no, timeout or dismissed")
++        return t, {"offer_id": data.get("offer_id"), "choice": choice}
++    raise ContractError("type must be struggle, risk or answer")
+diff --git a/ally/default_config.toml b/ally/default_config.toml
+index 775db53..f5ee0ee 100644
+--- a/ally/default_config.toml
++++ b/ally/default_config.toml
+@@ -135,6 +135,22 @@ folder = "plugins"         # drop .py files here to add tools; see plugins/examp
+ [security]
+ allowed_extension_ids = [] # empty = any Chrome extension may connect; add your extension's ID to lock it
+ 
++[proactive]
++# Ally notices when you're struggling (squinting, leaning in, clicking the same spot, backspacing a lot)
++# and offers help. Say "yes" or click Yes. Things you accept twice on a site are done automatically next time.
++enabled = true
++overlay = true                 # on-screen highlight + Yes/No bubble (Windows)
++voice_confirm = true           # ask out loud and listen for yes/no
++senses_behavior = true         # mouse/keyboard signals (needs pynput)
++senses_vision = false          # webcam squint/lean (needs mediapipe + opencv-python + face_landmarker.task)
++camera_index = 0
++min_confidence = 0.6           # 0..1, how sure before offering
++fusion_window_seconds = 4      # signals this close together count as one moment
++cooldown_seconds = 30          # at most one offer per app/site in this time
++offer_timeout_seconds = 8      # no answer = no change
++auto_apply_after = 2           # accepted this many times on a site = do it automatically
++context_poll_seconds = 1.5
++
+ # Your own commands. Each one becomes: a tool Claude can use, phrases you can say or type,
+ # and (optionally) a hotkey. Steps run in order. Step types:
+ #   { tool = "name", args = { ... } }   { say = "text" }        { ask = "a request for Ally" }
+diff --git a/ally/habits.py b/ally/habits.py
+new file mode 100644
+index 0000000..028e5a4
+--- /dev/null
++++ b/ally/habits.py
+@@ -0,0 +1,97 @@
++"""Habit memory: remembers which accommodations a person accepts in which app/site, so next time
++Ally applies them without asking ("I made Chase bigger, like last time").
++
++Stored in state/habits.json:
++    {"chase.com": {"zoom_in": {"accepted": 2, "declined": 0, "last": 1729800000,
++                               "accommodation": {...}}}}
++Owner: Ben H.
++"""
++
++from __future__ import annotations
++
++import json
++import logging
++import os
++import threading
++import time
++from pathlib import Path
++
++from .contracts import Accommodation
++
++log = logging.getLogger("ally")
++
++
++def context_key(app: str = "", site: str = "") -> str:
++    """Site wins over app (a site is more specific). Lower-cased, 'www.' dropped."""
++    site = (site or "").strip().lower()
++    if site.startswith("www."):
++        site = site[4:]
++    if site:
++        return site
++    return (app or "").strip().lower() or "unknown"
++
++
++class HabitMemory:
++    def __init__(self, path: Path, auto_after: int = 2):
++        self.path = Path(path)
++        self.auto_after = auto_after
++        self._lock = threading.Lock()
++        self._data: dict = self._load()
++
++    def _load(self) -> dict:
++        try:
++            data = json.loads(self.path.read_text(encoding="utf-8"))
++            return data if isinstance(data, dict) else {}
++        except (OSError, ValueError):
++            return {}
++
++    def _save(self) -> None:
++        tmp = self.path.with_suffix(".tmp")
++        try:
++            self.path.parent.mkdir(parents=True, exist_ok=True)
++            tmp.write_text(json.dumps(self._data, indent=1), encoding="utf-8")
++            os.replace(tmp, self.path)
++        except OSError:
++            log.exception("could not save habits")
++
++    def record(self, context: str, acc: Accommodation, accepted: bool) -> dict:
++        with self._lock:
++            entry = self._data.setdefault(context, {}).setdefault(
++                acc.key, {"accepted": 0, "declined": 0, "accommodation": acc.to_dict()})
++            entry["accepted" if accepted else "declined"] += 1
++            entry["last"] = time.time()
++            entry["accommodation"] = acc.to_dict()
++            self._save()
++            return dict(entry)
++
++    def lookup(self, context: str) -> list[dict]:
++        """All remembered accommodations for a context, best first."""
++        with self._lock:
++            items = [dict(v, key=k) for k, v in self._data.get(context, {}).items()]
++        return sorted(items, key=lambda e: (e["accepted"] - e["declined"], e.get("last", 0)), reverse=True)
++
++    def auto_apply(self, context: str) -> list[Accommodation]:
++        """Accommodations accepted often enough here to apply without asking."""
++        out = []
++        for e in self.lookup(context):
++            if e["accepted"] >= self.auto_after and e["accepted"] > e["declined"]:
++                a = e["accommodation"]
++                out.append(Accommodation(a["key"], a["label"], a["tool"], dict(a.get("args") or {})))
++        return out
++
++    def declined_recently(self, context: str, key: str, within_s: float = 600) -> bool:
++        with self._lock:
++            e = self._data.get(context, {}).get(key)
++        return bool(e and e["declined"] > e["accepted"] and time.time() - e.get("last", 0) < within_s)
++
++    def forget(self, context: str | None = None) -> None:
++        with self._lock:
++            if context is None:
++                self._data = {}
++            else:
++                self._data.pop(context, None)
++            self._save()
++
++    def snapshot(self) -> dict:
++        with self._lock:
++            return json.loads(json.dumps(self._data))
+diff --git a/ally/overlay/__init__.py b/ally/overlay/__init__.py
+new file mode 100644
+index 0000000..cdfadf5
+--- /dev/null
++++ b/ally/overlay/__init__.py
+@@ -0,0 +1,3 @@
++"""Overlay package. Owner: Ben W. See window.py."""
++
++from .window import Overlay, demo  # noqa: F401
+diff --git a/ally/overlay/__main__.py b/ally/overlay/__main__.py
+new file mode 100644
+index 0000000..f0f9de3
+--- /dev/null
++++ b/ally/overlay/__main__.py
+@@ -0,0 +1,3 @@
++from .window import demo
++
++demo()
+diff --git a/ally/overlay/window.py b/ally/overlay/window.py
+new file mode 100644
+index 0000000..f6e6d83
+--- /dev/null
++++ b/ally/overlay/window.py
+@@ -0,0 +1,212 @@
++"""On-screen overlay: highlight box, offer bubble (Yes / No), reading/warning card. Owner: Ben W.
++
++Implements the same 4 methods as proactive.NullUI:
++    highlight(box)                 box = (left, top, width, height) in physical screen pixels
++    show_card(text, actions, kind) kind = "info" | "risk"
++    offer(offer)                   contracts.Offer; call offer.resolve("yes"/"no", "overlay") on click
++    clear()
++
++All Tk work happens on ONE thread (Tk is not thread-safe); public methods just enqueue.
++Windows: transparent parts of the highlight window are click-through (-transparentcolor).
++"""
++
++from __future__ import annotations
++
++import logging
++import queue
++import sys
++import threading
++
++log = logging.getLogger("ally")
++
++KEY = "#ff00fe"          # transparent colour for the full-screen highlight layer
++ACCENT = "#ffb000"       # high-visibility amber
++BG, FG = "#111111", "#ffffff"
++RISK_BG = "#7a0000"
++FONT = ("Segoe UI", 22)
++FONT_SMALL = ("Segoe UI", 16, "bold")
++
++
++def _dpi_aware():
++    if sys.platform == "win32":
++        try:
++            import ctypes
++            ctypes.windll.shcore.SetProcessDpiAwareness(2)
++        except Exception:
++            pass
++
++
++class Overlay:
++    def __init__(self):
++        self._q: queue.Queue = queue.Queue()
++        self._ready = threading.Event()
++        self.error = ""
++        self.root = None
++
++    # ---------------------------------------------------------- public (any thread)
++    def start(self, timeout: float = 5.0) -> bool:
++        threading.Thread(target=self._run, name="overlay", daemon=True).start()
++        self._ready.wait(timeout)
++        return self.root is not None
++
++    def highlight(self, box):
++        self._q.put(("highlight", box))
++
++    def show_card(self, text: str, actions=("OK",), kind: str = "info"):
++        self._q.put(("card", (text, tuple(actions), kind)))
++
++    def offer(self, offer):
++        self._q.put(("offer", offer))
++
++    def clear(self):
++        self._q.put(("clear", None))
++
++    def stop(self):
++        self._q.put(("quit", None))
++
++    # ---------------------------------------------------------- Tk thread
++    def _run(self):
++        try:
++            import tkinter as tk
++            _dpi_aware()
++            self.tk = tk
++            root = tk.Tk()
++            root.withdraw()
++            # full-screen click-through layer for the highlight rectangle
++            hl = tk.Toplevel(root)
++            hl.overrideredirect(True)
++            hl.attributes("-topmost", True)
++            w, h = root.winfo_screenwidth(), root.winfo_screenheight()
++            hl.geometry(f"{w}x{h}+0+0")
++            hl.configure(bg=KEY)
++            try:
++                hl.attributes("-transparentcolor", KEY)
++            except tk.TclError:  # not Windows: fall back to see-through window
++                hl.attributes("-alpha", 0.35)
++            canvas = tk.Canvas(hl, bg=KEY, highlightthickness=0, width=w, height=h)
++            canvas.pack(fill="both", expand=True)
++            hl.withdraw()
++            self.hl, self.canvas = hl, canvas
++            self.bubble = None
++            self.card = None
++            self.root = root
++        except Exception as e:
++            self.error = f"overlay unavailable: {e}"
++            log.warning(self.error)
++            self._ready.set()
++            return
++        self._ready.set()
++        root.after(30, self._poll)
++        root.mainloop()
++
++    def _poll(self):
++        try:
++            while True:
++                kind, arg = self._q.get_nowait()
++                if kind == "quit":
++                    self.root.quit()
++                    return
++                getattr(self, f"_do_{kind}")(arg)
++        except queue.Empty:
++            pass
++        except Exception:
++            log.exception("overlay draw failed")
++        self.root.after(30, self._poll)
++
++    def _do_highlight(self, box):
++        self.canvas.delete("all")
++        if not box:
++            self.hl.withdraw()
++            return
++        l, t, w, h = box
++        for i, width in enumerate((10, 4)):  # thick amber + inner black edge reads on light AND dark pages
++            pad = 6 - i * 4
++            self.canvas.create_rectangle(l - pad, t - pad, l + w + pad, t + h + pad,
++                                         outline=ACCENT if i == 0 else "#000000", width=width)
++        self.hl.deiconify()
++        self.hl.lift()
++
++    def _place(self, win, near=None, wpx=520, hpx=200):
++        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
++        if near:
++            l, t, w, h = near
++            x, y = l + w + 20, t
++            if x + wpx > sw:
++                x = max(10, l - wpx - 20)
++        else:
++            x, y = sw - wpx - 40, sh - hpx - 100   # bottom-right, above the taskbar
++        win.geometry(f"+{int(max(10, min(x, sw - wpx - 10)))}+{int(max(10, min(y, sh - hpx - 60)))}")
++
++    def _window(self, bg):
++        tk = self.tk
++        win = tk.Toplevel(self.root)
++        win.overrideredirect(True)
++        win.attributes("-topmost", True)
++        win.configure(bg=bg, highlightbackground=ACCENT, highlightthickness=4)
++        return win
++
++    def _do_offer(self, offer):
++        tk = self.tk
++        self._close("bubble")
++        win = self._window(BG)
++        tk.Label(win, text=offer.prompt, font=FONT, fg=FG, bg=BG, wraplength=480, justify="left").pack(
++            padx=24, pady=(20, 12), anchor="w")
++        row = tk.Frame(win, bg=BG)
++        row.pack(padx=24, pady=(0, 20), anchor="w")
++
++        def answer(choice):
++            offer.resolve(choice, "overlay")
++            self._close("bubble")
++        for label, choice, color in (("Yes", "yes", ACCENT), ("No thanks", "no", "#444444")):
++            tk.Button(row, text=label, font=FONT_SMALL, bg=color, fg="#000000" if choice == "yes" else FG,
++                      activebackground=color, relief="flat", padx=26, pady=10,
++                      command=lambda c=choice: answer(c)).pack(side="left", padx=(0, 14))
++        self._place(win, offer.highlight)
++        self.bubble = win
++
++    def _do_card(self, arg):
++        text, actions, kind = arg
++        tk = self.tk
++        self._close("card")
++        bg = RISK_BG if kind == "risk" else BG
++        win = self._window(bg)
++        tk.Label(win, text=text, font=FONT, fg=FG, bg=bg, wraplength=560, justify="left").pack(padx=24, pady=20)
++        for a in actions:
++            tk.Button(win, text=a, font=FONT_SMALL, bg=ACCENT, relief="flat", padx=26, pady=8,
++                      command=lambda: self._close("card")).pack(pady=(0, 18))
++        self._place(win, None, 620, 260)
++        self.card = win
++        win.after(20000, lambda: self._close("card") if self.card is win else None)
++
++    def _do_clear(self, _):
++        self._do_highlight(None)
++        self._close("bubble")
++
++    def _close(self, attr):
++        win = getattr(self, attr, None)
++        if win is not None:
++            try:
++                win.destroy()
++            except Exception:
++                pass
++            setattr(self, attr, None)
++
++
++def demo():
++    """python -m ally.overlay -> shows each piece for a few seconds (Ben W's playground)."""
++    import time
++    from ..contracts import Offer
++    o = Overlay()
++    if not o.start():
++        print(o.error)
++        return
++    o.highlight((300, 300, 500, 200))
++    off = Offer("Looks hard to read. Want me to make this page bigger?", highlight=(300, 300, 500, 200), timeout=15)
++    o.offer(off)
++    print("answer:", off.wait())
++    o.clear()
++    o.show_card("This looks like a scam warning. Real companies never ask you to call a number from a pop-up.",
++                kind="risk")
++    time.sleep(5)
++    o.stop()
++
+diff --git a/ally/proactive.py b/ally/proactive.py
+new file mode 100644
+index 0000000..785bd5d
+--- /dev/null
++++ b/ally/proactive.py
+@@ -0,0 +1,327 @@
++"""The proactive brain: turns Struggle/Risk events into offers, actions and habits.
++
++    bus "struggle" --> fuse (window) --> pick accommodation for this app/site
++                   --> already a habit here?  apply silently-ish ("like last time")
++                   --> else Offer: overlay bubble + voice "Want me to make this bigger?"
++                   --> yes: run the Ally tool, remember it.  no: remember, back off.
++    bus "risk"     --> warning card + spoken warning (Ganesh owns the wording in ally/risk/)
++    context change --> auto-apply habits for the new app/site
++
++Owner: Ben H. The UI (overlay) and voice parts are plug-ins with tiny interfaces, see NullUI / NullVoice.
++"""
++
++from __future__ import annotations
++
++import collections
++import logging
++import queue
++import threading
++import time
++from typing import Callable
++
++from .contracts import Accommodation, EventBus, Offer, Risk, Struggle
++from .habits import HabitMemory, context_key
++
++log = logging.getLogger("ally")
++
++DEFAULTS = {
++    "enabled": True, "offer_timeout_seconds": 8.0, "cooldown_seconds": 30.0, "fusion_window_seconds": 4.0,
++    "min_confidence": 0.6, "auto_apply_after": 2, "voice_confirm": True, "overlay": True,
++    "senses_behavior": True, "senses_vision": False, "camera_index": 0, "context_poll_seconds": 1.5,
++}
++
++
++# ---------------------------------------------------------------- what to do about each struggle
++def pick_accommodation(kind: str, in_browser: bool) -> Accommodation:
++    """Map a struggle to one concrete Ally tool call. Edit freely, the keys feed habit memory."""
++    if kind in ("squint", "lean", "fused"):
++        return (Accommodation("page_zoom_150", "make this page bigger", "set_page_zoom", {"zoom": 1.5})
++                if in_browser else
++                Accommodation("magnify_2x", "magnify the screen", "magnify_screen", {"level": 2.0}))
++    if kind == "rage_click":
++        return (Accommodation("page_zoom_150", "make the buttons bigger", "set_page_zoom", {"zoom": 1.5})
++                if in_browser else
++                Accommodation("magnify_2x", "make things bigger so they're easier to click",
++                              "magnify_screen", {"level": 2.0}))
++    if kind == "hesitation":
++        return (Accommodation("read_page", "read this page to you", "read_page")
++                if in_browser else
++                Accommodation("describe_screen", "tell you what's on the screen", "describe_screen",
++                              {"question": "Briefly explain what is on screen and what the user can do next."}))
++    if kind == "retype":
++        return (Accommodation("min_font_20", "make the text larger", "set_min_font_size", {"px": 20})
++                if in_browser else
++                Accommodation("magnify_150", "make the screen a bit bigger", "magnify_screen", {"level": 1.5}))
++    raise ValueError(kind)
++
++
++OFFER_PROMPTS = {
++    "squint": "Looks hard to read. Want me to {label}?",
++    "lean": "Want me to {label}?",
++    "fused": "Looks hard to read. Want me to {label}?",
++    "rage_click": "Having trouble clicking? Want me to {label}?",
++    "hesitation": "Want me to {label}?",
++    "retype": "Want me to {label}?",
++}
++
++
++def fuse(events: list[Struggle]) -> float:
++    """Noisy-OR over the strongest event per kind: two weak signals beat one."""
++    best: dict[str, float] = {}
++    for e in events:
++        best[e.kind] = max(best.get(e.kind, 0.0), e.confidence)
++    p = 1.0
++    for c in best.values():
++        p *= (1.0 - c)
++    return 1.0 - p
++
++
++# ---------------------------------------------------------------- UI / voice interfaces
++class NullUI:
++    """Headless stand-in for the overlay (tests, Linux CI). Ben W's overlay implements the same 4 methods."""
++
++    def __init__(self, events=None):
++        self.events = events
++        self.shown: list = []
++
++    def highlight(self, box):
++        self.shown.append(("highlight", box))
++
++    def show_card(self, text: str, actions=("OK",), kind: str = "info"):
++        self.shown.append(("card", text, tuple(actions), kind))
++
++    def offer(self, offer: Offer):
++        self.shown.append(("offer", offer.prompt))
++
++    def clear(self):
++        self.shown.append(("clear",))
++
++
++class NullVoice:
++    """Headless stand-in for voice_confirm.VoiceConfirm: say() goes to the agent's speaker if any."""
++
++    def __init__(self, speaker=None):
++        self.speaker = speaker
++        self.said: list[str] = []
++
++    def say(self, text: str):
++        self.said.append(text)
++        if self.speaker is not None:
++            try:
++                self.speaker.say(text)
++            except Exception:
++                log.exception("say failed")
++
++    def ask(self, offer: Offer):
++        self.say(offer.prompt)  # can't hear; overlay click / API answer resolves it
++
++
++# ---------------------------------------------------------------- coordinator
++class Coordinator:
++    def __init__(self, bus: EventBus, call_tool: Callable, memory: HabitMemory,
++                 context_fn: Callable[[], dict], cfg_fn: Callable[[], dict] = lambda: {},
++                 ui=None, voice=None, events=None):
++        self.bus = bus
++        self.call_tool = call_tool          # (name, args, source) -> Outcome
++        self.memory = memory
++        self.context_fn = context_fn        # -> {"app":..., "site":..., "in_browser": bool}
++        self.cfg_fn = cfg_fn
++        self.ui = ui or NullUI()
++        self.voice = voice or NullVoice()
++        self.events = events
++        self._q: queue.Queue = queue.Queue()
++        self._recent: collections.deque = collections.deque(maxlen=50)
++        self._last_offer_at: dict[str, float] = {}
++        self.pending: Offer | None = None
++        self.history: collections.deque = collections.deque(maxlen=30)
++        self._stop = threading.Event()
++        self._unsubs: list = []
++        self._threads: list[threading.Thread] = []
++        self._ctx_key = None
++
++    # config with defaults
++    def cfg(self, k):
++        return (self.cfg_fn() or {}).get(k, DEFAULTS[k])
++
++    def _log(self, kind: str, text: str, **kw):
++        if self.events is not None:
++            self.events.add(kind, text, **kw)
++        log.debug("proactive %s: %s", kind, text)
++
++    # -------------------------------------------------------- lifecycle
++    def start(self, watch_context: bool = True):
++        self._unsubs += [self.bus.subscribe("struggle", lambda m: self._q.put(("struggle", m))),
++                         self.bus.subscribe("risk", lambda m: self._q.put(("risk", m))),
++                         self.bus.subscribe("answer", self._on_answer)]
++        t = threading.Thread(target=self._worker, name="proactive", daemon=True)
++        t.start()
++        self._threads.append(t)
++        if watch_context:
++            t2 = threading.Thread(target=self._watch_context, name="proactive-context", daemon=True)
++            t2.start()
++            self._threads.append(t2)
++
++    def stop(self):
++        self._stop.set()
++        self._q.put(("stop", None))
++        for u in self._unsubs:
++            u()
++        if self.pending:
++            self.pending.resolve("dismissed", "shutdown")
++
++    def wait_idle(self, timeout: float = 5.0) -> bool:
++        """Tests: block until the queue is drained and no offer is pending."""
++        end = time.time() + timeout
++        while time.time() < end:
++            if self._q.unfinished_tasks == 0 and self.pending is None:
++                return True
++            time.sleep(0.02)
++        return False
++
++    # -------------------------------------------------------- inputs
++    def _on_answer(self, msg: dict):
++        off = self.pending
++        if off and (msg.get("offer_id") in (None, "", off.id)):
++            off.resolve(msg["choice"], msg.get("by", "api"))
++
++    def _worker(self):
++        while not self._stop.is_set():
++            kind, msg = self._q.get()
++            try:
++                if kind == "struggle":
++                    self.handle_struggle(msg)
++                elif kind == "risk":
++                    self.handle_risk(msg)
++            except Exception:
++                log.exception("proactive handler failed")
++            finally:
++                self._q.task_done()
++
++    def _context(self, s: Struggle | None = None) -> tuple[str, bool]:
++        c = {}
++        try:
++            c = self.context_fn() or {}
++        except Exception:
++            log.exception("context_fn failed")
++        app, site = c.get("app", ""), c.get("site", "")
++        if s is not None:  # the sensor may know better
++            app, site = s.target.app or app, s.target.site or site
++        return context_key(app, site), bool(c.get("in_browser") or site)
++
++    # -------------------------------------------------------- struggle
++    def handle_struggle(self, s: Struggle):
++        if not self.cfg("enabled"):
++            return
++        now = time.time()
++        self._recent.append(s)
++        window = float(self.cfg("fusion_window_seconds"))
++        recent = [e for e in self._recent if now - e.ts <= window]
++        score = fuse(recent)
++        kinds = {e.kind for e in recent}
++        self._log("struggle", f"{s.kind} {s.confidence:.2f} (fused {score:.2f} from {', '.join(sorted(kinds))})",
++                  source=s.source)
++        if score < float(self.cfg("min_confidence")):
++            return
++        if self.pending is not None:
++            return
++        ctx, in_browser = self._context(s)
++        if now - self._last_offer_at.get(ctx, 0) < float(self.cfg("cooldown_seconds")):
++            return
++        # vision signals (squint/lean) say "hard to see"; use the strongest kind to pick the fix
++        lead = max(recent, key=lambda e: e.confidence).kind if len(kinds) > 1 else s.kind
++        acc = pick_accommodation(lead, in_browser)
++        self._recent.clear()
++        self._last_offer_at[ctx] = now
++
++        if any(a.key == acc.key for a in self.memory.auto_apply(ctx)):
++            self.apply(acc, ctx, why="habit")
++            self.voice.say(f"I'll {acc.label}, like last time.")
++            return
++        if self.memory.declined_recently(ctx, acc.key):
++            self._log("proactive", f"skipped offer to {acc.label} on {ctx}: declined recently")
++            return
++        box = s.target.box
++        prompt = OFFER_PROMPTS.get(lead, "Want me to {label}?").format(label=acc.label)
++        offer = Offer(prompt, accommodation=acc, context=ctx, reason=s,
++                      timeout=float(self.cfg("offer_timeout_seconds")), highlight=box)
++        choice = self.ask(offer)
++        learn = ctx != "unknown"  # don't build habits when we can't tell where the user is
++        if choice == "yes":
++            self.apply(acc, ctx, why="accepted")
++            if learn:
++                self.memory.record(ctx, acc, True)
++        elif choice == "no" and learn:
++            self.memory.record(ctx, acc, False)
++
++    def ask(self, offer: Offer) -> str:
++        self.pending = offer
++        try:
++            self.bus.publish("offer", offer)
++            self._log("offer", offer.prompt, offer=offer.to_dict())
++            if offer.highlight:
++                self.ui.highlight(offer.highlight)
++            self.ui.offer(offer)
++            if self.cfg("voice_confirm"):
++                threading.Thread(target=self._voice_ask, args=(offer,), name="voice-ask", daemon=True).start()
++            choice = offer.wait()
++            self._log("offer", f"answer: {choice} ({offer.answered_by})", offer=offer.to_dict())
++            self.bus.publish("offer_result", offer)
++            self.history.append(offer.to_dict())
++            return choice
++        finally:
++            try:
++                self.ui.clear()
++            except Exception:
++                log.exception("ui.clear failed")
++            self.pending = None
++
++    def _voice_ask(self, offer: Offer):
++        try:
++            self.voice.ask(offer)
++        except Exception:
++            log.exception("voice ask failed")
++
++    def apply(self, acc: Accommodation, ctx: str, why: str = ""):
++        out = self.call_tool(acc.tool, dict(acc.args), "proactive")
++        ok = getattr(out, "ok", True)
++        self.bus.publish("applied", {"accommodation": acc.to_dict(), "context": ctx, "why": why, "ok": ok})
++        self._log("applied" if ok else "error", f"{acc.label} on {ctx} ({why})")
++        return out
++
++    # -------------------------------------------------------- risk
++    def handle_risk(self, r: Risk):
++        if not self.cfg("enabled"):
++            return
++        from .risk import warning_for  # Ganesh's wording
++        text, spoken = warning_for(r)
++        self._log("risk", f"{r.kind} [{r.severity}] {r.evidence}", url=r.url)
++        self.bus.publish("risk_warning", {"risk": r.to_dict(), "text": text})
++        self.ui.show_card(text, actions=("OK",), kind="risk")
++        self.voice.say(spoken)
++
++    # -------------------------------------------------------- habits on context change
++    def check_context(self):
++        ctx, _ = self._context()
++        if ctx == self._ctx_key:
++            return
++        self._ctx_key = ctx
++        self.bus.publish("context", ctx)
++        accs = self.memory.auto_apply(ctx)
++        for acc in accs:
++            self.apply(acc, ctx, why="habit")
++        if accs:
++            self.voice.say(f"I'll {accs[0].label}, like last time." if len(accs) == 1
++                           else "I've set things up the way you like here.")
++
++    def _watch_context(self):
++        while not self._stop.wait(float(self.cfg("context_poll_seconds"))):
++            if not self.cfg("enabled"):
++                continue
++            try:
++                self.check_context()
++            except Exception:
++                log.exception("context watch failed")
++
++    def status(self) -> dict:
++        return {"pending": self.pending.to_dict() if self.pending else None, "context": self._ctx_key,
++                "recent_offers": list(self.history)[-5:]}
+diff --git a/ally/risk/__init__.py b/ally/risk/__init__.py
+new file mode 100644
+index 0000000..3732a67
+--- /dev/null
++++ b/ally/risk/__init__.py
+@@ -0,0 +1,69 @@
++"""Risk detection + warning wording. Owner: Ganesh.
++
++Starter heuristics only. Real signals come from extension/ content scripts (page text, form fields)
++posting {"type": "risk", ...} to /api/event, or from Python checks here calling bus.publish("risk", Risk(...)).
++"""
++
++from __future__ import annotations
++
++import re
++import urllib.parse
++
++from ..contracts import Risk
++
++WARNINGS = {
++    "scam_popup": ("This looks like a scam warning. Real companies never ask you to call a number from a pop-up.",
++                   "Careful. This pop-up looks like a scam. Don't call any number on it."),
++    "untrusted_site": ("This website may not be what it claims to be.",
++                       "Careful, this website might not be trustworthy."),
++    "remote_access": ("Someone may be trying to control your computer. Only allow this if YOU called them.",
++                      "Careful. This lets someone else control your computer."),
++    "payment_field": ("You're about to enter payment details. Check the web address first.",
++                      "You're about to type card details. Make sure this is the right website."),
++}
++
++SCAM_PHRASES = [
++    r"call (microsoft|apple|windows) support", r"your computer (is|has been) (infected|locked|blocked)",
++    r"do not (close|restart|turn off) (this|your)", r"virus(es)? (detected|found)",
++    r"(buy|purchase) (gift|itunes|google play) cards?", r"your (account|bank) (is|has been) (suspended|frozen)",
++]
++REMOTE_TOOLS = ["anydesk", "teamviewer", "ultraviewer", "quickassist", "supremo", "logmein", "screenconnect"]
++BRANDS = ["paypal", "chase", "wellsfargo", "bankofamerica", "amazon", "apple", "microsoft", "irs", "medicare"]
++
++
++def warning_for(r: Risk) -> tuple[str, str]:
++    text, spoken = WARNINGS.get(r.kind, ("This might be risky.", "Careful, this might be risky."))
++    if r.evidence:
++        text = f"{text}\n\nWhy: {r.evidence}"
++    return text, spoken
++
++
++def check_text(text: str, url: str = "") -> list[Risk]:
++    t = (text or "").lower()
++    out = []
++    for pat in SCAM_PHRASES:
++        m = re.search(pat, t)
++        if m:
++            out.append(Risk("scam_popup", "high", f'page says "{m.group(0)}"', url=url, source="text"))
++            break
++    return out
++
++
++def check_url(url: str) -> list[Risk]:
++    host = (urllib.parse.urlsplit(url).hostname or "").lower()
++    out = []
++    if any(tool in host for tool in REMOTE_TOOLS):
++        out.append(Risk("remote_access", "high", f"{host} is a remote-control tool", url=url, source="url"))
++    for b in BRANDS:  # brand name in host but not the brand's real domain, e.g. paypal-secure-login.xyz
++        if b in host.replace("-", "").replace(".", "") and not re.search(rf"(^|\.){b}\.(com|gov)$", host):
++            out.append(Risk("untrusted_site", "medium", f"{host} uses the name '{b}' but isn't {b}'s website",
++                            url=url, source="url"))
++            break
++    if re.match(r"^\d+\.\d+\.\d+\.\d+$", host):
++        out.append(Risk("untrusted_site", "medium", "the address is just numbers", url=url, source="url"))
++    return out
++
++
++def check_process_names(names: list[str]) -> list[Risk]:
++    found = [n for n in names if any(tool in n.lower().replace(" ", "") for tool in REMOTE_TOOLS)]
++    return [Risk("remote_access", "high", f"{found[0]} is running", app=found[0], source="process")] if found else []
+diff --git a/ally/senses/__init__.py b/ally/senses/__init__.py
+new file mode 100644
+index 0000000..bb690c8
+--- /dev/null
++++ b/ally/senses/__init__.py
+@@ -0,0 +1,5 @@
++"""Struggle sensors (webcam + mouse/keyboard). Owner: Hayden. Each sensor publishes contracts.Struggle
++on bus topic "struggle". Fusion of several signals happens in proactive.fuse()."""
++
++from .behavior import BehaviorSensor, HesitationDetector, RageClickDetector, RetypeDetector  # noqa: F401
++from .vision import LeanDetector, SquintDetector, VisionSensor  # noqa: F401
+diff --git a/ally/senses/behavior.py b/ally/senses/behavior.py
+new file mode 100644
+index 0000000..73b62f3
+--- /dev/null
++++ b/ally/senses/behavior.py
+@@ -0,0 +1,139 @@
++"""Mouse/keyboard struggle detectors. Owner: Hayden.
++
++Detectors are pure (feed them events with timestamps, get a Struggle or None) so they are unit-testable.
++BehaviorSensor wires them to pynput (pip install pynput) and publishes to the bus.
++Tune the numbers live by watching the dashboard event log.
++"""
++
++from __future__ import annotations
++
++import collections
++import logging
++import math
++import time
++
++from ..contracts import Struggle, Target
++
++log = logging.getLogger("ally")
++
++
++class RageClickDetector:
++    """N+ clicks within `window` seconds inside `radius` px = frustration (button too small / not responding)."""
++
++    def __init__(self, n: int = 3, window: float = 1.5, radius: float = 30, refractory: float = 3.0):
++        self.n, self.window, self.radius, self.refractory = n, window, radius, refractory
++        self.clicks: collections.deque = collections.deque(maxlen=20)
++        self._last_fire = -1e9
++
++    def feed(self, x: int, y: int, t: float | None = None) -> Struggle | None:
++        t = time.time() if t is None else t
++        self.clicks.append((x, y, t))
++        near = [c for c in self.clicks if t - c[2] <= self.window and math.dist((x, y), c[:2]) <= self.radius]
++        if len(near) >= self.n and t - self._last_fire >= self.refractory:
++            self._last_fire = t
++            self.clicks.clear()
++            conf = min(1.0, 0.55 + 0.1 * (len(near) - self.n + 1))
++            return Struggle("rage_click", conf, Target(x=x, y=y, box=(x - 60, y - 40, 120, 80)),
++                            source="behavior", detail={"clicks": len(near)}, ts=t)
++        return None
++
++
++class RetypeDetector:
++    """Lots of backspacing in a short time = they can't see what they typed (or keep mistyping)."""
++
++    def __init__(self, backspaces: int = 6, window: float = 4.0, refractory: float = 10.0):
++        self.need, self.window, self.refractory = backspaces, window, refractory
++        self.times: collections.deque = collections.deque(maxlen=50)
++        self._last_fire = -1e9
++
++    def feed_key(self, is_backspace: bool, t: float | None = None) -> Struggle | None:
++        t = time.time() if t is None else t
++        if not is_backspace:
++            return None
++        self.times.append(t)
++        n = sum(1 for x in self.times if t - x <= self.window)
++        if n >= self.need and t - self._last_fire >= self.refractory:
++            self._last_fire = t
++            self.times.clear()
++            return Struggle("retype", min(1.0, 0.5 + 0.03 * n), source="behavior", detail={"backspaces": n}, ts=t)
++        return None
++
++
++class HesitationDetector:
++    """Mouse wandering a lot without clicking or typing = lost / doesn't know where to go next."""
++
++    def __init__(self, path_px: float = 2500, window: float = 6.0, refractory: float = 20.0):
++        self.path_px, self.window, self.refractory = path_px, window, refractory
++        self.moves: collections.deque = collections.deque(maxlen=2000)
++        self._last_action = time.time()
++        self._last_fire = -1e9
++
++    def action(self, t: float | None = None):
++        """Call on any click or key press: resets the clock."""
++        self._last_action = time.time() if t is None else t
++        self.moves.clear()
++
++    def feed_move(self, x: int, y: int, t: float | None = None) -> Struggle | None:
++        t = time.time() if t is None else t
++        self.moves.append((x, y, t))
++        while self.moves and t - self.moves[0][2] > self.window:
++            self.moves.popleft()
++        if t - self._last_action < self.window or t - self._last_fire < self.refractory:
++            return None
++        pts = list(self.moves)
++        dist = sum(math.dist(pts[i][:2], pts[i + 1][:2]) for i in range(len(pts) - 1))
++        if dist >= self.path_px:
++            self._last_fire = t
++            self.moves.clear()
++            return Struggle("hesitation", min(0.9, 0.5 + dist / (self.path_px * 10)), Target(x=x, y=y),
++                            source="behavior", detail={"path_px": round(dist)}, ts=t)
++        return None
++
++
++class BehaviorSensor:
++    """pynput listeners -> detectors -> bus.publish("struggle", ...). Safe no-op if pynput is missing."""
++
++    def __init__(self, bus):
++        self.bus = bus
++        self.rage, self.retype, self.hesitation = RageClickDetector(), RetypeDetector(), HesitationDetector()
++        self._mouse = self._keys = None
++        self.error = ""
++
++    def _emit(self, s: Struggle | None):
++        if s is not None:
++            self.bus.publish("struggle", s)
++
++    def start(self) -> bool:
++        try:
++            from pynput import keyboard, mouse
++        except Exception as e:  # ImportError, or no display
++            self.error = f"pynput unavailable: {e}"
++            log.warning("behavior sensor off: %s", self.error)
++            return False
++
++        def on_click(x, y, button, pressed):
++            if pressed:
++                self.hesitation.action()
++                self._emit(self.rage.feed(int(x), int(y)))
++
++        def on_move(x, y):
++            self._emit(self.hesitation.feed_move(int(x), int(y)))
++
++        def on_press(key):
++            self.hesitation.action()
++            self._emit(self.retype.feed_key(key == keyboard.Key.backspace))
++
++        self._mouse = mouse.Listener(on_click=on_click, on_move=on_move)
++        self._keys = keyboard.Listener(on_press=on_press)
++        self._mouse.daemon = self._keys.daemon = True
++        self._mouse.start()
++        self._keys.start()
++        return True
++
++    def stop(self):
++        for l in (self._mouse, self._keys):
++            if l is not None:
++                try:
++                    l.stop()
++                except Exception:
++                    pass
+diff --git a/ally/senses/vision.py b/ally/senses/vision.py
+new file mode 100644
+index 0000000..a5ca6be
+--- /dev/null
++++ b/ally/senses/vision.py
+@@ -0,0 +1,172 @@
++"""Webcam struggle detectors: squinting and leaning in. Owner: Hayden.
++
++Uses MediaPipe Face Landmarker blendshapes (eyeSquintLeft/Right) and face size for lean.
++    pip install mediapipe opencv-python
++    download the model (once) next to this file:
++    https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
++
++The pure parts (SquintDetector, LeanDetector) take numbers and timestamps, so they test without a camera.
++"Where to zoom" = the mouse cursor for now (gaze is a timeboxed experiment; swap in cursor_point()).
++"""
++
++from __future__ import annotations
++
++import logging
++import threading
++import time
++from pathlib import Path
++
++from ..contracts import Struggle, Target
++
++log = logging.getLogger("ally")
++MODEL = Path(__file__).with_name("face_landmarker.task")
++
++
++class SquintDetector:
++    """Squint held above `threshold` for `hold` seconds, relative to the person's own resting baseline."""
++
++    def __init__(self, threshold: float = 0.35, hold: float = 0.8, refractory: float = 8.0):
++        self.threshold, self.hold, self.refractory = threshold, hold, refractory
++        self.baseline: float | None = None
++        self._since: float | None = None
++        self._last_fire = -1e9
++
++    def feed(self, squint_l: float, squint_r: float, t: float | None = None) -> Struggle | None:
++        t = time.time() if t is None else t
++        s = (squint_l + squint_r) / 2
++        if self.baseline is None:
++            self.baseline = s
++        lift = s - self.baseline
++        if lift < self.threshold * 0.5:  # relaxed: slowly learn this person's resting face
++            self.baseline = 0.98 * self.baseline + 0.02 * s
++        if lift >= self.threshold:
++            self._since = t if self._since is None else self._since
++            if t - self._since >= self.hold and t - self._last_fire >= self.refractory:
++                self._last_fire, self._since = t, None
++                return Struggle("squint", min(1.0, 0.5 + lift), source="vision",
++                                detail={"squint": round(s, 3), "baseline": round(self.baseline, 3)}, ts=t)
++        else:
++            self._since = None
++        return None
++
++
++class LeanDetector:
++    """Face width (e.g. distance between outer eye corners, normalized) growing past baseline = leaning in."""
++
++    def __init__(self, ratio: float = 1.18, hold: float = 1.0, refractory: float = 8.0):
++        self.ratio, self.hold, self.refractory = ratio, hold, refractory
++        self.baseline: float | None = None
++        self._since: float | None = None
++        self._last_fire = -1e9
++
++    def feed(self, face_width: float, t: float | None = None) -> Struggle | None:
++        t = time.time() if t is None else t
++        if face_width <= 0:
++            return None
++        if self.baseline is None:
++            self.baseline = face_width
++        r = face_width / self.baseline
++        if r < 1.05:
++            self.baseline = 0.97 * self.baseline + 0.03 * face_width
++        if r >= self.ratio:
++            self._since = t if self._since is None else self._since
++            if t - self._since >= self.hold and t - self._last_fire >= self.refractory:
++                self._last_fire, self._since = t, None
++                return Struggle("lean", min(1.0, 0.4 + (r - 1)), source="vision", detail={"ratio": round(r, 3)}, ts=t)
++        else:
++            self._since = None
++        return None
++
++
++def cursor_point() -> tuple[int, int] | None:
++    try:
++        import ctypes
++
++        class POINT(ctypes.Structure):
++            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
++        p = POINT()
++        ctypes.windll.user32.GetCursorPos(ctypes.byref(p))
++        return p.x, p.y
++    except Exception:
++        try:
++            from pynput.mouse import Controller
++            x, y = Controller().position
++            return int(x), int(y)
++        except Exception:
++            return None
++
++
++def target_here() -> Target:
++    p = cursor_point()
++    if not p:
++        return Target()
++    x, y = p
++    return Target(x=x, y=y, box=(x - 220, y - 130, 440, 260))
++
++
++class VisionSensor:
++    """Camera thread: frames -> FaceLandmarker -> detectors -> bus. No-op with a clear error if deps missing."""
++
++    def __init__(self, bus, camera_index: int = 0, fps: float = 15):
++        self.bus, self.camera_index, self.fps = bus, camera_index, fps
++        self.squint, self.lean = SquintDetector(), LeanDetector()
++        self.error = ""
++        self._stop = threading.Event()
++        self.last = {}  # latest raw numbers, for a debug panel
++
++    def start(self) -> bool:
++        try:
++            import cv2  # noqa: F401
++            import mediapipe  # noqa: F401
++        except Exception as e:
++            self.error = f"vision off: pip install mediapipe opencv-python ({e})"
++            log.warning(self.error)
++            return False
++        if not MODEL.exists():
++            self.error = f"vision off: download face_landmarker.task to {MODEL}"
++            log.warning(self.error)
++            return False
++        threading.Thread(target=self._run, name="vision", daemon=True).start()
++        return True
++
++    def stop(self):
++        self._stop.set()
++
++    def _run(self):
++        import cv2
++        import mediapipe as mp
++        from mediapipe.tasks.python import BaseOptions
++        from mediapipe.tasks.python.vision import FaceLandmarker, FaceLandmarkerOptions, RunningMode
++
++        opts = FaceLandmarkerOptions(base_options=BaseOptions(model_asset_path=str(MODEL)),
++                                     running_mode=RunningMode.VIDEO, num_faces=1,
++                                     output_face_blendshapes=True)
++        cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW) if hasattr(cv2, "CAP_DSHOW") \
++            else cv2.VideoCapture(self.camera_index)
++        try:
++            with FaceLandmarker.create_from_options(opts) as lm:
++                while not self._stop.is_set():
++                    ok, frame = cap.read()
++                    if not ok:
++                        time.sleep(0.2)
++                        continue
++                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
++                    res = lm.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb),
++                                              int(time.monotonic() * 1000))
++                    if res.face_blendshapes:
++                        b = {c.category_name: c.score for c in res.face_blendshapes[0]}
++                        pts = res.face_landmarks[0]
++                        width = abs(pts[263].x - pts[33].x)  # outer eye corners, normalized 0..1
++                        self.last = {"eyeSquintLeft": b.get("eyeSquintLeft", 0),
++                                     "eyeSquintRight": b.get("eyeSquintRight", 0), "face_width": width}
++                        for s in (self.squint.feed(b.get("eyeSquintLeft", 0), b.get("eyeSquintRight", 0)),
++                                  self.lean.feed(width)):
++                            if s is not None:
++                                s.target = target_here()
++                                self.bus.publish("struggle", s)
++                    time.sleep(max(0.0, 1 / self.fps - 0.01))
++        except Exception as e:
++            self.error = f"vision crashed: {e}"
++            log.exception("vision sensor crashed")
++        finally:
++            cap.release()
+diff --git a/ally/server.py b/ally/server.py
+index be8d070..a2f64c6 100644
+--- a/ally/server.py
++++ b/ally/server.py
+@@ -131,6 +131,8 @@ def make_handler(agent):
+                 q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
+                 if path == "/api/status":
+                     return self._json(200, agent.status())
++                if path == "/api/habits":
++                    return self._json(200, {"habits": agent.habits.snapshot()})
+                 if path == "/api/tools":
+                     return self._json(200, {"tools": agent.tools_info()})
+                 if path == "/api/config":
+@@ -166,6 +168,13 @@ def make_handler(agent):
+             if path == "/api/config":
+                 ok, errors, warnings = agent.save_config(str(data.get("text", "")))
+                 return self._json(200 if ok else 400, {"ok": ok, "errors": errors, "warnings": warnings})
++            if path == "/api/event":
++                out = agent.publish_event(data if isinstance(data, dict) else {})
++                return self._json(200 if out["ok"] else 400, out)
++            if path == "/api/habits":
++                if data.get("forget"):
++                    agent.habits.forget(data.get("context") or None)
++                return self._json(200, {"habits": agent.habits.snapshot()})
+             if path == "/api/stop":
+                 agent.speaker.stop()
+                 return self._json(200, {"ok": True})
+diff --git a/ally/voice_confirm.py b/ally/voice_confirm.py
+new file mode 100644
+index 0000000..4f4ace9
+--- /dev/null
++++ b/ally/voice_confirm.py
+@@ -0,0 +1,76 @@
++"""Speak an offer and listen for yes/no. Owner: Ganesh.
++
++Same interface as proactive.NullVoice:  say(text)  and  ask(offer)  (ask resolves the offer with "voice").
++Uses Ally's existing speaker (Cartesia or OS voice) and recorder + speech-to-text (Cartesia ink-whisper).
++"""
++
++from __future__ import annotations
++
++import logging
++import re
++
++log = logging.getLogger("ally")
++
++YES = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please", "do it", "go ahead", "alright", "absolutely",
++       "yes please", "uh huh", "mhm", "correct", "right"}
++NO = {"no", "nope", "nah", "don't", "do not", "stop", "cancel", "no thanks", "not now", "leave it", "never mind"}
++
++
++def parse_yes_no(text: str) -> str | None:
++    """'Yes please!' -> 'yes', 'no thank you' -> 'no', 'what?' -> None. Negatives win ties ('yes, no wait')."""
++    t = re.sub(r"[^a-z' ]", " ", (text or "").lower())
++    t = " " + re.sub(r"\s+", " ", t).strip() + " "
++    hit = lambda words: any(f" {w} " in t for w in words)  # noqa: E731
++    if hit(NO):
++        return "no"
++    if hit(YES):
++        return "yes"
++    return None
++
++
++class VoiceConfirm:
++    def __init__(self, agent, listen_seconds: float = 4.0, silence_seconds: float = 0.8):
++        self.agent = agent
++        self.listen_seconds, self.silence_seconds = listen_seconds, silence_seconds
++
++    def say(self, text: str):
++        try:
++            self.agent.speaker.say(text, wait=False)
++        except Exception:
++            log.exception("say failed")
++
++    def ask(self, offer):
++        try:
++            self.agent.speaker.say(offer.prompt, wait=True)  # don't record our own voice
++        except Exception:
++            log.exception("say failed")
++        ok, why = self.agent.voice.available()
++        if not ok or offer.done:
++            log.info("voice confirm: not listening (%s)", why if not ok else "already answered")
++            return
++        for _ in range(2):  # one retry if we heard something unclear
++            if offer.done:
++                return
++            text = self._listen()
++            choice = parse_yes_no(text)
++            self.agent.events.add("heard", text or "(nothing)", source="confirm")
++            if choice:
++                offer.resolve(choice, "voice")
++                return
++            if not text:
++                return  # silence: let the timer / click decide
++            self.say("Sorry, yes or no?")
++
++    def _listen(self) -> str:
++        from .voice import wav_bytes
++        v = self.agent.voice
++        try:
++            v._stop.clear()
++            if v.recorder() == "sounddevice":
++                pcm = v._record_sounddevice(self.listen_seconds, self.silence_seconds)
++            else:
++                pcm = v._record()
++            return v.transcribe(wav_bytes(pcm)) if pcm else ""
++        except Exception as e:
++            log.warning("voice confirm listen failed: %s", e)
++            return ""
+diff --git a/requirements-optional.txt b/requirements-optional.txt
+index 8747e40..c289d3c 100644
+--- a/requirements-optional.txt
++++ b/requirements-optional.txt
+@@ -11,3 +11,7 @@ certifi            # fixes HTTPS certificate errors on some Mac Python installs
+ 
+ # Optional offline speech-to-text (big download, ~150 MB model on first use):
+ # faster-whisper>=1.0
++
++# Proactive webcam sensing (squint / lean). Also download face_landmarker.task into ally/senses/ (see FOUNDATION.md)
++mediapipe>=0.10.14
++opencv-python>=4.9
+diff --git a/tests/test_proactive.py b/tests/test_proactive.py
+new file mode 100644
+index 0000000..e93db63
+--- /dev/null
++++ b/tests/test_proactive.py
+@@ -0,0 +1,245 @@
++"""Proactive layer: contracts, bus, habits, coordinator, detectors, risk rules, voice parsing, API wiring."""
++
++from __future__ import annotations
++
++import tempfile
++import threading
++import time
++import unittest
++from pathlib import Path
++
++from helpers import temp_home
++
++from ally.contracts import ContractError, EventBus, Offer, Risk, Struggle, Target, parse_event
++from ally.habits import HabitMemory, context_key
++from ally.proactive import Coordinator, NullUI, NullVoice, fuse, pick_accommodation
++from ally.risk import check_text, check_url, warning_for
++from ally.senses.behavior import HesitationDetector, RageClickDetector, RetypeDetector
++from ally.senses.vision import LeanDetector, SquintDetector
++from ally.voice_confirm import parse_yes_no
++
++
++class FakeOut:
++    def __init__(self, ok=True):
++        self.ok = ok
++
++
++class Rig:
++    """A coordinator with fake tools/UI/voice and a controllable context."""
++
++    def __init__(self, ctx=None, cfg=None, answer=None):
++        self.bus = EventBus()
++        self.calls = []
++        self.ctx = ctx or {"app": "Google Chrome", "site": "chase.com", "in_browser": True}
++        self.memory = HabitMemory(Path(tempfile.mkdtemp()) / "habits.json")
++        self.ui, self.voice = NullUI(), NullVoice()
++        base = {"cooldown_seconds": 0, "offer_timeout_seconds": 2}
++        base.update(cfg or {})
++        self.c = Coordinator(self.bus, lambda n, a, s: self.calls.append((n, a)) or FakeOut(), self.memory,
++                             lambda: self.ctx, lambda: base, ui=self.ui, voice=self.voice)
++        self.c.start(watch_context=False)
++        if answer:  # auto-answer every offer
++            self.bus.subscribe("offer", lambda o: threading.Timer(0.05, o.resolve, (answer, "test")).start())
++
++    def struggle(self, kind="squint", conf=0.8, **kw):
++        self.bus.publish("struggle", Struggle(kind, conf, **kw))
++        self.c.wait_idle()
++
++
++class ContractTests(unittest.TestCase):
++    def test_validation(self):
++        with self.assertRaises(ContractError):
++            Struggle("blink")
++        with self.assertRaises(ContractError):
++            Risk("scam_popup", severity="huge")
++        self.assertEqual(Struggle("squint", 7).confidence, 1.0)
++        t, s = parse_event({"type": "struggle", "kind": "lean", "target": {"site": "a.com", "box": [1, 2, 3, 4]}})
++        self.assertEqual((t, s.target.site, s.target.box), ("struggle", "a.com", (1, 2, 3, 4)))
++        with self.assertRaises(ContractError):
++            parse_event({"type": "nope"})
++
++    def test_offer_first_answer_wins_and_times_out(self):
++        o = Offer("?", timeout=0.05)
++        self.assertTrue(o.resolve("yes", "voice"))
++        self.assertFalse(o.resolve("no", "overlay"))
++        self.assertEqual((o.wait(), o.answered_by), ("yes", "voice"))
++        self.assertEqual(Offer("?", timeout=0.05).wait(), "timeout")
++
++    def test_bus_isolates_crashing_handlers(self):
++        bus, got = EventBus(), []
++        bus.subscribe("x", lambda m: 1 / 0)
++        bus.subscribe("x", got.append)
++        bus.subscribe("*", got.append)
++        unsub = bus.subscribe("x", got.append)
++        unsub()
++        self.assertEqual(bus.publish("x", 5), 3)
++        self.assertEqual(got, [5, ("x", 5)])
++
++
++class HabitTests(unittest.TestCase):
++    def test_record_lookup_auto_apply_persist(self):
++        path = Path(tempfile.mkdtemp()) / "h.json"
++        m = HabitMemory(path)
++        acc = pick_accommodation("squint", True)
++        m.record("chase.com", acc, True)
++        self.assertEqual(m.auto_apply("chase.com"), [])
++        m.record("chase.com", acc, True)
++        self.assertEqual([a.key for a in HabitMemory(path).auto_apply("chase.com")], ["page_zoom_150"])
++        self.assertEqual(context_key("Chrome", "WWW.Chase.com"), "chase.com")
++        self.assertEqual(context_key("Word", ""), "word")
++
++
++class CoordinatorTests(unittest.TestCase):
++    def test_yes_applies_and_learns_then_auto_applies(self):
++        r = Rig(answer="yes")
++        r.struggle("squint", 0.8)
++        self.assertEqual(r.calls, [("set_page_zoom", {"zoom": 1.5})])
++        r.struggle("squint", 0.8)
++        self.assertEqual(len(r.calls), 2)
++        offers = [x for x in r.ui.shown if x[0] == "offer"]
++        r.struggle("squint", 0.8)  # third time: habit, no question
++        self.assertEqual(len(r.calls), 3)
++        self.assertEqual(len([x for x in r.ui.shown if x[0] == "offer"]), len(offers))
++        self.assertIn("like last time", r.voice.said[-1])
++
++    def test_no_is_remembered_and_backs_off(self):
++        r = Rig(answer="no")
++        r.struggle("rage_click", 0.9)
++        r.struggle("rage_click", 0.9)
++        self.assertEqual(r.calls, [])
++        self.assertEqual(len([x for x in r.ui.shown if x[0] == "offer"]), 1)  # second one skipped
++
++    def test_weak_signals_fuse(self):
++        self.assertAlmostEqual(fuse([Struggle("squint", 0.5), Struggle("lean", 0.5)]), 0.75)
++        r = Rig(answer="yes")
++        r.struggle("squint", 0.45)
++        self.assertEqual(r.calls, [])
++        r.struggle("lean", 0.4)
++        self.assertEqual(len(r.calls), 1)
++
++    def test_desktop_uses_screen_tools_and_cooldown(self):
++        r = Rig(ctx={"app": "Microsoft Word", "site": "", "in_browser": False}, cfg={"cooldown_seconds": 60},
++                answer="yes")
++        r.struggle("squint", 0.9)
++        r.struggle("squint", 0.9)
++        self.assertEqual(r.calls, [("magnify_screen", {"level": 2.0})])
++
++    def test_timeout_changes_nothing(self):
++        r = Rig(cfg={"offer_timeout_seconds": 0.1})
++        r.struggle("squint", 0.9)
++        self.assertEqual(r.calls, [])
++        self.assertEqual(r.memory.snapshot(), {})
++
++    def test_context_change_applies_habits(self):
++        r = Rig()
++        acc = pick_accommodation("squint", True)
++        r.memory.record("chase.com", acc, True)
++        r.memory.record("chase.com", acc, True)
++        r.ctx = {"app": "Google Chrome", "site": "news.com", "in_browser": True}
++        r.c.check_context()
++        self.assertEqual(r.calls, [])
++        r.ctx = {"app": "Google Chrome", "site": "chase.com", "in_browser": True}
++        r.c.check_context()
++        self.assertEqual(r.calls, [("set_page_zoom", {"zoom": 1.5})])
++
++    def test_risk_shows_card_and_speaks(self):
++        r = Rig()
++        r.bus.publish("risk", Risk("scam_popup", "high", "page says call microsoft support"))
++        r.c.wait_idle()
++        self.assertEqual(r.ui.shown[-1][0], "card")
++        self.assertEqual(r.ui.shown[-1][3], "risk")
++        self.assertIn("scam", r.voice.said[-1])
++
++    def test_disabled(self):
++        r = Rig(cfg={"enabled": False}, answer="yes")
++        r.struggle("squint", 1.0)
++        self.assertEqual(r.calls, [])
++
++
++class DetectorTests(unittest.TestCase):
++    def test_rage_click(self):
++        d = RageClickDetector()
++        self.assertIsNone(d.feed(100, 100, 0.0))
++        self.assertIsNone(d.feed(400, 100, 0.2))  # far away: doesn't count
++        self.assertIsNone(d.feed(105, 102, 0.4))
++        s = d.feed(98, 99, 0.6)
++        self.assertEqual(s.kind, "rage_click")
++        self.assertIsNone(d.feed(100, 100, 0.7))  # refractory
++
++    def test_retype(self):
++        d = RetypeDetector()
++        hits = [d.feed_key(True, i * 0.3) for i in range(6)]
++        self.assertEqual(hits[-1].kind, "retype")
++        self.assertIsNone(d.feed_key(False, 3))
++
++    def test_hesitation(self):
++        d = HesitationDetector(path_px=1000, window=3)
++        d.action(0)
++        out = None
++        for i in range(80):  # zig-zag for 4 s without clicking
++            out = out or d.feed_move(0 if i % 2 else 200, 300, 0.05 * i + 0.1)
++        self.assertEqual(out.kind, "hesitation")
++
++    def test_squint_needs_hold_over_baseline(self):
++        d = SquintDetector()
++        for i in range(20):
++            self.assertIsNone(d.feed(0.1, 0.1, i * 0.1))  # resting baseline
++        self.assertIsNone(d.feed(0.6, 0.6, 2.0))
++        self.assertIsNone(d.feed(0.6, 0.6, 2.4))
++        self.assertEqual(d.feed(0.6, 0.6, 2.9).kind, "squint")
++
++    def test_lean(self):
++        d = LeanDetector()
++        d.feed(0.20, 0.0)
++        self.assertIsNone(d.feed(0.26, 1.0))
++        self.assertEqual(d.feed(0.26, 2.1).kind, "lean")
++
++
++class RiskAndVoiceTests(unittest.TestCase):
++    def test_risk_rules(self):
++        self.assertEqual(check_text("WARNING! Your computer has been locked. Call Microsoft Support")[0].kind,
++                         "scam_popup")
++        self.assertEqual(check_text("Welcome to the recipe blog"), [])
++        self.assertEqual(check_url("https://paypal-secure-login.xyz/a")[0].kind, "untrusted_site")
++        self.assertEqual(check_url("https://www.paypal.com/signin"), [])
++        self.assertEqual(check_url("https://anydesk.com/download")[0].kind, "remote_access")
++        self.assertIn("Why:", warning_for(Risk("scam_popup", evidence="x"))[0])
++
++    def test_yes_no(self):
++        for t, want in [("Yes please!", "yes"), ("yeah sure", "yes"), ("no thank you", "no"), ("Nope.", "no"),
++                        ("what?", None), ("", None), ("okay", "yes"), ("not now", "no")]:
++            self.assertEqual(parse_yes_no(t), want, t)
++
++
++class AgentWiringTests(unittest.TestCase):
++    def test_event_api_and_answer_through_agent(self):
++        from ally.agent import Agent
++        a = Agent(temp_home('[proactive]\ncooldown_seconds = 0\nvoice_confirm = false\n'), start_hotkeys=False)
++        try:
++            self.assertEqual(a.config.errors, [])
++            self.assertFalse(a.publish_event({"type": "struggle", "kind": "blink"})["ok"])
++            calls = []
++            a.proactive.call_tool = lambda n, args, src: calls.append(n) or FakeOut()
++            a.proactive.context_fn = lambda: {"app": "Google Chrome", "site": "chase.com", "in_browser": True}
++            a.proactive.start(watch_context=False)
++            self.assertTrue(a.publish_event({"type": "struggle", "kind": "squint", "confidence": 0.9})["ok"])
++            for _ in range(100):
++                if a.proactive.pending:
++                    break
++                time.sleep(0.02)
++            self.assertIsNotNone(a.status()["proactive"]["pending"])
++            a.publish_event({"type": "answer", "choice": "yes"})
++            a.proactive.wait_idle()
++            self.assertEqual(calls, ["set_page_zoom"])
++            self.assertIn("chase.com", a.habits.snapshot())
++        finally:
++            a.close()
++
++    def test_bad_proactive_config_is_reported(self):
++        from ally.config import parse, validate, merge
++        errors, _ = validate(merge(parse('[proactive]\nmin_confidence = 3\n')))
++        self.assertTrue(errors)
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.43.0
+

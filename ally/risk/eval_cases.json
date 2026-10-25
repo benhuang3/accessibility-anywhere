@@ -1,0 +1,560 @@
+{
+ "scam_text": [
+  {
+   "id": "s01",
+   "text": "WARNING: Microsoft Windows has detected viruses on your computer. Do not close this window. Call support now on 1-800-555-0101 to remove the infection.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "classic fake Windows virus popup with phone"
+  },
+  {
+   "id": "s02",
+   "text": "Your computer has been locked. Windows Defender found a trojan and your passwords may be stolen. Call 1-800-555-0102 immediately and speak to a certified technician.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "locked + Defender brand + phone"
+  },
+  {
+   "id": "s03",
+   "text": "*** SECURITY ALERT *** Apple has blocked this device because malware was found. Do NOT restart or shut down. Contact support at 1-888-555-0103",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://apple-care-help.example/block",
+   "expect_min": "high",
+   "note": "fake Apple block page"
+  },
+  {
+   "id": "s04",
+   "text": "Norton Security Warning!! Your PC is infected with 5 viruses. Contact technician: 1 (877) 555-0104. Subscription renewal $349.99 payable by gift cards only.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "Norton branding, gift card payment, toll-free"
+  },
+  {
+   "id": "s05",
+   "text": "mcafee protection expired - your system is hacked and personal files at risk. call support now 1-855-555-0105 to renew. Do not turn off your computer.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "lowercase McAfee, hacked, do not turn off"
+  },
+  {
+   "id": "s06",
+   "text": "Error 0x80070424. Your Windows registration is blocked due to suspicious activity. Please call 1-800-555-0106. Our technician will need remote access to your PC using a small tool.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "fake error code with remote access ask"
+  },
+  {
+   "id": "s07",
+   "text": "Virus detected! Do not close this page. Call now: 1-833-555-0107",
+   "overlay_text": "",
+   "fullscreen": true,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "no brand but fullscreen"
+  },
+  {
+   "id": "s08",
+   "text": "Please wait while we check your device...",
+   "overlay_text": "Trojan found! Your files are locked. Call support now 1-844-555-0108 before data is lost.",
+   "fullscreen": false,
+   "url": "https://pc-cleaner.example/scan",
+   "expect_min": "high",
+   "note": "alarm text and phone only in overlay"
+  },
+  {
+   "id": "s09",
+   "text": "Microsoft Support: Your account has been hacked. Pay the unlock fee with Bitcoin at the ATM and call 1-866-555-0109 for the wallet address. Do not close this window.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "crypto payment demand with Microsoft brand"
+  },
+  {
+   "id": "s10",
+   "text": "Google Chrome security alert: malware has infected your browser. Call support now 1-800-555-0110. Do not close this tab or your data will be lost.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "fake Chrome alert"
+  },
+  {
+   "id": "s11",
+   "text": "REFUND NOTICE: We refunded you too much by mistake, please call 1-877-555-0111 right away. Your Windows license is locked until the extra money is returned via gift cards. Do not hang up.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "refund scam with locked and brand"
+  },
+  {
+   "id": "s12",
+   "text": "Attention Windows user. Your IP address has been hacked and blocked. Call Microsoft certified experts: 1.888.555.0112. Do not shut down your PC.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "dotted phone format, shouting tone"
+  },
+  {
+   "id": "s13",
+   "text": "Suspicious sign-in blocked.",
+   "overlay_text": "Windows security alert: virus detected. Call 1-800-555-0113 now. Do not close.",
+   "fullscreen": true,
+   "url": "https://secure-pc-fix.example/",
+   "expect_min": "high",
+   "note": "short banner; details only in fullscreen overlay"
+  },
+  {
+   "id": "s14",
+   "text": "Your Apple ID was used on an unknown device and has been locked. Malware may have spread. Call 1-855-555-0114 now to speak to an advisor who will guide you through remote access.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "high",
+   "note": "Apple ID locked + remote access"
+  },
+  {
+   "id": "s15",
+   "text": "SYSTEM FAILURE. viruses found. DO NOT RESTART. Dial 1-866-555-0115 for free removal.",
+   "overlay_text": "",
+   "fullscreen": true,
+   "url": "https://system-fail.example/",
+   "expect_min": "high",
+   "note": "no brand, phone, fullscreen"
+  },
+  {
+   "id": "s16",
+   "text": "Microsoft virus alert. Call now to fix your computer.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "medium",
+   "note": "brand + alarm + action but no phone"
+  },
+  {
+   "id": "s17",
+   "text": "Your computer may be infected. Contact support for help. Gift cards accepted for the service fee.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "medium",
+   "note": "no brand, no phone"
+  },
+  {
+   "id": "s18",
+   "text": "Norton subscription ended. Your PC is hacked. Contact technician today.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "medium",
+   "note": "brand + alarm + action, no phone"
+  },
+  {
+   "id": "s19",
+   "text": "Notice: unusual activity. Your account is locked. Call support now 1-800-555-0119.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "medium",
+   "note": "no brand, phone, locked and call support (bank-like)"
+  },
+  {
+   "id": "s20",
+   "text": "Windows has found malware. Do not close this window.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "medium",
+   "note": "brand and alarm only"
+  },
+  {
+   "id": "s21",
+   "text": "Bank security: your debit card is blocked. Please confirm by calling 1-888-555-0120 and have your login ready; we may ask you to install a support tool.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "medium",
+   "note": "fake bank follow-up, no tech brand"
+  },
+  {
+   "id": "s22",
+   "text": "Apple Support refund desk. Virus on your Mac. Call support today.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "medium",
+   "note": "terse, no phone"
+  },
+  {
+   "id": "s23",
+   "text": "mcafee license expired!!! virus risk. renew with crypto or wire transfer",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "medium",
+   "note": "brand + alarm + payment, no phone"
+  },
+  {
+   "id": "s24",
+   "text": "Your device is locked. Pay with Bitcoin to restore access.",
+   "overlay_text": "",
+   "fullscreen": true,
+   "url": "https://alerts-help.example/page",
+   "expect_min": "medium",
+   "note": "ransom style, no brand, no phone"
+  },
+  {
+   "id": "s25",
+   "text": "Please wait...",
+   "overlay_text": "Google security alert: your computer is infected with a virus. Contact support.",
+   "fullscreen": false,
+   "url": "https://browser-guard.example/",
+   "expect_min": "medium",
+   "note": "alarm in overlay only"
+  }
+ ],
+ "benign_text": [
+  {
+   "id": "b01",
+   "text": "Classic tomato soup: simmer onions and garlic, add canned tomatoes and stock, blend and serve with warm bread. Serves four.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://kitchen-notes.example/soup",
+   "expect_max": "none",
+   "note": "recipe"
+  },
+  {
+   "id": "b02",
+   "text": "Apple pie from scratch. Peel six apples, toss with cinnamon and sugar, fill the crust and bake until golden. Call it dessert.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://kitchen-notes.example/pie",
+   "expect_max": "none",
+   "note": "recipe mentions apple"
+  },
+  {
+   "id": "b03",
+   "text": "Scammers pretending to be Microsoft are calling older adults and claiming their computers have viruses. Police say never allow a stranger remote access and never pay with gift cards.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://daily-news.example/scam-warning",
+   "expect_max": "medium",
+   "note": "news about scams on unknown host"
+  },
+  {
+   "id": "b04",
+   "text": "Tech support scams: how to spot them. Real companies do not send pop-up warnings with a phone number. If you see a fake virus alert, do not call the number. Close the browser and run a scan.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://consumer.ftc.gov/articles/how-spot-avoid-tech-support-scams",
+   "expect_max": "none",
+   "note": "FTC advice page"
+  },
+  {
+   "id": "b05",
+   "text": "Report fraud. Scammers say your computer is locked or hacked and ask you to pay with gift cards, bitcoin or a wire transfer. Stop and tell someone you trust.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://www.ftc.gov/scams",
+   "expect_max": "none",
+   "note": "FTC advice page"
+  },
+  {
+   "id": "b06",
+   "text": "Protect yourself from tech support scams. Microsoft will never send unsolicited pop-ups asking you to call a number about viruses or malware. Windows Defender runs quietly and does not ask for payment.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://support.microsoft.com/en-us/windows/protect-yourself-from-tech-support-scams",
+   "expect_max": "none",
+   "note": "Microsoft support advice"
+  },
+  {
+   "id": "b07",
+   "text": "Consumer alert: do not call numbers in pop-ups claiming a virus. Contact support only through the official site. Hacked accounts should be reported.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://consumer.ftc.gov/consumer-alerts/tech-support",
+   "expect_max": "none",
+   "note": "FTC consumer advice"
+  },
+  {
+   "id": "b08",
+   "text": "Card help. If your card is blocked or your online access is locked, call the number on the back of your card, for example 1-800-555-0131, weekdays 8 to 8.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://example-bank.example/help/locked-card",
+   "expect_max": "medium",
+   "note": "bank help page on unknown host"
+  },
+  {
+   "id": "b09",
+   "text": "Package delayed? If your delivery is blocked at the depot call our helpline 1-877-555-0132 with your tracking code. Never share your password.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://parcel-co.example/help",
+   "expect_max": "medium",
+   "note": "shipping help with phone and blocked"
+  },
+  {
+   "id": "b10",
+   "text": "Release notes 4.2: added dark mode on Windows, fixed a crash on Apple silicon, improved startup time.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://notes-app.example/changelog",
+   "expect_max": "none",
+   "note": "software release notes"
+  },
+  {
+   "id": "b11",
+   "text": "Version 9.1 supports Windows 11 and macOS. Apple users should update to the latest system before installing.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://editor-tool.example/release",
+   "expect_max": "none",
+   "note": "release notes with brands"
+  },
+  {
+   "id": "b12",
+   "text": "Bitcoin rose 3 percent today as crypto markets rallied. Analysts expect volatility ahead of the central bank meeting.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://finance-daily.example/markets",
+   "expect_max": "none",
+   "note": "crypto news"
+  },
+  {
+   "id": "b13",
+   "text": "A wire transfer limit has been raised by regional lenders, and cryptocurrency exchanges report higher volumes this quarter.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://finance-daily.example/banking",
+   "expect_max": "none",
+   "note": "finance news"
+  },
+  {
+   "id": "b14",
+   "text": "Buy gift cards for any occasion. Choose a design, pick an amount and send by email. Gift cards never expire.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://gifts-shop.example/cards",
+   "expect_max": "none",
+   "note": "gift card shop"
+  },
+  {
+   "id": "b15",
+   "text": "Ten tips to speed up an old laptop: remove unused programs, check startup items, add memory and keep Windows updated.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://tech-tips.example/speed-up",
+   "expect_max": "none",
+   "note": "tech blog"
+  },
+  {
+   "id": "b16",
+   "text": "Maple Street Plumbing. Family run since 1998. Call us on 1-800-555-0136 or 555-0137 for a free estimate.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://maple-plumbing.example/",
+   "expect_max": "none",
+   "note": "small business with phone"
+  },
+  {
+   "id": "b17",
+   "text": "Order 48213 has shipped. Track it with number 4821390017 on our site. Expected delivery Thursday.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://shop-orders.example/track",
+   "expect_max": "none",
+   "note": "order notice with long number"
+  },
+  {
+   "id": "b18",
+   "text": "Your tracking update: parcel 1Z9990123456 is out for delivery today. No action needed.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://parcel-co.example/track",
+   "expect_max": "none",
+   "note": "tracking notice"
+  },
+  {
+   "id": "b19",
+   "text": "Locked out of your account? Use the reset link we email you. We will never call and ask for your password.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://photo-share.example/help",
+   "expect_max": "none",
+   "note": "account help, locked word only"
+  },
+  {
+   "id": "b20",
+   "text": "The security conference covered malware trends, phishing and how hacked devices spread. Microsoft and Google researchers presented.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://sec-news.example/recap",
+   "expect_max": "none",
+   "note": "conference news with brands and alarm words"
+  },
+  {
+   "id": "b21",
+   "text": "Virus season is here: flu shots available at the clinic. Call 1-800-555-0141 to book. Appointments blocked out on Sundays.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://town-clinic.example/flu",
+   "expect_max": "medium",
+   "note": "health clinic with 'virus' and 'blocked'"
+  },
+  {
+   "id": "b22",
+   "text": "How to avoid fake virus warnings. If a page says Do not close this window, close it anyway using Task Manager. Real Windows alerts never list a phone number.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://safe-surf.example/guide",
+   "expect_max": "none",
+   "note": "safety advice on unknown host"
+  },
+  {
+   "id": "b23",
+   "text": "Garden diary: the apple trees need pruning in winter. The old windows of the greenhouse were replaced last spring.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://garden-diary.example/",
+   "expect_max": "none",
+   "note": "gardening with brand words"
+  },
+  {
+   "id": "b24",
+   "text": "Mobile plan help. If your SIM is blocked after three wrong PIN entries, call 1-888-555-0144 to unlock it. Hours 9 to 5.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://mobile-net.example/support",
+   "expect_max": "medium",
+   "note": "telecom help, blocked + phone"
+  },
+  {
+   "id": "b25",
+   "text": "FBI warning: criminals impersonating tech support are targeting seniors. Report to ic3.gov. Never send bitcoin or gift cards to someone who contacts you.",
+   "overlay_text": "",
+   "fullscreen": false,
+   "url": "https://www.fbi.gov/scams-and-safety",
+   "expect_max": "none",
+   "note": "FBI advice page"
+  }
+ ],
+ "lookalike": [
+  {
+   "id": "l01",
+   "url": "paypa1.com",
+   "note": "digit 1 for l"
+  },
+  {
+   "id": "l02",
+   "url": "micr0soft.com",
+   "note": "zero for o"
+  },
+  {
+   "id": "l03",
+   "url": "secure-chase.net",
+   "note": "brand with keyword, wrong TLD"
+  },
+  {
+   "id": "l04",
+   "url": "paypal.com.secure-login.xyz",
+   "note": "brand as subdomain of other domain"
+  },
+  {
+   "id": "l05",
+   "url": "wellsfargoo.com",
+   "note": "extra letter"
+  },
+  {
+   "id": "l06",
+   "url": "https://p\u0430ypal.com/",
+   "note": "IDN homoglyph, Cyrillic a in paypal"
+  },
+  {
+   "id": "l07",
+   "url": "rnicrosoft.com",
+   "note": "rn for m"
+  },
+  {
+   "id": "l08",
+   "url": "bankofamerica-login.com",
+   "note": "brand plus login"
+  },
+  {
+   "id": "l09",
+   "url": "amaz0n.com",
+   "note": "zero for o"
+  },
+  {
+   "id": "l10",
+   "url": "chase.com-verify.net",
+   "note": "brand-looking prefix on other domain"
+  }
+ ],
+ "real_domain": [
+  {
+   "id": "r01",
+   "url": "https://www.chase.com/",
+   "note": "bank"
+  },
+  {
+   "id": "r02",
+   "url": "https://www.paypal.com/",
+   "note": "payments"
+  },
+  {
+   "id": "r03",
+   "url": "https://www.google.co.uk/",
+   "note": "regional Google"
+  },
+  {
+   "id": "r04",
+   "url": "https://www.amazon.co.uk/",
+   "note": "regional Amazon"
+  },
+  {
+   "id": "r05",
+   "url": "https://www.usa.gov/",
+   "note": "government"
+  },
+  {
+   "id": "r06",
+   "url": "https://mail.google.com/",
+   "note": "subdomain"
+  },
+  {
+   "id": "r07",
+   "url": "https://support.microsoft.com/",
+   "note": "subdomain"
+  },
+  {
+   "id": "r08",
+   "url": "https://en.wikipedia.org/wiki/Apple",
+   "note": "encyclopedia"
+  },
+  {
+   "id": "r09",
+   "url": "https://www.apple.com/",
+   "note": "Apple"
+  },
+  {
+   "id": "r10",
+   "url": "https://www.pineapple.com/",
+   "note": "contains 'apple' but unrelated"
+  }
+ ]
+}
