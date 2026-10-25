@@ -65,6 +65,16 @@ class GazeModelTests(unittest.TestCase):
         shifted[6] = 1.0
         self.assertLess(gm.radius_px(pose_model, shifted), 1.2 * base_radius)
 
+    def test_prediction_is_clamped_to_screen_margin(self):
+        samples = [([x / 1920, y / 1080, 0, 0, 0, 0, 0, 0, 1], (x, y))
+                   for x, y in [(100, 100), (960, 100), (1820, 100), (100, 540), (960, 540),
+                                (1820, 540), (100, 980), (960, 980), (1820, 980)]]
+        model = gm.fit(samples, (1920, 1080))
+        extreme = [1e9] * 9
+        self.assertEqual(gm.predict(model, extreme), (2112.0, 1188.0))
+        model['coef'] = [[-1e9, -1e9]] + [[0.0, 0.0] for _ in model['coef'][1:]]
+        self.assertEqual(gm.predict(model, extreme), (-192.0, -108.0))
+
     def test_retune_applies_median_translation_without_refitting(self):
         samples = [([x / 1920, y / 1080, 0, 0, 0, 0, 0, 0, 1], (x, y))
                    for x, y in [(100, 100), (960, 100), (1820, 100), (100, 540), (960, 540), (1820, 540), (100, 980), (960, 980), (1820, 980)]]
@@ -141,7 +151,7 @@ class GazeModelTests(unittest.TestCase):
             self.assertTrue(corrector.add(features, target, index))
         after = np.mean([np.linalg.norm(np.asarray(corrector.predict(f)) - target)
                          for f, target in samples])
-        self.assertGreater(before, 900)
+        self.assertGreater(before, 750)
         self.assertLess(after, 150)
 
         good_corrector = gm.Corrector(model)

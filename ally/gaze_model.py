@@ -129,11 +129,14 @@ def _offset(model) -> np.ndarray:
     return np.asarray(model.get('offset', [0.0, 0.0]), dtype=float)
 
 def predict(model: dict, f) -> tuple[float, float]:
-    """Predict the screen pixel position for one feature vector."""
+    """Predict a screen point, clamped to a 10% margin beyond its edges."""
     raw = expand(f, model.get('features', 'v1'))
     x = np.column_stack([np.ones(len(raw)), (raw - np.array(model['mean'])) / np.array(model['std'])])
     p = (x @ np.array(model['coef']))[0]
     p += np.asarray(model.get('offset', [0.0, 0.0]), dtype=float)
+    width, height = model['screen']
+    p[0] = np.clip(p[0], -0.1 * width, 1.1 * width)
+    p[1] = np.clip(p[1], -0.1 * height, 1.1 * height)
     return (float(p[0]), float(p[1]))
 
 def clean_samples(samples, min_openness=0.12, jump_threshold=0.08, preserve_openness=False):
