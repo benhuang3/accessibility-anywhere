@@ -2,7 +2,8 @@
 
 These steps are for a real person in front of the camera. On Windows use `python`.
 
-Stop Ally first, every time a command below opens the camera:
+Saying "set up my eyes" or "check my eye tracker" needs Ally running. Stop Ally first when you record,
+because that command opens the camera itself:
 
 ```
 python run.py stop
@@ -11,6 +12,35 @@ python run.py stop
 The face model has to be on disk already at `state/models/face_landmarker.task`. Start Ally once so it can download that file, then stop Ally again.
 
 Recordings store numbers only (landmarks, blendshapes, the face matrix, dot times, clicks). They do not store pictures. The files stay in `state/`.
+
+## Set up
+
+With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This takes about 35 seconds.
+
+## What you can say
+
+- "What am I looking at", and "this", "that", or "here" when you mean a spot: the area of the screen.
+  On Windows, also the role and name of the control there (a button, a link, some text). That name is
+  read only when you ask, and it goes to Claude only as part of your request.
+- "Magnify what I'm looking at", or "magnify here": zoom around that spot. The view then follows your eyes.
+- A yes or no by looking: Ally shows the choices as large cards. Two choices use the left and right
+  halves of the screen. Look at one for about a second. Up to four choices. If you don't settle, Ally says none.
+- "Check my eye tracker": only the 5 check dots, about 8 seconds. This updates the saved check numbers.
+  It does not throw away the fit.
+- "Set up my eyes" runs the full setup again.
+
+If the tracker isn't set up, Ally can't see your face, your eyes don't stay on one spot, or the
+uncertainty is above `max_radius_px` (default 250), Ally uses the mouse pointer and says why.
+
+Clicks can improve the estimate after setup (`click_learning`, on by default). The click is two
+numbers used on this computer. It is not saved as a picture and it is not sent anywhere. Set
+`click_learning = false` to turn that off.
+
+`features` is `v1` or `v2`. A new setup uses the one in config. The default stays `v1` until
+recordings show `v2` is better. An older calibration keeps the feature set it was fit with.
+
+`python run.py doctor` prints how old the calibration is, the check (pixels and areas), the feature
+set, and whether `gaze.camera` still matches the camera the file was made for.
 
 ## Calibrate
 
