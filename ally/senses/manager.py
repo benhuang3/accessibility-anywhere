@@ -58,6 +58,7 @@ class Senses:
         self._calib_parts: dict[str, list[dict]] = {}
         self._calib_phase = ""
         self._calib_mode = False
+        self._setup_intake = False
         self._calib_done = threading.Event()
         self._calib_result: dict | None = None
         self._last_struggle_t = -1e9
@@ -91,9 +92,12 @@ class Senses:
         cfg = self.cfg
         self.tune = Tuning.from_config(cfg)
         self._methods = (cfg.get("squint_method", "v1"), cfg.get("lean_method", "v1"))
+        method = cfg.get("squint_method")
+        if method in (None, "v1") and self._saved_personal().get("enabled"):
+            method = "personal"  # this person's face setup produced a squint model
         self.squint = {"relative": RelativeSquintDetector, "geometric": GeometricSquintDetector,
                        "personal": PersonalSquintDetector, "hybrid": HybridSquintDetector}.get(
-                           cfg.get("squint_method"), SquintDetector
+                           method, SquintDetector
                        )(self.tune)
         self.lean = {"distance": DistanceLeanDetector, "hybrid": HybridLeanDetector}.get(
             cfg.get("lean_method"), LeanDetector)(self.tune)
@@ -101,6 +105,7 @@ class Senses:
         self.hesitation = HesitationDetector(self.tune)
         self.fuser.configure(float(cfg.get("window_seconds", 4)), float(cfg.get("cooldown_seconds", 30)),
                              cfg.get("solo") or [], float(cfg.get("min_confidence", 0.5)))
+        self._apply_saved_lean()
 
     def apply(self) -> None:
         """Match config: rebuild detectors with new thresholds and start or stop the input watcher."""
@@ -279,6 +284,97 @@ class Senses:
         self.agent.events.add("senses", message)
         return self._calib_result
 
+    def _saved_personal(self) -> dict:
+        base = self.baseline
+        stats = getattr(base, "feature_stats", None) if base is not None else None
+        if not isinstance(stats, dict):
+            return {}
+        model = stats.get("personal_model")
+        return model if isinstance(model, dict) else {}
+
+    def _apply_saved_lean(self) -> None:
+        """Use the lean ratio from face setup, when one was saved on the baseline."""
+        base = self.baseline
+        stats = getattr(base, "feature_stats", None) if base is not None else None
+        saved = stats.get("lean_ratio") if isinstance(stats, dict) else None
+        if not isinstance(saved, dict):
+            return
+        width = saved.get("width")
+        if isinstance(width, (int, float)) and not isinstance(width, bool) and float(width) > 1.02:
+            ratio = max(1.05, min(1.6, float(width)))
+            self.tune.lean_ratio = round(ratio, 3)
+            weak = min(self.tune.lean_ratio - 0.01, max(1.03, ratio - 0.04))
+            self.tune.lean_weak = round(weak, 3)
+            release = min(self.tune.lean_weak - 0.01, max(1.01, self.tune.lean_weak - 0.02))
+            self.tune.lean_release = round(release, 3)
+        dist = saved.get("distance")
+        if isinstance(dist, (int, float)) and not isinstance(dist, bool) and 0 < float(dist) < 1:
+            self.tune.lean_distance_ratio = round(max(1.05, min(1.6, 1.0 / float(dist))), 3)
+
+    def begin_setup_intake(self) -> None:
+        """Start collecting labelled face-setup samples. Frames are numbers, not pictures."""
+        with self.lock:
+            self._calib_parts = {}
+            self._setup_intake = True
+            self._calib_result = None
+
+    def intake_label(self, phase: str, sample: dict, t: float | None = None) -> None:
+        """One labelled frame from the camera helper. Unknown phases are ignored."""
+        name = str(phase or "")
+        if name not in ("neutral", "top", "bottom", "smile", "squint") or not isinstance(sample, dict):
+            return
+        clean = {}
+        for key, value in sample.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            try:
+                num = float(value)
+            except (TypeError, ValueError):
+                continue
+            clean[str(key)] = num
+        if not clean:
+            return
+        with self.lock:
+            self._calib_parts.setdefault(name, []).append(clean)
+
+    def cancel_setup_intake(self) -> None:
+        with self.lock:
+            self._setup_intake = False
+            self._calib_parts = {}
+            self._calib = None
+            self._calib_phase = ""
+
+    def finish_setup_intake(self, lean: dict | None = None) -> dict:
+        """Fit the personal squint model from the labelled samples and store the lean ratio."""
+        result = self._finish_personal_calibration()
+        if result.get("ok") and not result.get("squint_enabled") and self.baseline is not None:
+            self.baseline.squint_reliable = False
+            self.baseline.squint_why = str(result.get("why") or "the deliberate squint was not distinct")
+        if lean and result.get("ok"):
+            self._remember_lean(lean)
+        elif result.get("ok"):
+            self._save_baseline()
+        with self.lock:
+            self._setup_intake = False
+        return result
+
+    def _remember_lean(self, lean: dict) -> None:
+        if self.baseline is None or not isinstance(lean, dict):
+            return
+        saved = {}
+        for key in ("width", "distance", "normal_width", "near_width", "far_width",
+                    "normal_distance", "near_distance", "far_distance"):
+            value = lean.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                saved[key] = round(float(value), 4)
+        if not saved:
+            return
+        if not isinstance(self.baseline.feature_stats, dict):
+            self.baseline.feature_stats = {}
+        self.baseline.feature_stats["lean_ratio"] = saved
+        self._apply_saved_lean()
+        self._save_baseline()
+
     def _finish_calibration(self, t: float) -> None:
         samples, self._calib = self._calib or [], None
         if self._calib_mode:
@@ -339,16 +435,17 @@ class Senses:
                 if t >= self._calib_until:
                     self._finish_calibration(t)
             elif self.baseline is None:
-                self._auto.append(sig)
-                fps = max(1, int(self.cfg.get("fps", 10)))
-                if len(self._auto) >= AUTO_BASELINE_SECONDS * fps:
-                    try:
-                        self.baseline = Baseline.from_samples(self._auto, t, "auto")
-                        self._save_baseline()
-                        self.agent.events.add("senses", "Learned your resting face from the first 20 seconds. "
-                                                        "Say 'set up face sensing' for a better baseline.")
-                    except ValueError:
-                        del self._auto[: len(self._auto) // 2]  # keep trying with fresher frames
+                if not self._setup_intake:
+                    self._auto.append(sig)
+                    fps = max(1, int(self.cfg.get("fps", 10)))
+                    if len(self._auto) >= AUTO_BASELINE_SECONDS * fps:
+                        try:
+                            self.baseline = Baseline.from_samples(self._auto, t, "auto")
+                            self._save_baseline()
+                            self.agent.events.add("senses", "Learned your resting face from the first 20 seconds. "
+                                                            "Say 'set up face sensing' for a better baseline.")
+                        except ValueError:
+                            del self._auto[: len(self._auto) // 2]  # keep trying with fresher frames
             else:
                 method = self.cfg.get("squint_method", "v1")
                 reliable = self.baseline.squint_reliable or method != "v1"
