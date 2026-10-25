@@ -237,7 +237,52 @@ class RecordTests(unittest.TestCase):
         self.assertTrue(args["signals"])
         self.assertTrue(args["raw"])
         self.assertEqual(args["signals_fps"], 15)
+        self.assertNotIn("au", args)
         self.assertIn("ally.gaze_helper", " ".join(command))
+        self.assertEqual(rows[0]["au_model"], "off")
+        self.assertNotIn("au_license", rows[0])
+
+    def test_au_recording_notes_the_model_and_keeps_twelve_numbers(self):
+        from ally.senses.au import LICENSE
+
+        def spawn(kind, command):
+            self.calls.append((kind, command))
+            line = _raw_line()
+            line["au"] = [i / 12 for i in range(12)]
+            if kind == "camera":
+                return _Proc([
+                    json.dumps({"ready": True, "calibrated": False, "screen": [1920, 1080]}),
+                    json.dumps(line),
+                ])
+            return _Proc([json.dumps({"ready": True})])
+
+        clock = _Clock()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = matrix.record(
+                "ada", "no", "bright", camera=0, run="au", root=self.tmp, model=self.model,
+                spawn=spawn, sleep=clock.sleep, ally_running=lambda: False, now=clock.now,
+                commit="abc123", senses={"fps": 10, "squint_delta": 0.2}, screen=(1920, 1080), au=True)
+        self.assertEqual(code, 0, buf.getvalue())
+        kind, command = self.calls[-2]
+        self.assertEqual(kind, "camera")
+        args = json.loads(command[-1])
+        self.assertEqual(args["au"], "libreface")
+        self.assertEqual(args["au_fps"], 5)
+        self.assertTrue(args["signals"])
+        self.assertTrue(args["raw"])
+        path = self.tmp / "senses_runs" / "au" / "ada-no-bright.jsonl"
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        self.assertEqual(rows[0]["au_model"], "libreface")
+        self.assertEqual(rows[0]["au_license"], LICENSE)
+        self.assertIn("USC Stevens Center", rows[0]["au_license"])
+        face = next(row for row in rows if row["rec"] == "helper" and "f" in row)
+        self.assertEqual(len(face["au"]), 12)
+        self.assertNotIn("frame", face)
+        self.assertNotIn("jpeg", face)
+        dropped = matrix.sanitize({"t": 1, "f": _face(), "au": [0.1] * 11, "extra": list(range(12))})
+        self.assertNotIn("au", dropped)
+        self.assertNotIn("extra", dropped)
 
     def test_raw_line_keeps_numbers_and_drops_pictures(self):
         nested = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]

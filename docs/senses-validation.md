@@ -10,7 +10,7 @@ python run.py stop
 
 The face model has to be on disk already at `state/models/face_landmarker.task`. Start Ally once so it can download that file, then stop Ally again. That download is the only network use this feature should need.
 
-Recordings store numbers only: face scores, landmarks, blendshapes, the face matrix, mouse and keyboard events, and labels. They do not store pictures.
+Recordings store numbers only: face scores, landmarks, blendshapes, the face matrix, mouse and keyboard events, and labels. With `--au` they also store 12 action-unit probabilities. They do not store pictures.
 
 ## Self-check (about 60 seconds)
 
@@ -62,6 +62,32 @@ Optional, and only if the person wants to say so: `--eyes monolid|double|hooded|
 python -m ally.senses.matrix record --person ada --glasses no --light bright --eyes hooded --age 40to64 --repeat 2
 ```
 
+## Action units (optional, off by default)
+
+LibreFace can add 12 action-unit probabilities to each face line. Nothing turns that on unless you ask.
+
+Download the models once. Ally does not bundle them. The package is about 84 MB. The script keeps the encoder and the presence head, and prints the license.
+
+```
+python scripts/get_au_models.py
+```
+
+USC research license: free for education, research and non-profit use; commercial use needs a license from the USC Stevens Center.
+
+To use them while Ally is running, set `[senses] au_model = "libreface"` in `config.toml`. The helper then reads action units at most 5 times a second and adds `au` (12 numbers, 4 decimals) to the face line. The order is BP4D: AU 1, 2, 4, 6, 7, 10, 12, 14, 15, 17, 23, 24. `python run.py doctor` says whether both files are present and whether onnxruntime imports, and it repeats the license.
+
+To record them:
+
+```
+python -m ally.senses.matrix record --person ada --glasses no --light bright --au
+```
+
+`--au` turns the helper's action units on at 5 per second. Every face line in the file has `au`. The first line notes `au_model` (`libreface`) and `au_license`. Without `--au`, `au_model` is `off` and the lines have no `au`.
+
+These probabilities are not a squint on their own. A fixed cutoff is unfair across faces. Use the change against the same person's own baseline, together with the landmark cues.
+
+When `squint_method` or `lean_method` is not `v1`, Ally also asks the helper for the raw face numbers on the live line (`lm`, `bs`, `mat`, `w`, `h`). `[senses] raw_live = true` asks for the same numbers even with the v1 methods. That line is still numbers only, and it still goes only to the agent.
+
 ## What is stored
 
 Each session writes `state/senses_runs/<run>/<alias>-<glasses>-<light>.jsonl`. One JSON object per line. Numbers and short text only. No picture, no pixels, and no video. Ctrl+C keeps what was already written. A partial label is not scored as a miss.
@@ -72,10 +98,11 @@ The first line has `"rec": "meta"`:
 - `eyes` (`monolid`, `double`, `hooded`, `unsure`, or null)
 - `age` (`under40`, `40to64`, `65plus`, or null)
 - `camera`, `screen` (width and height), `senses` (the settings in effect), `commit`, `started`
+- `au_model` (`off` or `libreface`). When it is `libreface`, `au_license` is the USC research license sentence.
 
 Later lines:
 
-- `"rec": "helper"` from the camera helper, about 15 times a second while a face is visible. `t` is the time. `f` is the summary scores: `squint_l`, `squint_r`, `smile`, `blink`, `blink_l`, `blink_r`, `yaw`, `pitch`, `width`, `light`. The same line also has `lm` (478 landmarks, each `[x, y, z]`, 4 decimals), `bs` (every blendshape by name, 4 decimals), `mat` (the 16 numbers of the face matrix, or null), and `w` and `h` (frame width and height). Live Ally does not ask for `lm`, `bs`, `mat`, `w`, or `h`.
+- `"rec": "helper"` from the camera helper, about 15 times a second while a face is visible. `t` is the time. `f` is the summary scores: `squint_l`, `squint_r`, `smile`, `blink`, `blink_l`, `blink_r`, `yaw`, `pitch`, `width`, `light`. The same line also has `lm` (478 landmarks, each `[x, y, z]`, 4 decimals), `bs` (every blendshape by name, 4 decimals), `mat` (the 16 numbers of the face matrix, or null), and `w` and `h` (frame width and height). With `--au`, the line also has `au` (12 probabilities, 4 decimals, BP4D order). Live Ally does not ask for `lm`, `bs`, `mat`, `w`, or `h` unless `raw_live` is on or the squint or lean method is not v1.
 - `"rec": "input"` for mouse and keyboard events (counts and times, not the keys).
 - `"rec": "label"` with `name`, `start`, `end`, and `expect` for each part. A part cut off with Ctrl+C has `"partial": true`.
 

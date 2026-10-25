@@ -193,6 +193,13 @@ box}, source, detail, ts}`, that goes to the event log, to `agent.on_struggle(di
 - The camera is opened only by the eye tracker's helper process, which sends the agent a few
   numbers per frame (like a squint score). Frames stay in memory there and are thrown away;
   `tests/test_senses.py` fails if camera code imports networking or writes images or video.
+- Action units stay off. `python scripts/get_au_models.py` downloads the LibreFace encoder and
+  presence models into `state/models` (about 84 MB; they are not bundled). Set
+  `[senses] au_model = "libreface"` to add 12 presence probabilities, in BP4D order, at most 5
+  times a second. USC research license: free for education, research and non-profit use; commercial
+  use needs a license from the USC Stevens Center. `python run.py doctor` reports the files,
+  onnxruntime, and that license. `python -m ally.senses.matrix record --au` writes those 12 numbers
+  on every face line and notes the model and the license in the file header.
 
 **Default hotkeys** (`<mod>` = Ctrl+Alt on Windows/Linux, Ctrl+Cmd on Mac):
 
