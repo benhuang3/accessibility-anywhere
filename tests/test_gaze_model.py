@@ -11,6 +11,24 @@ from ally import gaze_eval
 
 class GazeModelTests(unittest.TestCase):
 
+    def test_gaze_smoother_rejects_outliers_and_holds_missing(self):
+        smooth = gm.GazeSmoother()
+        shown = [smooth.update((100 + (-1) ** i * 8, 200), i * 0.08, 100) for i in range(10)]
+        before = smooth.update((600, 700), 0.81, 100)
+        after = smooth.update((101, 200), 0.89, 100)
+        held = smooth.update(None, 0.97, 100)
+        self.assertLess(np.max(np.linalg.norm(np.diff(shown, axis=0), axis=1)), 3)
+        self.assertLess(np.linalg.norm(before - shown[-1]), 3)
+        np.testing.assert_allclose(held, after)
+
+    def test_gaze_smoother_follows_saccade_within_250ms(self):
+        smooth = gm.GazeSmoother(settle_frames=2)
+        smooth.update((100, 100), 0.0, 100)
+        smooth.update((110, 102), 0.08, 100)
+        smooth.update((500, 400), 0.16, 100)
+        shown = smooth.update((505, 402), 0.24, 100)
+        self.assertLess(np.linalg.norm(shown - (502.5, 401)), 10)
+
     def landmarks(self, rh=0, rv=0, lh=0, lv=0):
         a = np.zeros((478, 3), float)
         for ids, h, v in ((gm.RIGHT_EYE, rh, rv), (gm.LEFT_EYE, lh, lv)):

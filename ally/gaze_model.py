@@ -473,6 +473,63 @@ def load(path, screen=None):
         return None
     return model
 
+class GazeSmoother:
+    """Robust fixation filter with a short confirmation before saccades."""
+
+    def __init__(self, window=0.4, settle_frames=2, radius_scale=0.22):
+        self.window = float(window)
+        self.settle_frames = int(settle_frames)
+        self.radius_scale = float(radius_scale)
+        self.reset()
+
+    def reset(self):
+        self.x = None
+        self.samples = deque()
+        self.candidate = []
+        self.t = None
+
+    def update(self, point, t, radius=None):
+        if point is None:
+            return None if self.x is None else self.x.copy()
+        p = np.asarray(point, dtype=float)[:2]
+        t = float(t)
+        if self.x is None or (self.t is not None and t - self.t > 1.0):
+            self.x = p.copy()
+            self.samples.clear()
+            self.samples.append((t, p.copy()))
+            self.candidate.clear()
+            self.t = t
+            return self.x.copy()
+        while self.samples and t - self.samples[0][0] > self.window:
+            self.samples.popleft()
+        cloud = np.asarray([v for _, v in self.samples]) if self.samples else self.x[None, :]
+        center = np.median(cloud, axis=0)
+        spread = float(np.median(np.linalg.norm(cloud - center, axis=1))) if len(cloud) else 0.0
+        gate = max(24.0, min(90.0, (float(radius or 100.0) * self.radius_scale) + 2 * spread))
+        if np.linalg.norm(p - self.x) > gate:
+            if self.candidate and t - self.candidate[-1][0] <= 0.3 and np.linalg.norm(p - self.candidate[-1][1]) <= gate:
+                self.candidate.append((t, p.copy()))
+            else:
+                self.candidate = [(t, p.copy())]
+            if len(self.candidate) >= self.settle_frames:
+                self.x = np.median(np.asarray([v for _, v in self.candidate]), axis=0)
+                self.samples.clear()
+                self.samples.extend(self.candidate[-3:])
+                self.candidate.clear()
+        else:
+            self.candidate.clear()
+            self.samples.append((t, p.copy()))
+            cloud = np.asarray([v for _, v in self.samples])
+            center = np.median(cloud, axis=0)
+            # Tiny bounded creep keeps the displayed fixation effectively still.
+            delta = center - self.x
+            length = float(np.linalg.norm(delta))
+            if length:
+                self.x += delta * min(0.015, 2.0 / length)
+        self.t = t
+        return self.x.copy()
+
+
 class OneEuro:
     """One Euro filter: steady at rest and responsive to rapid gaze changes."""
 
