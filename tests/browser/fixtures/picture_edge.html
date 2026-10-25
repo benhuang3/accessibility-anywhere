@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Picture edge cases</title>
+<style>
+  body { font: 16px Arial, sans-serif; margin: 0; padding: 0; overflow-x: hidden; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; height: 220px; background: #222; color: #fff; z-index: 10; }
+  #ally-risk-banner { position: fixed; bottom: 0; left: 0; right: 0; z-index: 2147483647; background: #b00;
+    color: #fff; padding: 12px; font-size: 18px; }
+  #under { position: absolute; top: 10px; left: 20px; }
+  .row { position: absolute; top: 240px; left: 0; right: 0; height: 260px; }
+  #half { position: absolute; left: -150px; top: 0; }
+  #flowers { position: absolute; left: 200px; top: 0; width: 300px; height: 200px;
+    background: url(img/flowers.svg) center / cover no-repeat; }
+  #chart { position: absolute; left: 540px; top: 0; }
+  #frame { position: absolute; left: 780px; top: 0; width: 340px; height: 240px; border: 0; }
+  .row2 { position: absolute; top: 520px; left: 20px; }
+  .infobox { position: absolute; top: 520px; left: 400px; }
+  #placeholder { position: absolute; top: 520px; left: 760px; }
+  #overlaycard { position: absolute; top: 520px; left: 980px; width: 300px; height: 220px; }
+  #overlaycard::before { content: ""; position: absolute; inset: 0; background: linear-gradient(transparent, rgba(0,0,0,.3)); }
+  #stretched { position: absolute; inset: 0; color: #fff; display: flex; align-items: flex-end; padding: 8px; }
+</style>
+</head>
+<body>
+  <div id="bar">Sticky header</div>
+  <img id="under" src="img/street.svg" width="300" height="180" alt="Busy street under the header">
+  <div class="row">
+    <img id="half" src="img/harbour.svg" width="320" height="200" alt="Old harbour with boats">
+    <div id="flowers" role="img" aria-label="Sunflowers in a field"></div>
+    <svg id="chart" width="200" height="200" viewBox="0 0 200 200" role="img">
+      <title>Pie chart of monthly costs</title>
+      <circle cx="100" cy="100" r="90" fill="#1565c0"/><path d="M100 100 L100 10 A90 90 0 0 1 190 100 Z" fill="#f9a825"/>
+    </svg>
+    <iframe id="frame" srcdoc='<img src="img/dog.svg" width="300" height="200" alt="Dog inside a frame">'></iframe>
+  </div>
+  <div class="row2">
+    <img id="lazy" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+         data-src="img/lake.svg" width="300" height="200" alt="Mountain lake at dawn">
+  </div>
+  <img id="placeholder" class="lazyset" src="img/harbour.svg" width="200" height="125" alt="Fishing boats at the quay"
+       srcset="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7 1x"
+       data-srcset="img/bridge-400.svg 400w, img/bridge-1600.svg 1600w">
+  <div id="overlaycard"><img id="hero" src="img/lighthouse.svg" width="300" height="220" alt="Lighthouse at dusk">
+    <a id="stretched" href="#">Read the story</a></div>
+  <table class="infobox"><tr><td class="infobox-image"><span><a href="#"><img id="infobox" src="img/tram.svg"
+    width="300" height="200"></a></span><div class="infobox-caption">Cable car on Hyde Street</div></td></tr></table>
+  <div id="ally-risk-banner" role="alert">Careful: this page may be a scam. (Test banner.)</div>
+</body>
+</html>

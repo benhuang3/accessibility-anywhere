@@ -174,6 +174,23 @@ class ToolsEndToEnd(unittest.TestCase):
         self.call("simplified_mode", {"on": False, "everywhere": True})
         self.assertFalse(ally.action("pageInfo")["simple"])
 
+    def test_off_right_after_following_a_link_stays_off(self):
+        self.call("simplified_mode")
+        self.page = ally.open("combo_form.html")  # same site: simple mode follows the link after a short wait
+        ally._tab_ids.clear()
+        self.call("simplified_mode", {"on": False})  # ...but the user turns it off during that wait
+        self.page.wait_for_timeout(2000)
+        self.assertEqual([s for s in ally.styles(self.page) if s.startswith("ally_")], [])
+
+    def test_a_remembered_site_gets_its_own_text_size_back(self):
+        self.call("simplified_mode", {"remember": True})
+        size = "() => parseFloat(getComputedStyle(document.querySelector('main p, p')).fontSize)"
+        chosen = self.page.evaluate(size)
+        self.page.reload(wait_until="load")
+        self.page.wait_for_timeout(2500)
+        self.assertAlmostEqual(self.page.evaluate(size), chosen, delta=0.5)
+        self.call("simplified_mode", {"on": False, "everywhere": True})
+
     def test_reset_all_removes_everything(self):
         self.call("make_page_easier", {"steps": ["clutter", "menus", "text", "buttons"]})
         self.ctx.browser.call("resetPage")

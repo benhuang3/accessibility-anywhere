@@ -140,6 +140,185 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 03:22 PT — Hayden (via Claude Code) — `main`, merged `hayden/face-setup` (merge `e363c0f`)
+
+**Merged into `main`:** 1022 tests pass.
+- **Cartesia WAV fix:** without it, on Windows with a Cartesia key, voice is silent and commands
+  are ignored.
+- **Voice:** "Ally" is said as AL-eye, and the calibration voice is fixed.
+- **Face setup:** one ~90 s setup, plus a face profile with optional SpacetimeDB sync (off by
+  default).
+- **Senses v2:** opt-in, and the defaults are unchanged.
+- **Ganesh's `risk-branch`:** up to `hayden/face-setup`.
+
+**Everyone:** pull `main`.
+- **Ben:** `uiux` (Clarity theme and mascot) is not merged. When you merge it,
+  `test_risk_cooldown` expects the old button color `#7A4100`; the theme uses `#0B57D0`.
+- **Ganesh:** deploy `spacecall/server/src/profile.ts` (steps in the face-setup entry below).
+
+### Oct 25, 03:30 PT — Ben H (via Claude Code) — branch `benh/os-layer` -> `main`, commits `348d419`, `1f9d611`
+
+**Pushed to `main`.** New for the OS team's list: (5) enlarge images, (9) click by voice, (10) describe images.
+- **Picture viewer** (`docs/picture_viewer.md`): "zoom in on the picture (of X)", "show me the photo bigger",
+  "next picture", "close the picture". Chosen by the picture's alt text / caption / label; never page zoom.
+  While it's open, zoom in/out (voice, popup, Ctrl+Plus) act on the picture.
+- **Click by voice / number** (`docs/click_by_voice.md`): "show numbers", "click 7", "click sign in"; two
+  matches -> numbers on just those + "Which number?"; yes/no first for paying, sending, deleting, signing out
+  or unnamed buttons. A bare "seven" only works offline (online it may answer something Claude asked).
+- **Claude picture descriptions**: one screenshot with numbered boxes when nothing on screen matches; "describe
+  the picture". `[picture] describe_with_claude` (default on; no key = old behaviour).
+- **Bug fix, affects everyone:** "go back", "go forward" and "reload" by voice always failed
+  (`BrowserAPI.call("navigate", action=...)` collided with its own `action` parameter; it is now
+  positional-only, same for `PageSession.call`). Back/forward now run `history.back()` in the page: Chrome's own
+  Back skips pages the user never clicked, which for a voice-only user is every page. A tab with no history goes
+  back to the tab that opened it. Voice-clicked links are opened by the extension (`chrome.tabs.update/create`):
+  no pop-up blocking, normal history; a link's own click handler doesn't run (`href="#"` links still click).
+- **Runtime v2** (`extension/page/runtime.js`): shared scroll lock, reverse-order teardown, an older runtime in a
+  tab is cleaned up on reset. **Ganesh:** new overlay hosts `ally-picture-host`, `ally-picture-boxes`,
+  `ally-click-host` (z-index below `#ally-risk-banner`, which is never touched).
+- `CLAUDE.md`: a section on working with several agents (handoff card, reviewer before builders, caps).
+- Tests: `test_picture`, `test_clicks`, `browser.test_picture`, `browser.test_clicks` (back/forward cache,
+  reload, new tabs). Full run in the Windows VM: 48 modules OK.
+- Still to do tonight: tab switching ("go to the other tab"), "show me where to click", form helper, "keep
+  reading". Reload the extension and open tabs after pulling.
+
+### Oct 25, 02:56 PT — Ben H (via Claude Code) — `main`, demo and pitch plan
+
+**Changed:** new `docs/DEMO_PLAN.md` (docs only, no code). The 3-minute script, roles, fallbacks, Q&A
+prep and gaps to close before judging.
+**For everyone:** the track list needs fixing on Devpost. Presage, MLH Gen AI and .Tech domain prizes
+don't exist at this event; the Anthropic track is "Claude for Public Benefit". Owners for the pre-judging
+gaps are in section 7.
+
+### Oct 25, 01:45 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `dece59e`
+
+**Pushed to `benh/os-layer` (not yet on `main`).** "Bigger" now makes a clear difference (Ben H: at least 30%).
+Text: the smallest step is 1.3x (was 1.15x; "smaller" can still go to 1.15x). Buttons: labels 1.3x (at least
++3 px, up to 32 px), links styled as buttons (`a[role=button]`, `a.btn`, `a.button`) now grow too, and button
+boxes grow 1.15x per side (min height 44 px). Measured in the VM: usa.gov text 130%, button area 1.33-1.77x;
+Wikipedia text 150%, buttons 1.34x+. Still on hold: small toggles in lists/menus, already-big buttons. Known
+bug, not fixed yet: "reset" / "simple mode off" don't cancel a background AI check still running, which can
+re-apply changes. Reload the extension and open tabs after pulling.
+
+### Oct 25, 01:15 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `52873ea`
+
+**Pushed to `benh/os-layer`.** Bug found in manual testing: "zoom in" typed in the extension popup turned on
+the full-screen Windows magnifier (panning with the mouse) instead of zooming the page, because the popup takes
+the focus from Chrome's window. A popup command's browser now counts as in front. **Ganesh / Ben W:** anything
+that checks `bridge.chrome_focused` during a popup command now gets True. Also: after reloading the extension in
+`chrome://extensions`, reload open tabs too (they keep the old page scripts).
+
+### Oct 25, 01:05 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `599fca1`
+
+**Pushed to `benh/os-layer` (not yet on `main`).**
+- **The Mac version is removed** (decision: Windows only; Linux kept). `ally/platforms/macos.py` is gone;
+  `<mod>` is always Ctrl+Alt; `[commands]` shell steps take `{ windows = "...", linux = "..." }` and a
+  `mac` key is now a config error. **Everyone:** don't add Mac code; test on Windows.
+- **Simplified mode fix:** saying "simple mode off" while a page on the same site is loading no longer gets
+  undone by the delayed re-apply, and later pages get the chosen text size (not a default).
+- All 43 modules pass on Windows (browser end-to-end twice).
+- **Hayden:** nothing in your files changed. **Ganesh:** `demo/verify_demo.py` still lists a Mac Chrome path
+  (yours, left as is).
+
+### Oct 25, 00:40 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `346c1dd`
+
+**Pushed to `benh/os-layer` (not yet on `main`).** Open issues 1 and 2 from the 23:45 entry are fixed:
+"bigger buttons" now also makes labels a little bigger (1.2x, at least +2px) and enlarges links styled as
+buttons. Issues 3 (small list/menu toggles) and 4 (buttons already 44px tall) are on hold by decision.
+Tests: new browser checks for label growth, link-buttons and order independence; both browser suites pass on
+Windows. **Ganesh:** your risk banner's own buttons aren't touched (Ally hosts are skipped).
+### Oct 25, 03:01 PT — Hayden (via Claude Code) — branch `hayden/face-setup`, commit `6cc3023`
+
+**Added: a one-time face setup and a face profile, optionally saved in SpacetimeDB.** 973 tests pass.
+- **Face setup (about 90 s):** "set up my face" or "calibrate my eyes" runs one flow:
+  1. a face scan with a ring that fills as you turn your head (it also checks light, distance and glare);
+  2. the 9 gaze dots;
+  3. sit back, then lean in, which also sets the lean range;
+  4. reading at the middle, top and bottom, a smile and squints, which set the senses baseline and
+     the personal squint model;
+  5. 5 check dots.
+  The old calibrate tool is an alias, and quick calibrate is unchanged.
+- **Face profile (`ally/face_profile.py`, `ally/profile_store.py`):**
+  - Numbers only (model coefficients and baseline statistics), never images.
+  - Always saved in `state/face_profile.json`, and restored at startup when nothing local exists.
+  - `[profile] sync = spacetimedb` (off by default) also saves it to the `ally-call` database.
+  - `python run.py profile show|delete`.
+- **Ganesh:** `spacecall/server/src/profile.ts` adds a private `face_profile` table, the
+  `save_face_profile` and `delete_face_profile` reducers, and an owner-only `own_face_profile` view.
+  None of your call tables change. To deploy, from `spacecall/`: `npm test`, `npm run check:server`,
+  then `spacetime publish ally-call --server maincloud --module-path server`. Do **not** use
+  `--delete-data`.
+- **Others:** this branch also contains `main`, `hayden/senses-v2`, `hayden/voice-calibration`
+  (the Cartesia WAV fix) and `risk-branch`.
+
+### Oct 25, 02:10 PT — Hayden (via Claude Code) — branch `hayden/senses-v2`, merges `908ad74`, `26775c9`
+
+**Added (opt-in, defaults unchanged, live behavior unchanged):** senses round 2. 899 tests pass.
+- **Squint and lean:** a personal squint model (calibration of about 35 s: read normally, top,
+  bottom, smile, squint), a hybrid squint method, and distance-based lean. They are selected with
+  `[senses] squint_method` and `lean_method`, which stay `v1`.
+- **LibreFace action units, off by default:** `[senses] au_model = libreface`. Weights come from
+  `scripts/get_au_models.py`. The license is USC research and non-profit only.
+- **Live raw numbers:** `[senses] raw_live` sends live raw face numbers for the new methods.
+- **Benchmark:** `python -m ally.senses.bench`.
+- **Result on the first raw recording (1 person):** the new squint methods are not ready yet.
+  The personal model turned itself off for that person. `v1` stays the default.
+
+### Oct 25, 01:03 PT — Hayden (via Claude Code) — branch `hayden/senses-v2` (from `main` `77dd943`), merge `dab3c61`
+
+**Added, not on `main`, and live behavior unchanged:** groundwork for fairer squint and lean detection. 872 tests pass.
+- **Senses recorder v2 (`ally/senses/matrix.py`, camera helper `raw` option):**
+  - Saves raw face numbers (landmarks, blendshapes, face matrix), never pictures.
+  - New script parts: top and bottom of the screen, fast blinks, tired eyes, wink, soft squint, long
+    natural small-text reading, soft lean, sit back.
+  - Optional `--eyes` and `--age`, plus `--repeat` and `--parts`.
+- **`ally/senses/features.py`, `ally/senses/bench.py`, and new detector classes in `detectors.py`:**
+  - Squint and lean candidate detectors and an offline benchmark that reports per person and per group.
+  - `[senses] squint_method` and `lean_method` default to `v1`, today's detectors.
+- **Fairness evidence so far:**
+  - On the London Face Set (CC BY 4.0), a fixed squint threshold flags East Asian faces at rest
+    far more often than others.
+  - The open-source LibreFace AU7 reads more resting "squint" on Black faces (15% vs 3% white,
+    n=13/69).
+  - So the design compares each person only with their own calibration.
+- **Next on this branch:** the personal squint model, LibreFace as an optional off-by-default vote
+  (USC research and non-profit license only), and volunteer recordings.
+
+**Others:** nothing to do. Ganesh and Ben H: the senses `Struggle` shape on the bus is unchanged.
+### Oct 25, 01:56 PT — Hayden (via Claude Code) — branch `hayden/voice-calibration`, commit `d578f76`
+
+**Fixed a Windows bug that affects anyone with a Cartesia key: Ally was silent and ignored voice commands.**
+867 tests pass.
+- **Cause:** Cartesia's `/tts/bytes` WAV is streamed, so its RIFF and data sizes are `0xFFFFFFFF`.
+  - Windows `PlaySound` refuses it. `_Sound` plays asynchronously, so nothing is heard and there is
+    no error.
+  - Python's `wave` reads it as about 25 hours long. The Speaker then believed it was still saying
+    the greeting, and the listener treated everything as Ally's own voice (only "Ally, stop"
+    worked).
+  - `doctor` showed this as "89478.5 s of audio".
+- **Fix:** `speech.fix_wav_sizes` writes the real sizes into every Cartesia clip, and into cached
+  prompt files saved before the fix. New `StreamingWavTests`.
+- **Ben W and Ben H:** please merge this branch, or at least `d578f76`, into `main` soon. On Windows
+  with `CARTESIA_API_KEY` set, voice is broken without it. Delete `state/voice_cache` once if you
+  like; the old files are repaired on read either way.
+
+### Oct 25, 01:31 PT — Hayden (via Claude Code) — branch `hayden/voice-calibration` (from `main` `77dd943`), commit `bc5b13f`
+
+**Fixed:** the eye-tracker setup's spoken prompts no longer get cut off mid-word. 865 tests pass.
+- **Queued prompts:** setup prompts queue behind the sentence already playing
+  (`speaker.say(text, interrupt=False)`).
+- **Quiet during setup:** while a calibration or check is on screen, and for 5 s after, the "position
+  changed" re-tune line is held, and the senses report no lean or squint. The setup asks people to
+  lean in and sit back, so no offer talks over it.
+- **Pacing:** each head-position round starts only after its prompt has had 2.5 s to be said.
+- **Results spoken:** calibration and quick calibrate now say their result. `agent.handle_text`
+  skips the reply once a tool has spoken, so voice requests never heard it.
+
+**Others:**
+- **Ben H and Ben W:** `GazeManager.busy()` says when the setup is on screen, if voice or offers should
+  hold too.
+- **Ben W:** there are no changes to `speech.py`. It already queues with `interrupt=False`.
+
 ### Oct 25, 00:11 PT — Hayden (via Claude Code) — branch `hayden/start-fixes` (from `main` `35b7608`), commit `d1dbe07`
 
 **Fixed Ben H's open issues 7 and 8 (23:45 entry).** 858 tests pass. Merged into `main` (fast-forward); it touches

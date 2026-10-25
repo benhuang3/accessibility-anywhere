@@ -11,6 +11,10 @@ together. "Simplified mode" is the four changing steps run as one, chosen by pag
 | Enlarge buttons | `buttons` | `enlarge_buttons(on)` | bigger buttons, links and form fields (CSS layer); never changes zoom |
 | Verify | `verify` | `check_page_layout()` | read-only: did anything get worse than the page before Ally? |
 
+Outside Simplified mode, the picture viewer (`picture`, tools `zoom_picture` / `close_picture` /
+`next_picture`) shows one described picture from the page large, over the page, without changing the page
+or its zoom. Its own spec: `docs/picture_viewer.md`.
+
 ## The contract (every step follows it)
 
 1. **Own pieces only.** A step owns its CSS layer names (`ally_<step>` or `ally_<step>_<part>`), its
@@ -61,6 +65,8 @@ ACTIONS (called by the agent over the WebSocket; all accept an optional `tabId`)
 | `stepOn` / `stepOff` | `step, opts` | the step's result object |
 | `pageVerify` | | `{ok, checks:{overflow, clipped, sticky, covered}, zoom}` |
 | `pageTeardown` | | `true` |
+| `pictureList` / `pictureStep` / `pictureZoom` | see `docs/picture_viewer.md` | |
+| `pictureState` | | `{open, id, scale}`; a probe that never injects (safe on any tab) |
 
 ## AllyPage (page side, `extension/page/runtime.js`)
 

@@ -6,6 +6,8 @@ const STEPS = {};
 const PAGE_FILES = ["page/runtime.js"];
 // CSS layer names Ally's steps own; reset removes all of them, "style none" removes none of them.
 const ALLY_LAYER = /^ally_/;
+// Must match VERSION in page/runtime.js: a tab still running an older runtime gets every file again.
+const RUNTIME_VERSION = 2;
 
 // ---------------------------------------------------------------- one queue per tab
 const tabQueues = new Map();
@@ -38,12 +40,12 @@ function scriptable(tab) {
 async function ensureRuntime(tabId) {
   const [probe] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (files) => {
+    func: (files, version) => {
       const p = globalThis.AllyPage;
-      if (!p) return files;
+      if (!p || p.version !== version) return files;
       return files.filter((f) => !(p.loaded || []).includes(f));
     },
-    args: [PAGE_FILES],
+    args: [PAGE_FILES, RUNTIME_VERSION],
   });
   const missing = (probe && probe.result) || PAGE_FILES;
   if (!missing.length) return;

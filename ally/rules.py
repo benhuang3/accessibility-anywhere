@@ -60,6 +60,11 @@ RULES = [
               r"make (?:what|where) (?:i'm|i am|im) looking at (?:bigger|larger)|"
               r"help me read(?: (?:this|that|it|the (?:text|page|screen)))?",
          loose=r"\b(?:i'm|i am|im) (?:looking|staring|gazing)\b|\bwhere i look\b|\b(?:magnify|zoom(?: in)?) here\b"),
+    # Face setup before calibrate. "set up my eyes" and "calibrate" stay on calibrate_eye_tracker,
+    # which runs the same flow, so older phrases keep their tool name.
+    Rule("face_setup", [("face_setup", {})],
+         full=r"(?:please )?(?:set up|setup|scan) (?:my )?face|face (?:setup|set up|scan)|scan my face",
+         loose=r"\b(?:set up|setup|scan) (?:my )?face\b|\bface (?:setup|set up)\b|\bscan my face\b"),
     # Quick calibrate comes before calibrate, whose loose pattern would take any "calibrate".
     Rule("quick_calibrate", [("check_eye_tracker", {})],
          full=r"(?:do a )?(?:quick|quickly|fast)(?: re)? ?(?:calibrat(?:e|ion)|check|setup|set up)(?: (?:my|the))?"
@@ -176,12 +181,117 @@ RULES = [
     Rule("scroll_up", [("scroll_page", {"direction": "up"})],
          full=r"(scroll )?up|page up|previous page", loose=r"\bscroll up\b"),
     Rule("back", [("browser_navigate", {"action": "back"})], full=r"(go )?back|previous"),
+    Rule("reload", [("browser_navigate", {"action": "reload"})],
+         full=r"(reload|refresh)( (the|this) (page|website|site|tab))?|load (the |this )?page again"),
     Rule("forward", [("browser_navigate", {"action": "forward"})], full=r"(go )?forward"),
     Rule("help", [("show_help", {})], full=r"help|what can you do|what can i say|commands"),
 ]
 
 _COMPILED = [(r, re.compile(rf"^(?:{r.full})$") if r.full else None, re.compile(r.loose) if r.loose else None)
              for r in RULES]
+
+# "Zoom in on the picture (of X)" (docs/picture_viewer.md). A picture word is required, so plain "zoom in" keeps
+# zooming the page. Checked before the rules: "zoom in on..." would otherwise reach zoom_in's loose pattern.
+_PIC = r"(?:picture|photo|photograph|image|pic|painting|drawing|illustration)s?"
+_PIC_VERB = (r"(?:zoom(?: in| into)?(?: on| to)?|magnify|enlarge|blow up|open|show(?: me)?|let me see|"
+             r"make|look at|see)")
+_PIC_ABOUT = r"(?: (?:of|with|showing|about) (?P<about>[a-z0-9' ]+?))?"
+_PIC_TAIL = r"(?: (?:bigger|larger|up|closer|bigger please|for me))?"
+# "open", "show me" and "see" need "the/that/this" before the picture ("open google photos" and "show me photos of
+# my grandkids on facebook" are about apps and sites, not a picture on screen).
+_PIC_ZOOM_VERB = r"(?:zoom(?: in| into)?(?: on| to)?|magnify|enlarge|blow up)"
+_PIC_LOOK_VERB = r"(?:open|show(?: me)?|let me see|make|look at|see)"
+PICTURE = re.compile(rf"(?:{_PIC_ZOOM_VERB}(?: (?:the|that|this|a|an|your))?|{_PIC_LOOK_VERB} (?:the|that|this))"
+                     rf" (?:(?!out\b)(?P<before>[a-z0-9' ]+?) )?{_PIC}{_PIC_ABOUT}{_PIC_TAIL}")
+PICTURE_LOOSE = re.compile(rf"\b(?:zoom(?! out)|magnify|enlarge|blow up)\b.*?\b{_PIC}\b(?: (?:of|with|showing) "
+                           rf"(?P<about>[a-z0-9' ]+))?")
+PICTURE_RULES = [
+    ("zoom_out", [("zoom_out", {})], re.compile(rf"zoom out (?:of|on|from) (?:the |this |that )?{_PIC}")),
+    ("close_picture", [("close_picture", {})],
+     re.compile(rf"(?:close|exit|hide|leave) (?:the |this |that )?(?:{_PIC}|picture viewer|viewer)")),
+    ("next_picture", [("next_picture", {})],
+     re.compile(rf"(?:show (?:me )?)?(?:the )?(?:next|another|other|different) {_PIC}")),
+    ("previous_picture", [("next_picture", {"back": True})],
+     re.compile(rf"(?:show (?:me )?|go back to )?(?:the )?(?:previous|earlier) {_PIC}|(?:the )?{_PIC} before")),
+]
+
+
+DESCRIBE_PICTURE = re.compile(
+    rf"(?:describe|tell me about|explain)(?: the| this| that| a)? (?:(?P<before>[a-z0-9' ]+?) )?{_PIC}{_PIC_ABOUT}|"
+    rf"what(?:'s| is| does)(?: in| on)?(?: the| this| that)? {_PIC}(?: show(?:ing)?| of)?"
+    + _PIC_ABOUT.replace("?P<about>", "?P<about2>") + "|" +
+    rf"what(?:'s| is) (?:in|on) (?:the |this |that )?{_PIC}")
+
+
+def _picture(t: str, strict: bool) -> Match | None:
+    m = DESCRIBE_PICTURE.fullmatch(t)
+    if m:
+        g = m.groupdict()
+        about = (g.get("about") or g.get("about2") or g.get("before") or "").strip()
+        return Match("describe_picture", [("describe_picture", {"about": about})])
+    for name, actions, pattern in PICTURE_RULES:
+        if pattern.fullmatch(t):
+            return Match(name, [(tool, dict(args)) for tool, args in actions])
+    m = PICTURE.fullmatch(t) or (None if strict else PICTURE_LOOSE.search(t))
+    if not m:
+        return None
+    groups = m.groupdict()
+    about = (groups.get("about") or "").strip()
+    before = (groups.get("before") or "").strip()
+    if not about and before and before not in ("big", "bigger", "large", "small", "little"):
+        about = before
+    return Match("zoom_picture", [("zoom_picture", {"about": about})])
+
+
+# Click by voice / by number (docs/click_by_voice.md). After the picture phrases ("open the picture").
+_SMALL = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+          "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+_TENS = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+_NUM = (r"(?:\d{1,2}|(?:" + "|".join(_TENS) + r")(?:[ -](?:" + "|".join(_SMALL[:9]) + r"))?|"
+        + "|".join(sorted(_SMALL, key=len, reverse=True)) + ")")
+CLICK_RULES = [
+    ("hide_numbers", re.compile(r"(?:hide|turn off|remove|clear|get rid of)(?: the| all)?(?: the)? numbers|"
+                                r"numbers off|no (?:more )?numbers")),
+    ("show_numbers", re.compile(r"(?:show|turn on|display|put up|give me)(?: me)?(?: the)? (?:numbers|number labels)"
+                                r"(?: on (?:the |this )?(?:buttons|links|page|screen|site))?|"
+                                r"number (?:the |all the )?(?:buttons|links|page|things)|numbers on|"
+                                r"show (?:me )?(?:the |all the )?(?:links|buttons)|(?:show me )?what can i click(?: on)?")),
+]
+CLICK_NUMBER = re.compile(rf"(?:(?:click|press|tap|choose|select|pick|hit)(?: on)?(?: number)? |number )(?P<n>{_NUM})")
+# A number on its own ("seven") only offline: online it may answer something Claude asked ("how many?"), and
+# Claude sees "Which number?" in the conversation and calls click_number itself.
+BARE_NUMBER = re.compile(rf"(?P<n>{_NUM})")
+CLICK_TEXT = re.compile(r"(?:click|press|tap|hit)(?: on)? (?P<label>.+)|"
+                        r"(?:open|choose|select) (?:the )?(?!(?:a |another )?new (?:tab|window))"
+                        r"(?P<label2>[a-z0-9' ]+?) (?:link|button|tab)")
+CLICK_LOOSE = re.compile(r"\b(?:click|press|tap)(?: on)? (?P<label>[a-z0-9' ]+)")
+
+
+def _number_value(word: str) -> int | None:
+    if word.isdigit():
+        return int(word)
+    parts = re.split(r"[ -]", word)
+    if parts[0] in _TENS:
+        return 20 + 10 * _TENS.index(parts[0]) + (_SMALL.index(parts[1]) + 1 if len(parts) > 1 else 0)
+    return _SMALL.index(word) + 1 if word in _SMALL else None
+
+
+def _clicks(t: str, strict: bool) -> Match | None:
+    for name, pattern in CLICK_RULES:
+        if pattern.fullmatch(t):
+            return Match(name, [("show_numbers", {"on": name == "show_numbers"})])
+    m = CLICK_NUMBER.fullmatch(t) or (None if strict else BARE_NUMBER.fullmatch(t))
+    if m:
+        n = _number_value(m.group("n"))
+        if n and 1 <= n <= 99:
+            return Match("click_number", [("click_number", {"n": n})])
+    m = CLICK_TEXT.fullmatch(t) or (None if strict else CLICK_LOOSE.search(t))
+    if m:
+        label = (m.groupdict().get("label") or m.groupdict().get("label2") or "").strip()
+        if label:
+            return Match("click_text", [("click_text", {"label": label})])
+    return None
+
 
 LEVEL = re.compile(r"(?:zoom|magnify|size|scale|make it|set)\D{0,20}?(\d{1,3}(?:\.\d+)?)\s*(%|percent|x|times)")
 WORD_LEVELS = {"double": 2.0, "twice": 2.0, "triple": 3.0, "normal size": 1.0}
@@ -198,6 +308,9 @@ def match(text: str, strict: bool = True) -> Match | None:
     t = normalize(text)
     if not t:
         return None
+    pic = _picture(t, strict) or _clicks(t, strict)
+    if pic:
+        return pic
     m = LEVEL.search(t)
     if m:
         value = float(m.group(1))
@@ -220,7 +333,8 @@ def match(text: str, strict: bool = True) -> Match | None:
 
 HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the selection, stop, high contrast, "
              "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, "
-             "what am I looking at, check my eye tracker, set up my eyes, "
+             "what am I looking at, check my eye tracker, set up my face, set up my eyes, "
              "follow my eyes slower, follow my eyes faster, show where I am looking, hide the eye dot, "
              "invert colors, scroll down, go back, simple mode, bigger buttons, hide pop-ups, simplify the menu, "
-             "check the page, or ask anything when you're online.")
+             "check the page, zoom in on the picture, describe the picture, show numbers, click 3, click sign in, "
+             "reload, or ask anything when you're online.")

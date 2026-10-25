@@ -9,10 +9,6 @@ from .base import Platform
 
 def get_platform() -> Platform:
     system = platform.system()
-    if system == "Darwin":
-        from .macos import MacPlatform
-
-        return MacPlatform()
     if system == "Windows":
         from .windows import WindowsPlatform
 

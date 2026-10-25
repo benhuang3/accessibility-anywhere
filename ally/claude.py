@@ -28,7 +28,7 @@ class ClaudeError(Exception):
 
 
 def ssl_context() -> ssl.SSLContext:
-    """Use certifi's CA bundle when installed (fixes python.org builds on macOS)."""
+    """Use certifi's CA bundle when installed (fixes certificate errors on some Python installs)."""
     try:
         import certifi  # type: ignore
 

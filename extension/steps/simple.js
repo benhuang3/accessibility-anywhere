@@ -31,12 +31,17 @@ async function isSimpleSite(url) {
   return !!origin && !!(await simpleSites())[origin];
 }
 
-async function simpleRemember(origin, steps) {
+// Bumped whenever simple mode is turned on or off in a tab; a re-apply waiting for a page to load checks it,
+// so a "simple mode off" said during the wait isn't undone a moment later.
+const simpleGen = new Map();
+const bumpSimple = (tabId) => simpleGen.set(tabId, (simpleGen.get(tabId) || 0) + 1);
+
+async function simpleRemember(origin, steps, scale) {
   const o = simpleOrigin(origin);
   if (!o) throw new Error("Simple mode can only be remembered for normal websites.");
   const sites = await simpleSites();
   const list = Array.isArray(steps) && steps.length ? steps.map(String) : SIMPLE_DEFAULT_STEPS;
-  sites[o] = { steps: list, at: Date.now() };
+  sites[o] = { steps: list, scale: Number(scale) > 1 ? Number(scale) : undefined, at: Date.now() };
   await chrome.storage.local.set({ simpleSites: sites });
   return { origin: o, steps: list };
 }
@@ -101,12 +106,14 @@ STEPS.simple = {
     const prev = (await simpleTab(tabId)) || {};
     const steps = Array.isArray(opts.steps) ? opts.steps.map(String) : prev.steps || [];
     let remembered = origin ? await isSimpleSite(url) : false;
+    const scale = Number(opts.scale) > 1 ? Number(opts.scale) : prev.scale;
     if (opts.remember && origin) {
-      await simpleRemember(origin, steps.length ? steps : undefined);
+      await simpleRemember(origin, steps.length ? steps : undefined, scale);
       remembered = true;
     }
     const zoomBefore = Number(opts.zoomBefore) > 0 ? Number(opts.zoomBefore) : prev.zoomBefore;
-    await setSimpleTab(tabId, { origin, steps, zoomBefore, at: Date.now() });
+    if (Array.isArray(opts.steps)) bumpSimple(tabId);
+    await setSimpleTab(tabId, { origin, steps, zoomBefore, scale, at: Date.now() });
     await simpleMarkDoc(tabId);
     await inPage(tabId, "simple.working", { on: false }).catch(() => {});
     await simpleShowChip(tabId, simpleChipText(remembered));
@@ -114,6 +121,7 @@ STEPS.simple = {
   },
 
   async off(tabId, opts = {}) {
+    bumpSimple(tabId);
     const rec = (await simpleTab(tabId)) || {};
     const applied = Array.isArray(rec.steps) && rec.steps.length ? rec.steps : Array.isArray(opts.steps) ? opts.steps : SIMPLE_OFF_ORDER;
     const said = [];
@@ -159,6 +167,7 @@ STEPS.simple = {
   },
 
   async teardown(tabId) {
+    bumpSimple(tabId);
     clearTimeout(simpleSpaTimers.get(tabId));
     simpleSpaTimers.delete(tabId);
     await setSimpleTab(tabId, null);
@@ -185,19 +194,18 @@ async function simpleCallStep(name, fn, tabId, opts) {
 
 // Never measures or changes zoom: Chrome already remembers the zoom per site.
 // `fresh` (the popup toggle) turns clutter on instead of only re-detecting remembered kinds.
-async function simpleReapply(tabId, steps, { fresh = false, remembered = true } = {}) {
+async function simpleReapply(tabId, steps, { fresh = false, remembered = true, scale } = {}) {
   if (STEPS.clutter && steps.includes("clutter")) {
     if (!fresh && typeof STEPS.clutter.redetect === "function") await simpleCallStep("clutter", "redetect", tabId);
     else await simpleCallStep("clutter", "on", tabId);
   }
   if (steps.includes("menus")) await simpleCallStep("menus", "on", tabId, { mode: "strip" });
   if (steps.includes("buttons")) await simpleCallStep("buttons", "on", tabId);
-  if (steps.includes("text")) {
-    const zoom = await chrome.tabs.getZoom(tabId);
-    await simpleCallStep("text", "on", tabId, { zoom });
-  }
   const prev = (await simpleTab(tabId)) || {};
-  await setSimpleTab(tabId, { origin: simpleOrigin(await simpleTabUrl(tabId)), steps, zoomBefore: prev.zoomBefore, at: Date.now() });
+  const textScale = Number(scale) > 1 ? Number(scale) : prev.scale || 1.3;
+  if (steps.includes("text")) await simpleCallStep("text", "on", tabId, { scale: textScale });
+  await setSimpleTab(tabId, { origin: simpleOrigin(await simpleTabUrl(tabId)), steps, zoomBefore: prev.zoomBefore,
+    scale: textScale, at: Date.now() });
   await simpleMarkDoc(tabId);
   await simpleShowChip(tabId, simpleChipText(remembered));
 }
@@ -213,14 +221,17 @@ async function simpleOnLoad(tabId, url) {
     if (rec && rec.origin !== origin) await setSimpleTab(tabId, null); // left the site
     return;
   }
+  const scale = (sites[origin] && sites[origin].scale) || (rec && rec.scale);
+  const gen = simpleGen.get(tabId) || 0;
   await new Promise((r) => setTimeout(r, SIMPLE_HYDRATE_MS));
   await withTab(tabId, async () => {
+    if ((simpleGen.get(tabId) || 0) !== gen) return; // simple mode was turned on or off during the wait
     if (simpleOrigin(await simpleTabUrl(tabId)) !== origin) return; // moved on during the delay
     if (await simpleExcluded(tabId)) {
       await setSimpleTab(tabId, null);
       return;
     }
-    await simpleReapply(tabId, steps, { remembered: !!sites[origin] });
+    await simpleReapply(tabId, steps, { remembered: !!sites[origin], scale });
   });
 }
 

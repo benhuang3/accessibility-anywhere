@@ -1099,3 +1099,96 @@ class GazePhraseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SetupVoiceTests(unittest.TestCase):
+    """The setup's spoken prompts are never cut off, and Ally's other voices wait during a setup."""
+
+    def speaker(self, agent):
+        said = []
+        agent.speaker = types.SimpleNamespace(
+            say=lambda text, interrupt=True, **kw: said.append((text, interrupt)) or True)
+        agent.events = types.SimpleNamespace(add=lambda *a, **k: None)
+        return said
+
+    def test_setup_prompts_wait_for_the_sentence_playing(self):
+        gaze, agent = manager()
+        said = self.speaker(agent)
+        gaze._speak("Sit back a little")
+        self.assertEqual(said, [("Sit back a little", False)])
+
+    def test_a_speaker_without_the_interrupt_option_still_speaks(self):
+        gaze, agent = manager()
+        said = []
+        agent.speaker = types.SimpleNamespace(say=lambda text: said.append(text))
+        gaze._speak("Lean in a little")
+        self.assertEqual(said, ["Lean in a little"])
+
+    def test_no_retune_offer_during_or_just_after_a_setup(self):
+        gaze, agent = manager()
+        said = self.speaker(agent)
+        gaze._setup_on()
+        gaze._unsure_since = time.time() - 60
+        gaze._note_uncertainty(True)
+        gaze._setup_off()
+        gaze._note_uncertainty(True)
+        self.assertEqual(said, [])  # still within the quiet seconds after the setup
+        gaze._setup_ended = time.monotonic() - 60
+        gaze._note_uncertainty(True)
+        self.assertEqual([text for text, _ in said], [RETUNE_OFFER])
+
+    def test_calibrate_and_check_mark_the_setup_and_always_clear_it(self):
+        gaze, agent = manager()
+        seen = []
+
+        def send(line):
+            seen.append((line, gaze.setting_up))
+            gaze._calib_result = {"calibrated": True}
+            gaze._calib_done.set()
+            return True
+
+        gaze.send = send
+        gaze.calibrate(timeout=1)
+        gaze.check(timeout=1)
+        self.assertEqual([busy for _, busy in seen], [True, True])
+        self.assertFalse(gaze.setting_up)
+        self.assertTrue(gaze.busy())  # a few quiet seconds after the dots close
+        gaze.send = lambda line: False  # the helper stopped: the flag still clears
+        with self.assertRaises(ToolError):
+            gaze.check(timeout=1)
+        self.assertFalse(gaze.setting_up)
+
+    def test_senses_report_nothing_while_the_setup_is_on_screen(self):
+        gaze, agent = manager()
+        got = []
+        agent.on_struggle = got.append
+        agent.events = types.SimpleNamespace(add=lambda *a, **k: None)
+        senses = Senses(agent)
+        gaze._setup_on()
+        self.assertIsNone(senses._emit(types.SimpleNamespace(kind="lean")))
+        self.assertEqual(got, [])
+
+    def test_the_result_is_said_after_the_instructions(self):
+        from ally.tools.gaze_tools import say_result
+        gaze, agent = manager()
+        said = self.speaker(agent)
+        say_result(types.SimpleNamespace(agent=agent), "Good. About 120 pixels off.")
+        self.assertEqual(said, [("Good. About 120 pixels off.", False)])
+        say_result(types.SimpleNamespace(agent=types.SimpleNamespace()), "No speaker, no error.")
+
+    def test_a_new_head_position_waits_for_its_prompt(self):
+        from ally.gaze_helper import PROMPT_SECONDS, Setup
+        setup = Setup((1920, 1080), random.Random(1), poses=3)
+        face = {"present": True, "yaw": 0.0, "pitch": 0.0, "width": 0.3, "light": 120, "eye_light": 50}
+        feat = ([0.01, 0.02, 0, 0, 0, -0.1, 0, -2, -30, 0.5], 0.5)
+        t, said_at, round_at = 0.0, None, None
+        while t < 60 and round_at is None:
+            t += 0.05
+            stage = setup.stage
+            setup.step(t, feat, face, t)
+            if said_at is None and setup.announcements:
+                said_at = t
+            if said_at is not None and stage == "settle" and setup.stage == "targets":
+                round_at = t
+        self.assertIsNotNone(round_at)
+        self.assertGreaterEqual(round_at - said_at, PROMPT_SECONDS - 0.06)

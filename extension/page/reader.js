@@ -324,25 +324,6 @@
     return s;
   }
 
-  function lockScroll() {
-    const html = document.documentElement;
-    const body = document.body;
-    const saved = {
-      x: scrollX,
-      y: scrollY,
-      html: [html.style.getPropertyValue("overflow"), html.style.getPropertyPriority("overflow")],
-      body: body ? [body.style.getPropertyValue("overflow"), body.style.getPropertyPriority("overflow")] : null,
-    };
-    html.style.setProperty("overflow", "hidden", "important");
-    if (body) body.style.setProperty("overflow", "hidden", "important");
-    return () => {
-      const restore = (el, [v, prio]) => (v ? el.style.setProperty("overflow", v, prio) : el.style.removeProperty("overflow"));
-      restore(html, saved.html);
-      if (body && saved.body) restore(body, saved.body);
-      scrollTo(saved.x, saved.y);
-    };
-  }
-
   function styleHost(host, withStrip) {
     const set = (k, v) => host.style.setProperty(k, v, "important");
     set("all", "initial");
@@ -354,6 +335,7 @@
 
   function open(opts = {}) {
     close();
+    if (P.modules.picture) P.modules.picture.close(); // one overlay at a time: the viewer would trap the keys
     if (typeof globalThis.__allyReaderClose === "function") globalThis.__allyReaderClose(); // the older reader
     const stale = document.getElementById(HOST_ID);
     if (stale) stale.remove();
@@ -392,7 +374,7 @@
     wrap.append(bar, article);
     root.append(wrap);
 
-    const unlock = lockScroll();
+    const unlock = P.lockScroll();
     const prevFocus = document.activeElement;
     const onKey = (e) => {
       if (e.key !== "Escape") return;

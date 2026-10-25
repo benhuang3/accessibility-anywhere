@@ -258,3 +258,16 @@ class BridgeRoutingTests(unittest.TestCase):
         self.assertIs(seen["best"], asking)
         self.assertIs(bridge.best(), other)  # back to normal once the command is done
         self.assertEqual(asking.ws.sent[-1]["type"], "reply")
+
+    def test_a_popup_command_counts_as_chrome_in_front(self):
+        from ally.bridge import Bridge, Client
+
+        seen = {}
+        bridge = Bridge(on_command=lambda text: seen.setdefault("focused", bridge.chrome_focused) and "done")
+        client = Client(self.FakeWS(), "chrome-extension://a")
+        client.focused = False  # the popup took the focus from Chrome's window
+        bridge.clients.append(client)
+        self.assertFalse(bridge.chrome_focused)
+        bridge._run_command(client, {"id": 1, "text": "zoom in"})
+        self.assertTrue(seen["focused"])  # so "zoom in" zooms the page, not the whole screen
+        self.assertFalse(bridge.chrome_focused)

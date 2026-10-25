@@ -51,7 +51,7 @@ How to act:
 engine = "auto"            # "auto" = Cartesia when CARTESIA_API_KEY and a voice are set, else the built-in voice;
                            # "cartesia"; "system" (built-in voice only); "off"
 rate = 1.0                 # 0.5 = slow, 2.0 = fast
-voice = ""                 # optional system voice, e.g. "Samantha" (Mac) or "Microsoft Zira Desktop" (Windows)
+voice = ""                 # optional system voice, e.g. "Microsoft Zira Desktop" or "Microsoft David Desktop"
 max_chars = 4000           # longest text read in one go
 cartesia_voice_id = ""     # a Cartesia voice ID or name, e.g. "Tessa". List them: python run.py voices
 cartesia_model = "sonic-3.6"
@@ -102,7 +102,7 @@ fps = 20                   # frames per second; lower saves battery
 pan_speed = 1.0            # magnifier following your eyes: how fast looking near an edge moves the view
 
 # Global keyboard shortcuts (work in every app).
-# <mod> = Ctrl+Alt on Windows/Linux, Ctrl+Cmd on Mac. Other keys: <ctrl> <alt> <shift> <cmd> <f1>...
+# <mod> = Ctrl+Alt. Other keys: <ctrl> <alt> <shift> <cmd> <f1>...
 # The value can be a tool name, a command name from [commands], or any sentence to send to Ally.
 # This table replaces the built-in list. Set a value to "" to turn a shortcut off.
 [hotkeys]
@@ -170,6 +170,10 @@ grayscale = """
 html { filter: grayscale(1) !important; }
 """
 
+# The picture viewer ("zoom in on the picture", "describe the picture"; docs/picture_viewer.md).
+[picture]
+describe_with_claude = true  # pictures without a description get one from Claude (one screenshot); needs a key
+
 [tools]
 disabled = []              # tools to turn off, e.g. ["describe_screen"]
 timeout_seconds = 15       # a tool that takes longer is stopped waiting for
@@ -184,7 +188,7 @@ allowed_extension_ids = [] # empty = any Chrome extension may connect; add your 
 # and (optionally) a hotkey. Steps run in order. Step types:
 #   { tool = "name", args = { ... } }   { say = "text" }        { ask = "a request for Ally" }
 #   { open = "https://..." }            { keys = "<ctrl>+c" }  { wait = 1.5 }
-#   { notify = "text" }                 { shell = "command" }  or  { shell = { mac = "...", windows = "...", linux = "..." } }
+#   { notify = "text" }                 { shell = "command" }  or  { shell = { windows = "...", linux = "..." } }
 # This section replaces the built-in examples. Set allow_ai = false to hide a command from Claude.
 [commands.reading_mode]
 description = "Make the current web page easy to read: bigger, more spacing, and high contrast."
@@ -208,5 +212,5 @@ steps = [
 description = "Open the calculator app."
 phrases = ["open calculator", "open the calculator"]
 steps = [
-  { shell = { mac = "open -a Calculator", windows = "calc", linux = "gnome-calculator" } },
+  { shell = { windows = "calc", linux = "gnome-calculator" } },
 ]

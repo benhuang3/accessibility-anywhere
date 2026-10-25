@@ -10,7 +10,7 @@ from . import rules
 from .registry import Tool, ToolError
 
 log = logging.getLogger("ally.commands")
-OS_KEY = {"macos": "mac", "windows": "windows", "linux": "linux"}
+OS_KEY = {"windows": "windows", "linux": "linux"}
 STEP_KINDS = ("tool", "say", "shell", "open", "keys", "wait", "ask", "notify")
 
 

@@ -6,13 +6,22 @@
     {"calibrated": true, "error_px": 140, "dots": 9, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
                                            calibration done ({"calibrated": false, "why": "..."} if not)
     {"t": ..., "f": {"squint_l": 0.21, ...}}     face numbers for struggle sensing (with "signals": true)
+    {"t": ..., "f": {...}, "au": [0.01, ...]}    12 LibreFace probabilities when "au" is "libreface"
+    {"t": ..., "f": {...}, "lm": [[x, y, z], ...], "bs": {"eyeSquintLeft": 0.2}, "mat": [..16..] or null, "w": 640, "h": 480}
+                                                 same line when "raw" or "raw_live" is true: 478 landmarks, every blendshape,
+                                                 the face matrix, and the frame size. Numbers only.
     {"camera_off": true}                         the camera-on window was clicked; the camera then closes
     {"error": "..."}                             a problem; the process then exits
 
 Settings "gaze" (default true) turns gaze points on; "signals" sends face numbers (ally.senses.face) at
-"signals_fps". Frames never leave this process and are never written to disk.
+"signals_fps". "raw" (default false) adds those extra numbers to the same line. "raw_live" does the same
+when the agent asks for them. "au" is "off" (default) or "libreface"; libreface reads action units at most
+"au_fps" times a second (default 5) and puts the 12 numbers on every signals line. Ally's live senses leave
+raw off unless raw_live is set. Frames never leave this process and are never written to disk.
 
-Commands on stdin: "calibrate" or "calibrate 1" / "calibrate 3" (head positions); "check" runs only the 5 check dots; "stop" cancels a calibration in
+Commands on stdin: "face" runs the one-time face setup (scan, eyes, sit back, lean in, reading, check);
+"calibrate" or "calibrate 1" / "calibrate 3" (head positions) is the older dot setup the recorder still uses;
+"check" runs only the 5 check dots; "stop" cancels a calibration in
 progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not
 sent anywhere). What that learning has learned is saved next to the calibration, as numbers only,
 at most once a minute and on exit, and restored on start. A new calibration starts fresh.
@@ -20,8 +29,10 @@ at most once a minute and on exit, and restored on start. A new calibration star
 "choice <t0> <t1> <x> <y>" learns from a look that settled on a card (features from that dwell,
 the card centre as the target);
 "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
-"card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds) and
-"card off" closes it. The card also closes itself after seconds. "dot on" / "dot off" show or hide
+"card {json}" shows a readable card (text, optional title, size normal|large|tiny, place
+center|top|bottom, seconds) and
+"card off" closes it. The card also closes itself after seconds. place top or bottom puts a
+short card on that edge of the screen so the line being read is there. "dot on" / "dot off" show or hide
 the click-through gaze circle. "view LEVEL LEFT TOP" is the magnified view, so the circle can sit
 on the glass point while zoomed in. Unknown or broken lines are ignored.
 It exits when the agent closes its stdin (like the hotkey helper),
@@ -44,6 +55,7 @@ import time
 from pathlib import Path
 
 WINDOW = "Ally eye tracker setup"
+FACE_WINDOW = "Ally face setup"
 HUD = "Ally senses (only on this screen; nothing is saved)"
 HUD_COLORS = {"ok": (255, 255, 255), "warn": (0, 215, 255), "hot": (40, 40, 255)}  # BGR: white, yellow, red
 HUD_SCALE = 0.9
@@ -63,6 +75,8 @@ VAL_COUNT = 5
 # A dot keeps collecting up to CHECK_MAX until it has CHECK_MIN_GOOD frames, for slow cameras.
 CHECK_COLLECT, CHECK_MAX, CHECK_MIN_GOOD = 0.6, 1.5, 6
 MIN_GOOD = 10  # fewer good frames than this, and that dot is shown once more
+# A new head position's spoken prompt ("Sit back a little") gets this long before its dots start.
+PROMPT_SECONDS = 2.5
 HEAD_MOVE_DEG = 3.0  # yaw or pitch change that means the head turned instead of the eyes
 WIDTH_STEADY = 0.05  # relative face-width change; 40 cm to 32 cm is much larger than this
 EYES_ONLY = "Move only your eyes, keep your head still."
@@ -83,6 +97,7 @@ HEAD_MAX = 20.0  # degrees of turn or nod; the same cutoff senses uses before it
 CENTER_X = (0.25, 0.75)
 CENTER_Y = (0.20, 0.80)
 GLARE_LIGHT = 235.0  # eye-region brightness this high, held, is treated as glasses glare
+GLARE_FIX = "Move the light off to the side."
 ERROR_BAR = 150  # px; the held-out bar on a 1920x1080 screen
 CLOSER = "move a little closer"
 FARTHER = "move a little farther back"
@@ -98,6 +113,11 @@ REGION_NAMES = (
 NUM_FACES = 2
 SECOND_FACE = 0.70  # a second face this wide, compared with the largest, means two people
 CHEEK_R, CHEEK_L = 234, 454  # same cheek points ally.senses.face uses for width
+AU_OFF, AU_LIBREFACE = "off", "libreface"
+AU_MODES = (AU_OFF, AU_LIBREFACE)
+DEFAULT_AU_FPS = 5  # the encoder is about 20 ms; five times a second is enough for a squint
+AU_FPS_MIN, AU_FPS_MAX = 1, 30
+AU_COUNT = 12  # LibreFace presence head, BP4D order
 
 
 def _out():
@@ -310,6 +330,202 @@ def readiness_issue(face: dict | None) -> str | None:
     if off:
         return CENTER_HEAD
     return None
+
+
+# One-time face setup. The ring is 16 wedges. The head has to leave the center before a wedge fills.
+SCAN_SECONDS = 10.0
+SCAN_SEGMENTS = 16
+SCAN_MIN_DEG = 8.0
+READ_REST = 1.5
+FACE_STEPS = 6
+FACE_ABOUT = "About 90 seconds."
+SCAN_PROMPT = "Slowly turn your head in a circle."
+EYES_PROMPT = "Look at each dot. Move only your eyes."
+READ_PROMPT = "Read the lines, then smile, then squint."
+CHECK_PROMPT = "Look at each dot once more."
+READ_PARAGRAPH = (
+    "The window faces a quiet street. A bus stops and two people step off. "
+    "They wait for the light, then cross. The note on the table says back by four."
+)
+READ_TOP = "The clock on the wall is a minute fast."
+READ_BOTTOM = "The chair by the table is pulled out."
+READ_SMILE = "Smile for a moment."
+READ_SQUINT = "back by four"
+READ_REST_TEXT = "Relax your eyes."
+# name, seconds, place, size, on-screen text. rest is a pause between the two squints.
+READ_PHASES = (
+    ("neutral", 8.0, "center", "normal", READ_PARAGRAPH),
+    ("top", 4.0, "top", "normal", READ_TOP),
+    ("bottom", 4.0, "bottom", "normal", READ_BOTTOM),
+    ("smile", 3.0, "center", "normal", READ_SMILE),
+    ("squint", 3.0, "center", "tiny", READ_SQUINT),
+    ("rest", READ_REST, "center", "normal", READ_REST_TEXT),
+    ("squint", 3.0, "center", "tiny", READ_SQUINT),
+)
+_LABEL_PHASES = ("neutral", "top", "bottom", "smile", "squint")
+STEP_PROMPTS = {
+    1: SCAN_PROMPT,
+    2: EYES_PROMPT,
+    3: SIT_BACK,
+    4: LEAN_IN,
+    5: READ_PROMPT,
+    6: CHECK_PROMPT,
+}
+
+
+def scan_issue(face: dict | None) -> str | None:
+    """What to fix during the face scan. Turning the head is the task, so a turned head is fine.
+
+    Distance and light reuse the readiness check. Glasses glare uses the same brightness cutoff.
+    """
+    if not face or not face.get("present"):
+        if face and face.get("two"):
+            return TWO_FACES
+        return NO_FACE
+    centered = dict(face)
+    centered["yaw"] = 0
+    centered["pitch"] = 0
+    centered["cx"] = 0.5
+    centered["cy"] = 0.5
+    issue = readiness_issue(centered)
+    if issue:
+        return issue
+    try:
+        eye = float(face.get("eye_light"))
+    except (TypeError, ValueError):
+        eye = -1.0
+    if eye >= GLARE_LIGHT:
+        return GLARE_FIX
+    return None
+
+
+def segment_index(yaw, pitch, n: int = SCAN_SEGMENTS, min_deg: float = SCAN_MIN_DEG) -> int | None:
+    """Which ring segment the head points at. 0 starts at the left and moves counter-clockwise.
+
+    None while the head is still near the center, so looking straight ahead does not fill a wedge.
+    """
+    try:
+        yaw_f, pitch_f = float(yaw), float(pitch)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(yaw_f) or not math.isfinite(pitch_f):
+        return None
+    if math.hypot(yaw_f, pitch_f) < float(min_deg):
+        return None
+    turn = math.atan2(pitch_f, yaw_f)
+    count = max(1, int(n))
+    idx = int(math.floor((turn + math.pi) / (2.0 * math.pi) * count)) % count
+    return idx
+
+
+def segment_draw_angles(index: int, n: int = SCAN_SEGMENTS) -> tuple[float, float]:
+    """OpenCV ellipse angles (degrees, clockwise from the right) for one ring segment."""
+    count = max(1, int(n))
+    start = -math.pi + (int(index) % count) * (2.0 * math.pi / count)
+    end = start + (2.0 * math.pi / count) * 0.82
+    # OpenCV angles grow clockwise from the right; negate so the ring matches the head angle.
+    return -math.degrees(end), -math.degrees(start)
+
+
+def labelled_line(phase: str, t: float, sample: dict | None) -> dict:
+    """One setup line for the agent. The phase name, a time, and numbers. No picture."""
+    numbers = {}
+    for key, value in (sample or {}).items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(num):
+            numbers[str(key)] = round(num, 4)
+    try:
+        stamp = round(float(t), 3)
+    except (TypeError, ValueError):
+        stamp = 0.0
+    return {"label": str(phase), "t": stamp, "f": numbers}
+
+
+def lean_ratio_from(widths: dict, distances: dict) -> dict | None:
+    """The person's lean: near pose divided by the normal pose, for face size and head distance."""
+
+    def med(rows) -> float | None:
+        vals = []
+        for item in rows or []:
+            try:
+                num = float(item)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(num) and num > 0:
+                vals.append(num)
+        if len(vals) < 3:
+            return None
+        return float(statistics.median(vals))
+
+    out = {}
+    normal_w, near_w, far_w = med(widths.get("normal")), med(widths.get("close")), med(widths.get("back"))
+    normal_d, near_d, far_d = med(distances.get("normal")), med(distances.get("close")), med(distances.get("back"))
+    if normal_w and near_w:
+        out["width"] = round(near_w / normal_w, 4)
+        out["normal_width"] = round(normal_w, 4)
+        out["near_width"] = round(near_w, 4)
+    if far_w:
+        out["far_width"] = round(far_w, 4)
+    if normal_d and near_d:
+        out["distance"] = round(near_d / normal_d, 4)
+        out["normal_distance"] = round(normal_d, 4)
+        out["near_distance"] = round(near_d, 4)
+    if far_d:
+        out["far_distance"] = round(far_d, 4)
+    return out or None
+
+
+def face_plan_seconds() -> float:
+    """How long the face setup takes when nobody has to repeat a dot.
+
+    The spoken line says about 90 seconds. The pose rounds and the check dots are the same
+    length as the eye-tracker setup, so a full run lands a little over that.
+    """
+    eyes = 9 * (CAL_SETTLE + CAL_COLLECT)
+    pose = PROMPT_SECONDS + 5 * (CAL_SETTLE + CAL_COLLECT)
+    reading = sum(float(row[1]) for row in READ_PHASES)
+    check = PROMPT_SECONDS + 5 * (VAL_SETTLE + VAL_COLLECT) + RESULT_SECONDS
+    return float(SCAN_SECONDS + eyes + pose + pose + reading + check)
+
+
+def label_numbers(sig: dict | None, landmarks, blendshapes, matrix, width: int, height: int) -> dict:
+    """Face numbers for one labelled setup frame. Floats only, never the picture."""
+    numbers = {}
+    if isinstance(sig, dict):
+        for key, value in sig.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            try:
+                num = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(num):
+                numbers[str(key)] = num
+    if landmarks is None:
+        return numbers
+    try:
+        from ally.senses.features import extract as extract_face_features
+
+        extra = extract_face_features(landmarks, blendshapes, matrix, width, height)
+    except Exception:
+        return numbers
+    if not isinstance(extra, dict):
+        return numbers
+    for key, value in extra.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(num):
+            numbers[str(key)] = num
+    return numbers
 
 
 def eye_jumped(prev, vector, limit: float = JUMP) -> bool:
@@ -1107,8 +1323,11 @@ class Setup:
 
     def _settle(self, now: float, face, wall: float) -> str:
         """Wait until the new head position holds still, then collect that round."""
-        if not self._update_steady(now, face):
-            return "running"
+        steady = self._update_steady(now, face)
+        if self._settle_since is None:
+            self._settle_since = now
+        if not steady or now - self._settle_since < PROMPT_SECONDS:
+            return "running"  # the prompt is still being said, or the head is still moving
         name = getattr(self, "_settle_pose", "")
         prompt = getattr(self, "_settle_prompt", "")
         points = getattr(self, "_settle_points", [])
@@ -1125,6 +1344,7 @@ class Setup:
         self._settle_pose = pose
         self._settle_prompt = prompt
         self._settle_points = list(points)
+        self._settle_since = None
         self.t0 = None
         self._steady_ref = None
         self._steady_since = None
@@ -1345,6 +1565,238 @@ class Setup:
         self.result_at = now
 
 
+class FaceSetup:
+    """The six-step face setup. No camera and no window: tests drive it with numbers.
+
+    Scan, 9 eye dots, sit back, lean in, labelled reading, then the check dots.
+    One spoken sentence is queued per step. A step does not start its next piece of work,
+    and does not finish, until that sentence has had time to be said.
+    """
+
+    def __init__(self, screen: tuple[int, int], rng: random.Random | None = None,
+                 ready_seconds: float = 0.0, min_good: int = MIN_GOOD):
+        self.screen = (int(screen[0]), int(screen[1]))
+        self.setup = Setup(self.screen, rng=rng, ready_seconds=ready_seconds, min_good=min_good, poses=3)
+        self.stage = "scan"  # scan, dots, read, check_intro, check
+        self.step_n = 0
+        self.segments = [False] * SCAN_SEGMENTS
+        self.announcements: list[str] = []
+        self.prompt_at: dict[int, float] = {}
+        self.issue = ""
+        self.phase = ""
+        self.phase_place = "center"
+        self.phase_size = "normal"
+        self.phase_text = ""
+        self.phase_log: list[tuple[str, float]] = []
+        self._scan_last: float | None = None
+        self._scan_good = 0.0
+        self._read_i = 0
+        self._read_t0: float | None = None
+        self._label_at = -1e9
+        self._lines: list[dict] = []
+        self._widths: dict[str, list[float]] = {"normal": [], "back": [], "close": []}
+        self._distances: dict[str, list[float]] = {"normal": [], "back": [], "close": []}
+        self._fit_returned = False
+
+    def caption(self) -> str:
+        n = self.step_n if 1 <= self.step_n <= FACE_STEPS else 1
+        return f"Step {n} of {FACE_STEPS}"
+
+    def progress(self) -> float:
+        done = max(0, self.step_n - 1)
+        part = 0.0
+        if self.stage == "scan":
+            part = min(1.0, self._scan_good / SCAN_SECONDS) if SCAN_SECONDS else 1.0
+        elif self.stage == "read":
+            total = sum(float(row[1]) for row in READ_PHASES) or 1.0
+            spent = sum(float(row[1]) for row in READ_PHASES[: self._read_i])
+            part = min(1.0, spent / total)
+        elif self.step_n >= FACE_STEPS and self.stage == "check":
+            order = self.setup.order or []
+            part = (self.setup.pos / len(order)) if order else 0.0
+        return min(1.0, max(0.0, (done + part) / FACE_STEPS))
+
+    def step(self, now: float, feat, face: dict | None, wall: float | None = None,
+             sample: dict | None = None) -> str:
+        """One frame. Returns running, fit, score, done, or whatever the dot setup returns."""
+        now = float(now)
+        wall = now if wall is None else float(wall)
+        if self.stage == "scan":
+            return self._scan(now, face, wall)
+        if self.stage == "dots":
+            return self._dots(now, feat, face, wall)
+        if self.stage == "read":
+            return self._read(now, wall, sample)
+        if self.stage == "check_intro":
+            self._enter(6, now)
+            if now - self.prompt_at.get(6, now) < PROMPT_SECONDS:
+                return "running"
+            if not self._fit_returned:
+                self._fit_returned = True
+                return "fit"
+            return "running"
+        if self.stage == "check":
+            self._enter(6, now)
+            return self.setup.step(now, feat, face, wall)
+        return "running"
+
+    def _enter(self, n: int, now: float) -> None:
+        if n in self.prompt_at:
+            self.step_n = n
+            return
+        self.step_n = n
+        self.prompt_at[n] = now
+        text = STEP_PROMPTS.get(n, "")
+        if text:
+            self.announcements.append(text)
+
+    def _scan(self, now: float, face, wall: float) -> str:
+        self._enter(1, now)
+        if self._scan_last is None:
+            self._scan_last = now
+        dt = max(0.0, now - self._scan_last)
+        self._scan_last = now
+        issue = scan_issue(face)
+        self.issue = issue or ""
+        if issue:
+            return "running"
+        self._scan_good += dt
+        if face and face.get("present"):
+            seg = segment_index(face.get("yaw"), face.get("pitch"))
+            if seg is not None:
+                self.segments[seg] = True
+        heard = now - self.prompt_at.get(1, now) >= PROMPT_SECONDS
+        if self._scan_good + 1e-9 >= SCAN_SECONDS and heard:
+            self._start_eyes(now, wall)
+        return "running"
+
+    def _start_eyes(self, now: float, wall: float) -> None:
+        self.stage = "dots"
+        self._enter(2, now)
+        self.setup._start_targets(now, wall)
+
+    def _dots(self, now: float, feat, face, wall: float) -> str:
+        self._note_pose_step(now)
+        state = self.setup.step(now, feat, face, wall)
+        self._note_pose_step(now)
+        self._collect_lean(now, face)
+        if state == "fit":
+            self._begin_read(now)
+            return "running"
+        return state
+
+    def _note_pose_step(self, now: float) -> None:
+        setup = self.setup
+        if setup.stage == "settle":
+            pose = getattr(setup, "_settle_pose", "")
+        else:
+            cur = setup.current
+            pose = cur.pose if cur is not None else ""
+        step = {"normal": 2, "back": 3, "close": 4}.get(pose)
+        if step:
+            self._enter(step, now)
+
+    def _collect_lean(self, now: float, face) -> None:
+        target = self.setup.current
+        if target is None or self.setup.t0 is None or target.phase != "calibration":
+            return
+        if not face or not face.get("present"):
+            return
+        elapsed = now - self.setup.t0
+        collect = target.collect
+        if not (target.settle <= elapsed < target.settle + collect):
+            return
+        pose = target.pose if target.pose in self._widths else "normal"
+        try:
+            width = float(face.get("width") or 0)
+        except (TypeError, ValueError):
+            width = 0.0
+        if width > 0:
+            self._widths[pose].append(width)
+        try:
+            dist = float(face.get("distance", face.get("head_distance")))
+        except (TypeError, ValueError):
+            dist = 0.0
+        if math.isfinite(dist) and dist > 0:
+            self._distances[pose].append(dist)
+
+    def _begin_read(self, now: float) -> None:
+        self.stage = "read"
+        self._enter(5, now)
+        self._read_i = 0
+        self._read_t0 = now
+        self._show_phase(now)
+
+    def _show_phase(self, now: float) -> None:
+        if self._read_i >= len(READ_PHASES):
+            return
+        name, _seconds, place, size, text = READ_PHASES[self._read_i]
+        self.phase = name
+        self.phase_place = place
+        self.phase_size = size
+        self.phase_text = text
+        self.phase_log.append((name, now))
+
+    def _read(self, now: float, wall: float, sample) -> str:
+        self._enter(5, now)
+        if self._read_i >= len(READ_PHASES):
+            self.stage = "check_intro"
+            self._enter(6, now)
+            return "running"
+        name, seconds, _place, _size, _text = READ_PHASES[self._read_i]
+        if name in _LABEL_PHASES and sample and now - self._label_at >= 0.1:
+            self._lines.append(labelled_line(name, wall, sample))
+            self._label_at = now
+        if self._read_t0 is None:
+            self._read_t0 = now
+        if now - self._read_t0 + 1e-9 < float(seconds):
+            return "running"
+        heard = now - self.prompt_at.get(5, now) >= PROMPT_SECONDS
+        self._read_i += 1
+        self._read_t0 = now
+        if self._read_i >= len(READ_PHASES) and heard:
+            self.stage = "check_intro"
+            self.phase = ""
+            self._enter(6, now)
+            return "running"
+        if self._read_i < len(READ_PHASES):
+            self._show_phase(now)
+        return "running"
+
+    def pull_labels(self) -> list[dict]:
+        rows, self._lines = self._lines, []
+        return rows
+
+    @property
+    def wants_sample(self) -> bool:
+        return self.stage == "read" and self.phase in _LABEL_PHASES
+
+    def lean(self) -> dict | None:
+        return lean_ratio_from(self._widths, self._distances)
+
+    def accept_fit(self, model: dict) -> None:
+        self.setup.accept_fit(model)
+        self.stage = "check"
+        self.step_n = 6
+
+    def usable(self):
+        return self.setup.usable()
+
+    def validation_samples(self):
+        return self.setup.validation_samples()
+
+    def cause_stats(self) -> dict:
+        return self.setup.cause_stats()
+
+    @property
+    def model(self):
+        return self.setup.model
+
+    def finish(self, now: float) -> None:
+        self.stage = "check"
+        self.setup.finish(now)
+
+
 class Calibration:
     """Full-screen setup: readiness, 9 dots, optional sit-back and lean-in rounds, then 5 check dots."""
 
@@ -1491,6 +1943,188 @@ class Calibration:
     def close(self) -> None:
         try:
             self.cv2.destroyWindow(WINDOW)
+            self.cv2.waitKey(1)
+        except Exception:
+            pass
+
+
+class FaceCalibration:
+    """Full-screen face setup. The steps live on FaceSetup; this only draws them."""
+
+    def __init__(self, size: tuple[int, int], rng: random.Random | None = None):
+        import cv2  # type: ignore
+        import numpy as np  # type: ignore
+
+        self.cv2, self.np = cv2, np
+        self.w, self.h = int(size[0]), int(size[1])
+        self.logic = FaceSetup(size, rng=rng)
+        self.speak = False
+        self._said = 0
+        self.last_face = time.monotonic()
+        self.check_only = False
+        self.result: dict | None = None
+        self.lines: list[str] = []
+        self.base = np.full((self.h, self.w, 3), 24, dtype=np.uint8)
+        self._open_window()
+
+    def _open_window(self) -> None:
+        cv2 = self.cv2
+        cv2.namedWindow(FACE_WINDOW, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(FACE_WINDOW, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        try:
+            cv2.setWindowProperty(FACE_WINDOW, cv2.WND_PROP_TOPMOST, 1)
+        except Exception:
+            pass
+
+    def _text(self, img, text: str, y: float, scale: float = 1.0) -> None:
+        cv2 = self.cv2
+        s = max(0.7, self.h / 800) * scale
+        th = max(2, int(s * 2))
+        (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, s, th)
+        cv2.putText(img, text, ((self.w - tw) // 2, int(self.h * y)), cv2.FONT_HERSHEY_SIMPLEX, s,
+                    (235, 235, 235), th, cv2.LINE_AA)
+
+    def step(self, feat, now: float, face: dict | None = None, wall: float | None = None,
+             sample: dict | None = None) -> str:
+        if feat is not None or (face and face.get("present")):
+            self.last_face = now
+        state = self.logic.step(now, feat, face, wall, sample)
+        if self.speak:
+            while self._said < len(self.logic.announcements):
+                emit({"say": self.logic.announcements[self._said]})
+                self._said += 1
+        self._draw(now)
+        if (self.cv2.waitKey(1) & 0xFF) == 27:
+            if self.logic.setup.stage in ("result", "done"):
+                return "done"
+            return "cancel"
+        return state
+
+    def _bar(self, img) -> None:
+        cv2 = self.cv2
+        x0, x1 = int(self.w * 0.18), int(self.w * 0.82)
+        y = int(self.h * 0.145)
+        cv2.rectangle(img, (x0, y), (x1, y + 16), (55, 55, 55), -1, cv2.LINE_AA)
+        span = x1 - x0
+        fill = x0 + int(span * self.logic.progress())
+        if fill > x0:
+            cv2.rectangle(img, (x0, y), (fill, y + 16), (70, 170, 255), -1, cv2.LINE_AA)
+
+    def _ring(self, img) -> None:
+        cv2 = self.cv2
+        cx, cy = self.w // 2, int(self.h * 0.50)
+        ax, ay = max(40, int(self.w * 0.11)), max(60, int(self.h * 0.20))
+        cv2.ellipse(img, (cx, cy), (ax, ay), 0, 0, 360, (190, 190, 190), 2, cv2.LINE_AA)
+        rx, ry = int(ax * 1.55), int(ay * 1.28)
+        for i, filled in enumerate(self.logic.segments):
+            a0, a1 = segment_draw_angles(i)
+            color = (80, 190, 255) if filled else (50, 50, 50)
+            thick = max(10, int(self.h / 80)) if filled else max(6, int(self.h / 120))
+            cv2.ellipse(img, (cx, cy), (rx, ry), 0, a0, a1, color, thick, cv2.LINE_AA)
+
+    def _draw(self, now: float) -> None:
+        cv2 = self.cv2
+        img = self.base.copy()
+        logic = self.logic
+        self._text(img, logic.caption(), 0.09, 0.85)
+        self._bar(img)
+        stage = logic.stage
+        if stage == "scan":
+            self._ring(img)
+            self._text(img, "Turn your head slowly in a circle.", 0.78, 0.7)
+            if logic.issue:
+                self._text(img, logic.issue, 0.86, 0.7)
+            filled = sum(1 for on in logic.segments if on)
+            self._text(img, f"{filled} of {SCAN_SEGMENTS}", 0.93, 0.6)
+        elif stage == "read":
+            self._draw_read(img)
+        elif logic.setup.stage == "settle":
+            self._text(img, logic.setup.line or SIT_BACK, 0.48, 1.15)
+            self._text(img, "Hold still there.", 0.60, 0.8)
+        else:
+            target = logic.setup.current
+            dot_stage = logic.setup.stage
+            if target is not None and logic.setup.t0 is not None:
+                x, y = logic.setup._px(target)
+                elapsed = now - logic.setup.t0
+                if elapsed < target.settle and target.settle > 0:
+                    frac = min(1.0, max(0.0, elapsed / target.settle))
+                    cv2.circle(img, (x, y), int(14 + 40 * (1 - frac)), (230, 230, 230), 3, cv2.LINE_AA)
+                cv2.circle(img, (x, y), 12, (0, 140, 255), -1, cv2.LINE_AA)
+                cv2.circle(img, (x, y), 3, (255, 255, 255), -1, cv2.LINE_AA)
+                if dot_stage == "validate":
+                    self._text(img, "Checking. Keep looking at the dot.", 0.90, 0.7)
+                elif now - self.last_face > 1.0:
+                    self._text(img, "I can't see your eyes. Face the screen, with light on your face.", 0.90, 0.65)
+            elif dot_stage in ("await_fit", "await_score") or stage == "check_intro":
+                self._text(img, "One moment.", 0.50, 1.1)
+            elif self.lines or self.result is not None:
+                lines = self.lines
+                if not lines and self.result is not None:
+                    if self.result.get("calibrated"):
+                        lines = ["Face setup ready", f"Accuracy: about {self.result.get('error_px')} pixels"]
+                    else:
+                        lines = ["Face setup didn't work.", str(self.result.get("why", ""))]
+                y = 0.36
+                first = True
+                for line in lines:
+                    for part in _wrap_plain(line, 42):
+                        self._text(img, part, y, 1.05 if first else 0.72)
+                        first = False
+                        y += 0.07
+        self._text(img, "Esc cancels.", 0.97, 0.5)
+        cv2.imshow(FACE_WINDOW, img)
+
+    def _draw_read(self, img) -> None:
+        logic = self.logic
+        text = logic.phase_text or ""
+        if logic.phase_place == "top":
+            self._text(img, text, 0.22, 0.9)
+            return
+        if logic.phase_place == "bottom":
+            self._text(img, text, 0.82, 0.9)
+            return
+        scale = 0.55 if logic.phase_size == "tiny" else 0.75
+        y = 0.40
+        for part in _wrap_plain(text, 36 if logic.phase_size == "tiny" else 42):
+            self._text(img, part, y, scale)
+            y += 0.07
+
+    def pull_labels(self) -> list[dict]:
+        return self.logic.pull_labels()
+
+    @property
+    def wants_sample(self) -> bool:
+        return self.logic.wants_sample
+
+    def face_extras(self) -> dict:
+        lean = self.logic.lean()
+        return {"lean": lean} if lean else {}
+
+    def usable(self):
+        return self.logic.usable()
+
+    def validation_samples(self):
+        return self.logic.validation_samples()
+
+    def cause_stats(self) -> dict:
+        return self.logic.cause_stats()
+
+    def accept_fit(self, model: dict) -> None:
+        self.logic.accept_fit(model)
+
+    @property
+    def model(self):
+        return self.logic.model
+
+    def finish(self, result: dict, lines: list[str] | None = None) -> None:
+        self.result = result
+        self.lines = list(lines or [])
+        self.logic.finish(time.monotonic())
+
+    def close(self) -> None:
+        try:
+            self.cv2.destroyWindow(FACE_WINDOW)
             self.cv2.waitKey(1)
         except Exception:
             pass
@@ -1771,7 +2405,25 @@ def parse_card(arg: str) -> dict | None:
     except (TypeError, ValueError):
         seconds = 0.0
     title = spec.get("title") if isinstance(spec.get("title"), str) else ""
-    return {"text": text.strip(), "title": title.strip(), "size": size, "seconds": max(0.0, seconds)}
+    place = spec.get("place", "center")
+    if place not in ("center", "top", "bottom"):
+        place = "center"
+    return {"text": text.strip(), "title": title.strip(), "size": size, "seconds": max(0.0, seconds),
+            "place": place}
+
+
+def card_origin(screen: tuple[int, int], window: tuple[int, int], place: str) -> tuple[int, int]:
+    """Top-left of the card window. top and bottom pin a short card to that edge of the screen."""
+    sw, sh = int(screen[0]), int(screen[1])
+    ww, wh = int(window[0]), int(window[1])
+    x = max(0, (sw - ww) // 2)
+    if place == "top":
+        y = 0
+    elif place == "bottom":
+        y = max(0, sh - wh)
+    else:
+        y = max(0, (sh - wh) // 2)
+    return x, y
 
 
 def classify_command(cmd: str) -> tuple[str, object]:
@@ -1783,6 +2435,8 @@ def classify_command(cmd: str) -> tuple[str, object]:
             return "quit", None
         if cmd == "stop":
             return "stop", None
+        if cmd == "face":
+            return "face", None
         if cmd == "calibrate":
             return "calibrate", None
         if cmd.startswith("calibrate "):
@@ -1868,13 +2522,16 @@ class CardWindow:
         except Exception:
             pass
         try:
-            cv2.moveWindow(CARD, max(0, (int(screen[0]) - width) // 2), max(0, (int(screen[1]) - height) // 2))
+            x, y = card_origin(screen, (width, height), self.spec.get("place") or "center")
+            cv2.moveWindow(CARD, x, y)
         except Exception:
             pass
         self.step()
 
     def _window_size(self) -> tuple[int, int]:
         sw, sh = int(self.screen[0]), int(self.screen[1])
+        if self.spec.get("place") in ("top", "bottom"):
+            return min(max(sw - 80, 1), 1100), min(max(sh, 1), 160)
         if self.spec["size"] == "tiny":
             return min(max(sw, 1), 900), min(max(sh, 1), 420)
         if self.spec["size"] == "large":
@@ -2191,6 +2848,183 @@ class ChoiceBoard:
             pass
 
 
+def _xyz(point) -> tuple[float, float, float] | None:
+    try:
+        if hasattr(point, "x") and hasattr(point, "y"):
+            x, y, z = float(point.x), float(point.y), float(getattr(point, "z", 0.0))
+        else:
+            x, y = float(point[0]), float(point[1])
+            z = float(point[2]) if len(point) > 2 else 0.0
+    except (TypeError, ValueError, IndexError):
+        return None
+    if any(math.isnan(n) or math.isinf(n) for n in (x, y, z)):
+        return None
+    return x, y, z
+
+
+def _landmarks_out(landmarks) -> list[list[float]] | None:
+    """478 points as [x, y, z], 4 decimals. None when the face did not yield 478 points."""
+    try:
+        points = list(landmarks)
+    except TypeError:
+        return None
+    if len(points) < 478:
+        return None
+    out = []
+    for point in points[:478]:
+        got = _xyz(point)
+        if got is None:
+            return None
+        out.append([round(got[0], 4), round(got[1], 4), round(got[2], 4)])
+    return out
+
+
+def _blendshapes_out(blendshapes) -> dict:
+    """Every blendshape score by name, 4 decimals. Missing or unusable scores are left out."""
+    if not isinstance(blendshapes, dict):
+        return {}
+    out = {}
+    for name, score in blendshapes.items():
+        if not isinstance(name, str):
+            continue
+        try:
+            number = float(score)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(number) or math.isinf(number):
+            continue
+        out[name] = round(number, 4)
+    return out
+
+
+def _matrix_out(matrix) -> list[float] | None:
+    """The facial transformation matrix as 16 numbers, or null when there isn't one."""
+    if matrix is None:
+        return None
+    if hasattr(matrix, "tolist"):
+        try:
+            matrix = matrix.tolist()
+        except Exception:
+            pass
+    data = getattr(matrix, "data", None)
+    if data is not None and not isinstance(matrix, (list, tuple)):
+        try:
+            matrix = list(data)
+        except TypeError:
+            return None
+    try:
+        if isinstance(matrix, (list, tuple)) and matrix and isinstance(matrix[0], (list, tuple)):
+            flat = [float(n) for row in matrix for n in row]
+        else:
+            flat = [float(n) for n in matrix]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if len(flat) != 16 or any(math.isnan(n) or math.isinf(n) for n in flat):
+        return None
+    return [round(n, 4) for n in flat]
+
+
+def raw_face(landmarks, blendshapes, matrix, width, height) -> dict:
+    """Landmarks, blendshapes, the face matrix, and frame size. No pixels."""
+    try:
+        w, h = int(width), int(height)
+    except (TypeError, ValueError):
+        w, h = 0, 0
+    out = {"bs": _blendshapes_out(blendshapes), "mat": _matrix_out(matrix), "w": w, "h": h}
+    lm = _landmarks_out(landmarks)
+    if lm is not None:
+        out["lm"] = lm
+    return out
+
+
+def au_mode(value) -> str:
+    """`off` or `libreface`. Anything else stays off."""
+    text = str(value or AU_OFF).strip().lower()
+    if text in AU_MODES:
+        return text
+    return AU_OFF
+
+
+def au_rate(value) -> int:
+    """How many action-unit reads a second, clamped. A bool is not a rate."""
+    if isinstance(value, bool):
+        return DEFAULT_AU_FPS
+    try:
+        rate = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_AU_FPS
+    if rate < AU_FPS_MIN:
+        return AU_FPS_MIN
+    if rate > AU_FPS_MAX:
+        return AU_FPS_MAX
+    return rate
+
+
+def au_due(last: float, now: float, fps) -> bool:
+    """True when the last action-unit read is at least one period old."""
+    return (float(now) - float(last)) >= (1.0 / au_rate(fps))
+
+
+def sense_helper_args(senses_cfg: dict | None) -> dict:
+    """au and raw_live for the camera helper.
+
+    raw_live is on when [senses] raw_live is true, or when squint_method or lean_method is not v1.
+    Those detectors need landmarks, blendshapes, and the face matrix on the live line.
+    """
+    cfg = senses_cfg if isinstance(senses_cfg, dict) else {}
+    mode = au_mode(cfg.get("au_model", AU_OFF))
+    squint = str(cfg.get("squint_method", "v1") or "v1")
+    lean = str(cfg.get("lean_method", "v1") or "v1")
+    raw_live = cfg.get("raw_live") is True or squint != "v1" or lean != "v1"
+    out = {"au": mode, "raw_live": raw_live}
+    if mode == AU_LIBREFACE:
+        out["au_fps"] = DEFAULT_AU_FPS
+    return out
+
+
+def _au_out(values) -> list[float] | None:
+    """12 probabilities, 4 decimals. Any other shape is left off the line."""
+    if values is None:
+        return None
+    try:
+        nums = [float(item) for item in values]
+    except (TypeError, ValueError):
+        return None
+    if len(nums) != AU_COUNT:
+        return None
+    if any(math.isnan(number) or math.isinf(number) for number in nums):
+        return None
+    return [round(number, 4) for number in nums]
+
+
+def signal_line(summary, landmarks, blendshapes, matrix, width, height, raw: bool = False,
+                raw_live: bool = False, au=None) -> dict | None:
+    """One signals object, without the timestamp.
+
+    `raw` or `raw_live` adds the raw face numbers. `au` adds 12 action-unit probabilities.
+    Live sensing passes raw false, so the line stays `{f: ...}` unless the agent set raw_live.
+    The recorder passes raw true.
+    """
+    if not isinstance(summary, dict):
+        return None
+    if raw or raw_live:
+        face = raw_face(landmarks, blendshapes, matrix, width, height)
+        # lm sits next to f so a reader sees summary scores, then the points they came from.
+        body = {"f": summary}
+        if "lm" in face:
+            body["lm"] = face["lm"]
+        body["bs"] = face["bs"]
+        body["mat"] = face["mat"]
+        body["w"] = face["w"]
+        body["h"] = face["h"]
+    else:
+        body = {"f": summary}
+    scores = _au_out(au)
+    if scores is not None:
+        body["au"] = scores
+    return body
+
+
 def main(argv: list[str]) -> int:
     try:
         cfg = json.loads(argv[1]) if len(argv) > 1 else {}
@@ -2209,6 +3043,10 @@ def main(argv: list[str]) -> int:
         return 3
 
     gaze_on, signals_on = bool(cfg.get("gaze", True)), bool(cfg.get("signals", False))
+    raw_on = cfg.get("raw") is True
+    raw_live = cfg.get("raw_live") is True
+    au_name = au_mode(cfg.get("au", AU_OFF))
+    au_on = au_name == AU_LIBREFACE
     feature_set, live_cnn, cnn_note = resolve_live_features(cfg.get("features", "v1"), helper_state_dir(cfg))
     click_learning = bool(cfg.get("click_learning", True))
     if signals_on:
@@ -2251,6 +3089,15 @@ def main(argv: list[str]) -> int:
 
     sig_period = 1.0 / max(2, min(30, int(cfg.get("signals_fps", 10))))
     period = 1.0 / max(5, min(30, int(cfg.get("fps", 20)))) if gaze_on else sig_period
+    au_runner = None
+    if au_on and signals_on:
+        from ally.senses.au import ActionUnits
+
+        au_runner = ActionUnits(helper_state_dir(cfg))
+        au_runner.load()
+    au_fps = cfg.get("au_fps", DEFAULT_AU_FPS)
+    last_au = None
+    last_au_at = 0.0
     last_sig, hud, hud_rows = 0.0, False, []
     smooth = gaze_model.GazeSmoother()
     calib: Calibration | None = None
@@ -2279,7 +3126,10 @@ def main(argv: list[str]) -> int:
             calib = None
             smooth = gaze_model.GazeSmoother()
         try:
-            if kind == "calibrate" and calib is None:
+            if kind == "face" and calib is None:
+                calib = FaceCalibration(size)
+                calib.speak = True
+            elif kind == "calibrate" and calib is None:
                 poses = 3 if payload is None else pose_count(payload)
                 calib = Calibration(size, poses=poses)
                 calib.speak = True
@@ -2378,9 +3228,19 @@ def main(argv: list[str]) -> int:
         now = time.time()
         if signals_on and lms is not None and now - last_sig >= sig_period:
             last_sig = now
+            if au_runner is not None and au_due(last_au_at, now, au_fps):
+                last_au_at = now
+                try:
+                    got = au_runner.presence(frame, lms)
+                except Exception:
+                    got = None
+                if got is not None:
+                    last_au = got
             sig = face_signals.signals(lms, bs, mat, w, h, seen.get("light"))
-            if sig is not None:
-                emit({"t": round(now, 3), "f": sig})
+            shown = last_au if au_on else None
+            body = signal_line(sig, lms, bs, mat, w, h, raw_on, raw_live=raw_live, au=shown)
+            if body is not None:
+                emit({"t": round(now, 3), **body})
         if hud:
             draw_hud(cv2, frame, hud_rows)
         if card is not None:
@@ -2406,7 +3266,30 @@ def main(argv: list[str]) -> int:
 
         if calib is not None:
             dot.update(face=False, calibrated=False)  # the dots on screen are the thing to look at
-            state = calib.step(feat, time.monotonic(), face, now)
+            face_for = face
+            sample = None
+            if isinstance(calib, FaceCalibration):
+                if isinstance(face, dict) and mat is not None:
+                    face_for = dict(face)
+                    try:
+                        parts = [float(mat[i]) for i in (3, 7, 11)]
+                        face_for["distance"] = math.sqrt(sum(v * v for v in parts))
+                    except (TypeError, ValueError, IndexError):
+                        pass
+                if calib.wants_sample and lms is not None:
+                    try:
+                        from ally.senses.face import signals as face_signal_fn
+
+                        sig = face_signal_fn(lms, bs, mat, w, h, seen.get("light"))
+                    except Exception:
+                        sig = None
+                    sample = label_numbers(sig, lms, bs, mat, w, h)
+            if isinstance(calib, FaceCalibration):
+                state = calib.step(feat, time.monotonic(), face_for, now, sample)
+            else:
+                state = calib.step(feat, time.monotonic(), face, now)
+            for line in getattr(calib, "pull_labels", lambda: [])():
+                emit(line)
             if state == "fit":
                 try:
                     mm = screen_mm()  # v4 needs the physical size while fitting, not just after
@@ -2471,6 +3354,11 @@ def main(argv: list[str]) -> int:
                         lines = ["Calibration didn't work.", result["why"]]
                         result.pop("grade", None)
                 result["features"] = feature_set
+                extra = getattr(calib, "face_extras", None)
+                if callable(extra) and result.get("calibrated") and not result.get("check"):
+                    more = extra() or {}
+                    if more:
+                        result.update(more)
                 result, lines = mention_fallback(result, lines, cnn_note)
                 emit(result)
                 calib.finish(result, lines)

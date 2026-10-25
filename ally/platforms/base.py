@@ -284,8 +284,8 @@ class Platform:
         raise ToolError(f"Screen magnification isn't supported on {self.label} yet.")
 
     def magnify_at(self, level: float, x: float, y: float, follow: str = "eyes") -> str:
-        """Magnify around a screen point. Default: put the pointer there, since macOS Zoom and the
-        GNOME magnifier follow the pointer. (Windows centers the view exactly and can follow the eyes.)"""
+        """Magnify around a screen point. Default: put the pointer there, since the
+        GNOME magnifier follows the pointer. (Windows centers the view exactly and can follow the eyes.)"""
         self.move_pointer(int(x), int(y))
         return self.magnify(level)
 

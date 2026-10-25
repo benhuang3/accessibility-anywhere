@@ -2,11 +2,14 @@
 // It survives until the document goes away; navigation starts fresh. Step files add AllyPage.modules.<step>.
 
 (() => {
-  const VERSION = 1;
+  const VERSION = 2;
   if (globalThis.AllyPage && globalThis.AllyPage.version === VERSION) return;
+  // An older runtime in this tab (the extension was updated): its steps' cleanup still has to run on reset.
+  const previous = globalThis.AllyPage || null;
 
   // Overlays Ally creates. Never includes Ganesh's #ally-risk-banner: reset must not remove it.
-  const HOSTS = ["ally-reader-host", "ally-menu-host", "ally-menu-strip", "ally-simple-chip", "ally-simplifying"];
+  const HOSTS = ["ally-reader-host", "ally-menu-host", "ally-menu-strip", "ally-simple-chip", "ally-simplifying",
+    "ally-picture-host", "ally-click-host"];
   const ALLY_IDS = new Set([...HOSTS, "ally-risk-banner"]);
   const CLICKABLE = "a[href], button, input:not([type=hidden]), select, textarea, summary, [role=button], [role=link], [role=menuitem], [role=tab], [onclick]";
   const MAX_TARGETS = 300;
@@ -276,13 +279,51 @@
     return { ok: Object.values(checks).every((c) => c.ok), checks, metrics: now };
   }
 
+  // ------------------------------------------------------------ scroll lock shared by Ally's overlays
+  // Counted, so overlays can close in any order: the page's own overflow comes back with the last one.
+  let scrollLock = null;
+
+  function releaseScroll() {
+    if (!scrollLock) return;
+    const { saved } = scrollLock;
+    scrollLock = null;
+    const restore = (el, [v, prio]) => (v ? el.style.setProperty("overflow", v, prio) : el.style.removeProperty("overflow"));
+    restore(document.documentElement, saved.html);
+    if (document.body && saved.body) restore(document.body, saved.body);
+    scrollTo(saved.x, saved.y);
+  }
+
+  function lockScroll() {
+    if (!scrollLock) {
+      const html = document.documentElement;
+      const body = document.body;
+      const saved = {
+        x: scrollX,
+        y: scrollY,
+        html: [html.style.getPropertyValue("overflow"), html.style.getPropertyPriority("overflow")],
+        body: body ? [body.style.getPropertyValue("overflow"), body.style.getPropertyPriority("overflow")] : null,
+      };
+      html.style.setProperty("overflow", "hidden", "important");
+      if (body) body.style.setProperty("overflow", "hidden", "important");
+      scrollLock = { count: 0, saved };
+    }
+    scrollLock.count++;
+    let released = false;
+    return () => {
+      if (released || !scrollLock) return;
+      released = true;
+      if (--scrollLock.count <= 0) releaseScroll();
+    };
+  }
+
   // ------------------------------------------------------------ teardown
   function registerOff(step, fn) {
     offs[step] = fn;
   }
 
+  // Offs run in reverse order: a later overlay restores the state it found before an earlier one restores the page's.
   function teardown() {
-    for (const [step, fn] of Object.entries(offs)) {
+    for (const [step, fn] of Object.entries(offs).reverse()) {
       try {
         fn();
       } catch (e) {
@@ -297,6 +338,14 @@
       if (host) host.remove();
     }
     if (typeof globalThis.__allyReaderClose === "function") globalThis.__allyReaderClose();
+    releaseScroll();
+    if (previous && typeof previous.teardown === "function") {
+      try {
+        previous.teardown();
+      } catch (e) {
+        console.warn("Ally teardown (older runtime)", e);
+      }
+    }
     baseline = null;
     return true;
   }
@@ -317,6 +366,6 @@
 
   globalThis.AllyPage = {
     version: VERSION, HOSTS, CLICKABLE, isAlly, visible, allyHidden, key, mark, marked, unmark, withPaused,
-    measure, takeBaseline, getBaseline, verify, registerOff, teardown, modules, run,
+    measure, takeBaseline, getBaseline, verify, lockScroll, registerOff, teardown, modules, run,
   };
 })();

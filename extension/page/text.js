@@ -34,7 +34,7 @@
 
   // What each original size becomes. Small text gets at least close to the goal; huge headings are capped.
   function target(px, s, goalPx, maxPx) {
-    let t = Math.round(px * s);
+    let t = Math.ceil(px * s - 0.01); // rounded up, so "1.3x" is never less than 30% bigger
     if (s > 1) t = Math.max(t, Math.round(Math.min(goalPx * 0.9, px * 2)));
     return Math.max(Math.round(px), Math.min(t, Math.max(Math.round(px), maxPx)));
   }
@@ -44,7 +44,7 @@
   function apply({ scale: s = 1.25, goalPx = 20, maxPx = 72 } = {}) {
     const sizes = {};
     let marked = 0;
-    P.withPaused(["text"], () => {
+    P.withPaused(["text", "buttons"], () => { // the page's own sizes, not what another Ally step set
       P.unmark("text");
       const els = textElements();
       const measured = els.map((el) => [el, Math.round(sizeOf(el))]); // all reads before any write

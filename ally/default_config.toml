@@ -58,7 +58,7 @@ How to act:
 engine = "auto"            # "auto" = Cartesia when CARTESIA_API_KEY and a voice are set, else the built-in voice;
                            # "cartesia"; "system" (built-in voice only); "off"
 rate = 1.0                 # 0.5 = slow, 2.0 = fast
-voice = ""                 # optional system voice, e.g. "Samantha" (Mac) or "Microsoft Zira Desktop" (Windows)
+voice = ""                 # optional system voice, e.g. "Microsoft Zira Desktop" or "Microsoft David Desktop"
 max_chars = 4000           # longest text read in one go
 cartesia_voice_id = ""     # a Cartesia voice ID or name, e.g. "Tessa". List them: python run.py voices
 cartesia_model = "sonic-3.6"
@@ -101,9 +101,8 @@ follow_up_seconds = 6      # after Ally answers, short follow-ups ("a bit more")
 whisper_model = "base.en"  # offline speech-to-text: "tiny.en" (fastest), "base.en", "small.en" (most accurate)
 
 # Eye tracking with the webcam, for "Ally, magnify what I'm looking at".
-# Say "Ally, calibrate my eyes" once (about 45 seconds). Move only your eyes and keep your head still.
-# After the first 9 dots, sit back a little, then lean in a little, so head movement is part of the setup.
-# Video stays on this computer.
+# Say "Ally, set up my face" once (about 90 seconds): a face scan, the eye dots, sit back, lean in,
+# a short reading, then a check. Video stays on this computer.
 [gaze]
 enabled = true             # needs: pip install mediapipe opencv-python. The camera light stays on while Ally runs.
 camera = 0                 # which camera (0 = the built-in one)
@@ -111,7 +110,7 @@ fps = 20                   # frames per second; lower saves battery
 pan_speed = 0.85           # magnifier following your eyes: how eagerly it keeps up as you read, and how fast looking near an edge moves it (0.1 slow, 2 fast)
 max_pan_speed = 0.35       # the magnifier never pans faster than this, in screen widths per second
 show_dot = false           # a soft circle where the tracker thinks you are looking. Say "show where I am looking".
-calibration_poses = 3      # 3 = 9 dots, then sit back for 5, then lean in for 5. 1 = the 9 dots only.
+calibration_poses = 3      # recorder only: 3 = 9 dots, then sit back for 5, then lean in for 5. 1 = the 9 dots only.
 features = "v5"            # v5 is v4 plus MobileGaze yaw and pitch (mobileone_s0). If that model is missing, setup uses v4.
 click_learning = true      # clicks quietly improve the estimate, and that learning is kept across restarts. A new setup starts fresh. Set false to turn that off. Clicks stay on this computer.
 max_radius_px = 250        # above this uncertainty, Ally uses the mouse pointer and says so
@@ -121,8 +120,8 @@ answer_offers = false      # separate look-to-answer Yes/No cards (off: Ally's o
 # Camera: squinting and leaning toward the screen (shares the camera with the eye tracker; frames are
 # looked at in memory and thrown away, only a few numbers like a squint score are kept).
 # Mouse and keyboard: repeated clicks, deleting and retyping, and long pauses. Which keys you press is never recorded.
-# Say "Ally, set up face sensing" once (15 seconds of reading normally). Without it Ally learns your
-# resting face from the first 20 seconds it sees you.
+# The face setup ("Ally, set up my face") learns squint and lean along with the eyes.
+# Without it Ally learns your resting face from the first 20 seconds it sees you.
 [senses]
 vision = true              # squint and lean from the webcam (needs: pip install mediapipe opencv-python)
 input = true               # mouse and keyboard signals (needs: pip install pynput)
@@ -134,6 +133,10 @@ cooldown_seconds = 30      # quiet time after reporting a struggle
 decline_seconds = 90       # quiet time for declined signal kinds
 post_url = ""              # optional struggle event endpoint; empty disables posting
 min_confidence = 0.5
+squint_method = "v1"       # v1 | relative | geometric | personal | hybrid; v1 stays default
+lean_method = "v1"         # v1 | distance | hybrid; candidates need raw face numbers
+au_model = "off"           # off | libreface. 12 action-unit probabilities. Off unless you turn this on.
+raw_live = false           # live face lines include landmarks and blendshapes. Also on when squint_method or lean_method is not v1.
 # Starting thresholds (unverified on real faces; tune them live with: python run.py tool senses_hud)
 squint_delta = 0.20        # squint score above your baseline for a strong squint...
 squint_weak = 0.12         # ...or a weak one
@@ -157,9 +160,14 @@ retype_backspaces = 5      # backspaces within retype_seconds, then typing again
 retype_seconds = 3.0
 hesitation_seconds = 4.0   # pointer resting with no click; adapts to you after 20 clicks
 rearm_seconds = 20         # a signal waits this long before firing again
+relative_squint_weak = 0.20
+relative_squint_strong = 0.35
+geometric_aperture_drop = 0.12
+geometric_lower_rise = 0.035
+lean_distance_ratio = 1.15
 
 # Global keyboard shortcuts (work in every app).
-# <mod> = Ctrl+Alt on Windows/Linux, Ctrl+Cmd on Mac. Other keys: <ctrl> <alt> <shift> <cmd> <f1>...
+# <mod> = Ctrl+Alt. Other keys: <ctrl> <alt> <shift> <cmd> <f1>...
 # The value can be a tool name, a command name from [commands], or any sentence to send to Ally.
 # This table replaces the built-in list. Set a value to "" to turn a shortcut off.
 [hotkeys]
@@ -213,6 +221,9 @@ auto_alert = false             # send the trusted contact a push automatically o
 
 # Applied when Ally starts and on every page you open in Chrome.
 [profile]
+sync = "off"
+host = "https://maincloud.spacetimedb.com"
+database = "ally-call"
 page_zoom = 0              # e.g. 1.25 = 125% on every site; 0 = leave Chrome's zoom alone
 min_font_px = 0            # e.g. 18 = no text smaller than 18px in Chrome; 0 = off
 page_styles = []           # styles from [page_styles] for every page, e.g. ["focus_ring"]
@@ -275,6 +286,10 @@ ai_check = true            # after the fixed rules, Claude checks a before/after
                            # fixes what still looks wrong (3 tries, then the page is put back); needs a key
 ai_background = true       # reply right away and run that check behind (it speaks only if it changes something)
 
+# The picture viewer ("zoom in on the picture", "describe the picture"; docs/picture_viewer.md).
+[picture]
+describe_with_claude = true  # pictures without a description get one from Claude (one screenshot); needs a key
+
 [tools]
 disabled = []              # tools to turn off, e.g. ["describe_screen"]
 timeout_seconds = 15       # a tool that takes longer is stopped waiting for
@@ -289,7 +304,7 @@ allowed_extension_ids = [] # empty = any Chrome extension may connect; add your 
 # and (optionally) a hotkey. Steps run in order. Step types:
 #   { tool = "name", args = { ... } }   { say = "text" }        { ask = "a request for Ally" }
 #   { open = "https://..." }            { keys = "<ctrl>+c" }  { wait = 1.5 }
-#   { notify = "text" }                 { shell = "command" }  or  { shell = { mac = "...", windows = "...", linux = "..." } }
+#   { notify = "text" }                 { shell = "command" }  or  { shell = { windows = "...", linux = "..." } }
 # This section replaces the built-in examples. Set allow_ai = false to hide a command from Claude.
 [commands.reading_mode]
 description = "Make the current web page easy to read: bigger, more spacing, and high contrast."
@@ -313,5 +328,5 @@ steps = [
 description = "Open the calculator app."
 phrases = ["open calculator", "open the calculator"]
 steps = [
-  { shell = { mac = "open -a Calculator", windows = "calc", linux = "gnome-calculator" } },
+  { shell = { windows = "calc", linux = "gnome-calculator" } },
 ]

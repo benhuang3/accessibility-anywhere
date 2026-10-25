@@ -1,11 +1,14 @@
 """Record a scripted senses session, or run the live face self-check.
 
-    python -m ally.senses.matrix record --person ALIAS --glasses yes|no --light bright|dim [--free MINUTES]
+    python -m ally.senses.matrix record --person ALIAS --glasses yes|no --light bright|dim [--free MINUTES] [--eyes SHAPE] [--age BAND] [--repeat N] [--parts NAME,NAME] [--au]
     python -m ally.senses.matrix selfcheck
 
 The camera helper and the mouse/keyboard helper run as child processes. This writes numbers only
 (face scores, clicks, labels, the settings in effect) to state/senses_runs/<run>/<alias>-<glasses>-<light>.jsonl.
-Frames are never stored. Stop Ally first (`python run.py stop`): only one program can use the camera.
+A recording also asks the camera helper for raw face numbers on each signals line: 478 landmarks,
+every blendshape, the 16-number face matrix (or null), and the frame width and height. Still no
+picture. `--au` also stores 12 LibreFace action-unit probabilities on each of those lines, and the
+header notes the model and its license. Stop Ally first (`python run.py stop`): only one program can use the camera.
 
 Ctrl+C keeps whatever has already been written.
 """
@@ -29,42 +32,76 @@ from ..hotkeys import python_for_children
 from ..paths import CODE_ROOT, Paths
 from ..platforms.base import NO_WINDOW
 from ..supervisor import current_port, listening
+from .au import LICENSE as AU_LICENSE
 from .detectors import Tuning
 
 CALIBRATION_SECONDS = 15.0
 GAP_SECONDS = 3.0
 ACTION_SECONDS = 8.0
 STRUGGLE_SECONDS = 10.0
+TINY_LONG_SECONDS = 20.0
 TOKEN = re.compile(r"[A-Za-z0-9_-]{1,40}")
 # Anything that could carry a picture is dropped before a line is written.
 _IMAGE_KEYS = {"frame", "image", "jpeg", "jpg", "png", "video", "pixels", "data", "bmp", "raw", "png_b64"}
 _MAX_STR = 400
+_LM_COUNT = 478
+_MAT_COUNT = 16
+_MAX_BLENDSHAPES = 128  # the face landmarker reports 52; a longer map is not blendshapes
 _DROP = object()
+# The recorder asks for this many signals a second. Live senses keep their own fps and never set raw.
+RECORD_SIGNALS_FPS = 15
+RECORD_AU_FPS = 5  # LibreFace is about 20 ms a frame; five a second is the live cap too
+_AU_COUNT = 12  # LibreFace presence head, BP4D order
+# Self-described, all optional. Eye shape, age, and glasses are what change how eyes look
+# to the camera. Race, ethnicity, and skin color are not collected.
+EYES = ("monolid", "double", "hooded", "unsure")
+AGES = ("under40", "40to64", "65plus")
 
 # Ground truth for each acted part. "natural" is scored on its own. Gaps and calibration are not scored.
+# name, title, text, seconds, expect, size, place.
+# Squint parts (acted squint, tiny text, lean-and-squint) are never next to each other, so a soft
+# squint is not scored against the squint that came right before it.
 _TASKS = (
     ("read_normal", "Normal text", "Read this sentence normally. Do not squint or lean closer.",
-     ACTION_SECONDS, "none", "normal"),
-    ("read_tiny", "Small text", "Read this small line naturally. Do not act it out.",
-     ACTION_SECONDS, "natural", "tiny"),
-    ("act_squint", "Squint", "Squint as if this text were too small to read, and hold it.",
-     ACTION_SECONDS, "squint", "normal"),
+     ACTION_SECONDS, "none", "normal", ""),
+    ("look_bottom", "Bottom", "Read this line at the bottom of the screen.",
+     ACTION_SECONDS, "none", "normal", "bottom"),
+    ("squint_soft", "Soft squint", "Squint a little, the way you would at text that is slightly too small.",
+     ACTION_SECONDS, "squint", "normal", ""),
     ("smile", "Smile", "Smile, and keep smiling for a few seconds.",
-     ACTION_SECONDS, "none", "normal"),
+     ACTION_SECONDS, "none", "normal", ""),
+    ("read_tiny", "Small text", "Read this small line naturally. Do not act it out.",
+     ACTION_SECONDS, "natural", "tiny", ""),
+    ("look_top", "Top", "Read this line at the top of the screen.",
+     ACTION_SECONDS, "none", "normal", "top"),
+    ("act_squint", "Squint", "Squint as if this text were too small to read, and hold it.",
+     ACTION_SECONDS, "squint", "normal", ""),
+    ("blink_fast", "Fast blinks", "Blink quickly, several times.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("lean_soft", "Lean a little", "Lean in a little, as you would to read something. Do not squint.",
+     ACTION_SECONDS, "lean", "normal", ""),
+    ("wink", "Wink", "Wink with either eye, a few times.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("read_tiny_long", "Small text", "Read this small text naturally. Do not act.",
+     TINY_LONG_SECONDS, "natural", "tiny", ""),
     ("laugh", "Laugh", "Laugh for a few seconds, then relax your face.",
-     ACTION_SECONDS, "none", "normal"),
-    ("look_down", "Phone", "Look down at a phone in your lap, then look back at the screen.",
-     ACTION_SECONDS, "none", "normal"),
-    ("close_left", "Left eye", "Close only your LEFT eye. Keep the right eye open.",
-     ACTION_SECONDS, "none", "normal"),
-    ("close_right", "Right eye", "Close only your RIGHT eye. Keep the left eye open.",
-     ACTION_SECONDS, "none", "normal"),
-    ("turn_head", "Turn", "Turn your head left, then right, then face the screen again.",
-     ACTION_SECONDS, "none", "normal"),
+     ACTION_SECONDS, "none", "normal", ""),
+    ("tired", "Tired", "Let your eyelids feel heavy, as if you were tired, and keep reading.",
+     ACTION_SECONDS, "none", "normal", ""),
     ("lean", "Lean in", "Lean in close to the screen. Do not squint.",
-     ACTION_SECONDS, "lean", "normal"),
+     ACTION_SECONDS, "lean", "normal", ""),
+    ("look_down", "Phone", "Look down at a phone in your lap, then look back at the screen.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("close_left", "Left eye", "Close only your LEFT eye. Keep the right eye open.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("sit_back", "Sit back", "Lean back in your chair and keep reading.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("close_right", "Right eye", "Close only your RIGHT eye. Keep the left eye open.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("turn_head", "Turn", "Turn your head left, then right, then face the screen again.",
+     ACTION_SECONDS, "none", "normal", ""),
     ("lean_squint", "Lean and squint", "Lean in and squint, as if this were too small to read.",
-     STRUGGLE_SECONDS, "struggle", "normal"),
+     STRUGGLE_SECONDS, "struggle", "normal", ""),
 )
 
 
@@ -77,30 +114,64 @@ def ally_is_running(paths: Paths | None = None) -> bool:
         return False
 
 
+def parse_parts(spec: str | None) -> tuple[str, ...] | None:
+    """Part names to run, in the order given. None means the whole script.
+
+    Raises ValueError with the unknown name, or with an empty message when a comma is missing a name.
+    """
+    if spec is None or (isinstance(spec, str) and spec.strip() == ""):
+        return None
+    if not isinstance(spec, str):
+        raise ValueError("")
+    names = [part.strip() for part in spec.split(",")]
+    if any(not name for name in names):
+        raise ValueError("")
+    known = {task[0] for task in _TASKS}
+    ordered: list[str] = []
+    for name in names:
+        if name not in known:
+            raise ValueError(name)
+        if name not in ordered:
+            ordered.append(name)
+    return tuple(ordered)
+
+
+def _tasks_for(only: tuple[str, ...] | None):
+    if only is None:
+        return _TASKS
+    by_name = {task[0]: task for task in _TASKS}
+    return tuple(by_name[name] for name in only)
+
+
 def protocol(free_minutes: float = 0, rearm_seconds: float = Tuning.rearm_seconds,
-             cooldown_seconds: float = 30.0) -> list[dict]:
+             cooldown_seconds: float = 30.0, repeat: int = 1,
+             only: tuple[str, ...] | None = None) -> list[dict]:
     """The scripted parts, with a 3 s rest between them. Calibration is first and lasts 15 s.
 
-    The rest before a struggle part outlasts rearm_seconds and cooldown_seconds: a detector that just
-    fired (the lean in "Lean in") waits rearm_seconds before firing again, and after any struggle no
-    other is reported for cooldown_seconds. Either would hide the struggle.
+    `repeat` runs that block again after the same calibration. `only` is a subset, in that order.
+    The rest before a struggle part outlasts rearm_seconds and cooldown_seconds: a detector that
+    fired earlier waits rearm_seconds before it can fire again, and after any struggle no other is
+    reported for cooldown_seconds. Either would hide the struggle.
     """
     parts = [{
         "name": "calibration", "title": "Read normally",
         "text": "Read this sentence at a comfortable size. Keep a relaxed face and sit as you usually do.",
-        "seconds": CALIBRATION_SECONDS, "expect": "baseline", "size": "normal",
+        "seconds": CALIBRATION_SECONDS, "expect": "baseline", "size": "normal", "place": "center",
     }]
     gap = {
         "name": "gap", "title": "Rest", "text": "Relax your face and look at the screen.",
-        "seconds": GAP_SECONDS, "expect": "gap", "size": "normal",
+        "seconds": GAP_SECONDS, "expect": "gap", "size": "normal", "place": "center",
     }
-    for name, title, text, seconds, expect, size in _TASKS:
-        rest = dict(gap)
-        if expect == "struggle":
-            rest["seconds"] = max(GAP_SECONDS, float(rearm_seconds) + 2.0, float(cooldown_seconds) + 2.0)
-        parts.append(rest)
-        parts.append({"name": name, "title": title, "text": text, "seconds": float(seconds),
-                      "expect": expect, "size": size})
+    tasks = _tasks_for(only)
+    times = repeat if isinstance(repeat, int) and not isinstance(repeat, bool) and repeat >= 1 else 1
+    for _ in range(times):
+        for name, title, text, seconds, expect, size, place in tasks:
+            rest = dict(gap)
+            if expect == "struggle":
+                rest["seconds"] = max(GAP_SECONDS, float(rearm_seconds) + 2.0, float(cooldown_seconds) + 2.0)
+            parts.append(rest)
+            parts.append({"name": name, "title": title, "text": text, "seconds": float(seconds),
+                          "expect": expect, "size": size, "place": place or "center"})
     if free_minutes > 0:
         parts.append(dict(gap))
         parts.append({
@@ -114,17 +185,98 @@ def protocol(free_minutes: float = 0, rearm_seconds: float = Tuning.rearm_second
 def card_line(part: dict) -> str:
     """Stdin command the camera helper understands: `card` plus a JSON object."""
     payload = {"text": part["text"], "title": part["title"], "size": part["size"], "seconds": part["seconds"]}
+    if part.get("place") in ("top", "bottom"):
+        payload["place"] = part["place"]
     return "card " + json.dumps(payload, ensure_ascii=True)
 
 
 def sanitize(obj: dict) -> dict | None:
-    """Keep short text and numbers. Drop picture keys, long strings, and long lists."""
+    """Keep short text and numbers. Drop picture keys, long strings, and long lists.
+
+    A raw signals line is the exception: 478 landmark triples, blendshape scores, and the 16
+    matrix numbers are kept. Those are coordinates and scores, not a picture.
+    """
     if not isinstance(obj, dict):
         return None
     cleaned = _clean(obj)
     if cleaned is _DROP or not isinstance(cleaned, dict):
         return None
     return cleaned
+
+
+def _number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return _DROP
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return _DROP
+    return value
+
+
+def _clean_landmarks(value):
+    """478 [x, y, z] rows. Any other shape is dropped, so a long list cannot smuggle a picture."""
+    if not isinstance(value, list) or len(value) != _LM_COUNT:
+        return _DROP
+    out = []
+    for point in value:
+        if not isinstance(point, list) or len(point) != 3:
+            return _DROP
+        row = []
+        for item in point:
+            number = _number(item)
+            if number is _DROP:
+                return _DROP
+            row.append(number)
+        out.append(row)
+    return out
+
+
+def _clean_blendshapes(value):
+    if not isinstance(value, dict) or len(value) > _MAX_BLENDSHAPES:
+        return _DROP
+    out = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or len(key) > 64 or key.lower() in _IMAGE_KEYS:
+            continue
+        number = _number(item)
+        if number is _DROP:
+            continue
+        out[key] = number
+    return out
+
+
+def _clean_au(value):
+    """12 action-unit probabilities. Any other length is dropped, so a picture cannot hide here."""
+    if not isinstance(value, list) or len(value) != _AU_COUNT:
+        return _DROP
+    out = []
+    for item in value:
+        number = _number(item)
+        if number is _DROP:
+            return _DROP
+        out.append(number)
+    return out
+
+
+def _clean_matrix(value):
+    """16 numbers, or null. A 4x4 list is flattened. Anything else is dropped."""
+    if value is None:
+        return None
+    if isinstance(value, list) and value and isinstance(value[0], list):
+        flat = []
+        for row in value:
+            if not isinstance(row, list):
+                return _DROP
+            flat.extend(row)
+        value = flat
+    if not isinstance(value, list) or len(value) != _MAT_COUNT:
+        return _DROP
+    out = []
+    for item in value:
+        number = _number(item)
+        if number is _DROP:
+            return _DROP
+        out.append(number)
+    return out
 
 
 def _clean(value):
@@ -154,7 +306,16 @@ def _clean(value):
         for key, item in value.items():
             if not isinstance(key, str) or key.lower() in _IMAGE_KEYS:
                 continue
-            cleaned = _clean(item)
+            if key == "lm":
+                cleaned = _clean_landmarks(item)
+            elif key == "bs":
+                cleaned = _clean_blendshapes(item)
+            elif key == "mat":
+                cleaned = _clean_matrix(item)
+            elif key == "au":
+                cleaned = _clean_au(item)
+            else:
+                cleaned = _clean(item)
             if cleaned is _DROP:
                 continue
             out[key] = cleaned
@@ -162,9 +323,15 @@ def _clean(value):
     return _DROP
 
 
-def camera_command(model: Path, calibration: Path, camera: int, fps: int, signals_fps: int) -> list[str]:
+def camera_command(model: Path, calibration: Path, camera: int, fps: int, signals_fps: int,
+                   raw: bool = False, au: bool = False) -> list[str]:
     args = {"model": str(model), "calibration": str(calibration), "camera": int(camera), "fps": int(fps),
             "gaze": False, "signals": True, "signals_fps": int(signals_fps)}
+    if raw:
+        args["raw"] = True
+    if au:
+        args["au"] = "libreface"
+        args["au_fps"] = RECORD_AU_FPS
     return [python_for_children(), "-m", "ally.gaze_helper", json.dumps(args)]
 
 
@@ -356,11 +523,27 @@ def _output_path(state_dir: Path, run: str, person: str, glasses: str, light: st
     return path
 
 
+def _session_meta(person: str, glasses: str, light: str, camera: int, screen, senses_cfg: dict,
+                  commit_id: str, started: float, eyes: str | None, age: str | None,
+                  au: bool = False) -> dict:
+    """The first JSONL line. eyes and age are null when the person skipped them."""
+    meta = {
+        "rec": "meta", "alias": person, "glasses": glasses, "light": light,
+        "eyes": eyes, "age": age, "camera": int(camera), "screen": list(screen),
+        "senses": senses_cfg, "commit": commit_id, "started": started,
+        "au_model": "libreface" if au else "off",
+    }
+    if au:
+        meta["au_license"] = AU_LICENSE
+    return meta
+
+
 def record(person: str, glasses: str, light: str, free_minutes: float = 0, camera: int | None = None,
            run: str = "", *, root: Path | None = None, model: Path | None = None, spawn=None,
            sleep=None, ally_running=None, now=None, commit: str | None = None,
            senses: dict | None = None, screen: tuple[int, int] | None = None,
-           paths: Paths | None = None) -> int:
+           paths: Paths | None = None, eyes: str | None = None, age: str | None = None,
+           repeat: int = 1, parts: str | None = None, au: bool = False) -> int:
     """Walk one person through the protocol and write the JSONL. Returns a process exit code."""
     paths = paths or Paths()
     if not TOKEN.fullmatch(person or ""):
@@ -368,6 +551,23 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
         return 2
     if glasses not in ("yes", "no") or light not in ("bright", "dim"):
         print("Glasses must be yes or no, and light must be bright or dim.")
+        return 2
+    if eyes is not None and eyes not in EYES:
+        print("Eyes must be monolid, double, hooded, or unsure.")
+        return 2
+    if age is not None and age not in AGES:
+        print("Age must be under40, 40to64, or 65plus.")
+        return 2
+    if isinstance(repeat, bool) or not isinstance(repeat, int) or repeat < 1:
+        print("--repeat must be a whole number, 1 or more.")
+        return 2
+    try:
+        chosen = parse_parts(parts)
+    except ValueError as err:
+        if str(err):
+            print(f"Unknown part: {err}.")
+        else:
+            print("--parts needs part names, separated by commas.")
         return 2
     if free_minutes < 0:
         print("--free minutes cannot be negative.")
@@ -389,10 +589,6 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
     path = _output_path(state_dir, run_id, person, glasses, light)
     calib_path = path.parent / "calibration.json"
     fps = 20
-    try:
-        signals_fps = int(senses_cfg.get("fps", 10))
-    except (TypeError, ValueError):
-        signals_fps = 10
     spawn = spawn or _default_spawn
     sleep = sleep or time.sleep
     now = now or time.time
@@ -403,7 +599,8 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
     procs = []
     threads = []
     try:
-        camera_proc = spawn("camera", camera_command(Path(model_path), calib_path, int(camera), fps, signals_fps))
+        camera_proc = spawn("camera", camera_command(
+            Path(model_path), calib_path, int(camera), fps, RECORD_SIGNALS_FPS, raw=True, au=bool(au)))
         procs.append(camera_proc)
         input_proc = spawn("input", input_command())
         procs.append(input_proc)
@@ -432,16 +629,14 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
         else:
             got = ready.get("screen")
             meta_screen = list(got) if isinstance(got, list) and len(got) == 2 else list(screen or (0, 0))
-        meta = {
-            "rec": "meta", "alias": person, "glasses": glasses, "light": light, "camera": int(camera),
-            "screen": meta_screen, "senses": senses_cfg, "commit": git_commit() if commit is None else commit,
-            "started": now(),
-        }
+        commit_id = git_commit() if commit is None else commit
+        meta = _session_meta(person, glasses, light, int(camera), meta_screen, senses_cfg,
+                             commit_id, now(), eyes, age, au=bool(au))
         log.open_with(meta)
         if code != 0:
             return code
         parts = protocol(free_minutes, Tuning.from_config(senses_cfg).rearm_seconds,
-                         float(senses_cfg.get("cooldown_seconds", 30)))
+                         float(senses_cfg.get("cooldown_seconds", 30)), repeat, chosen)
         total = len(parts)
         for index, part in enumerate(parts, start=1):
             current = {"name": part["name"], "expect": part["expect"], "start": now(), "partial": False}
@@ -456,11 +651,9 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
     except KeyboardInterrupt:
         interrupted = True
         if not log._open:
-            log.open_with({
-                "rec": "meta", "alias": person, "glasses": glasses, "light": light, "camera": int(camera),
-                "screen": list(screen or (0, 0)), "senses": senses_cfg,
-                "commit": git_commit() if commit is None else commit, "started": now(),
-            })
+            log.open_with(_session_meta(
+                person, glasses, light, int(camera), list(screen or (0, 0)), senses_cfg,
+                git_commit() if commit is None else commit, now(), eyes, age, au=bool(au)))
         if current is not None:
             current["end"] = now()
             current["partial"] = True
@@ -696,15 +889,26 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument("--person", required=True)
     rec.add_argument("--glasses", required=True, choices=("yes", "no"))
     rec.add_argument("--light", required=True, choices=("bright", "dim"))
+    rec.add_argument("--eyes", choices=EYES, default=None,
+                     help="optional eye shape: monolid, double, hooded, or unsure")
+    rec.add_argument("--age", choices=AGES, default=None,
+                     help="optional age band: under40, 40to64, or 65plus")
     rec.add_argument("--free", type=float, default=0, metavar="MINUTES",
                      help="extra minutes of normal computer use, labeled as no struggle")
     rec.add_argument("--camera", type=int, default=None)
     rec.add_argument("--run", default="", help="folder name under state/senses_runs (default: a timestamp)")
+    rec.add_argument("--repeat", type=int, default=1, metavar="N",
+                     help="run the scripted block this many times after one calibration")
+    rec.add_argument("--parts", default="",
+                     help="comma-separated part names, in that order; default is the full script")
+    rec.add_argument("--au", action="store_true",
+                     help="record LibreFace action units on each face line, 5 times a second")
     chk = sub.add_parser("selfcheck", help="about 60 seconds of guided face checks")
     chk.add_argument("--camera", type=int, default=None)
     args = parser.parse_args(argv)
     if args.cmd == "record":
-        return record(args.person, args.glasses, args.light, args.free, args.camera, args.run)
+        return record(args.person, args.glasses, args.light, args.free, args.camera, args.run,
+                      eyes=args.eyes, age=args.age, repeat=args.repeat, parts=args.parts, au=args.au)
     if args.cmd == "selfcheck":
         return selfcheck(camera=args.camera)
     return 2

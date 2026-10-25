@@ -112,9 +112,6 @@ class HotkeyManager:
             line = line.strip()
             if line:
                 log.warning("hotkey helper: %s", line[:300])
-                if "not trusted" in line.lower() or "accessibility" in line.lower():
-                    self.error = ("macOS needs Accessibility and Input Monitoring permission for the app "
-                                  "running Ally (System Settings > Privacy & Security).")
         try:
             proc.stderr.close()
         except OSError:

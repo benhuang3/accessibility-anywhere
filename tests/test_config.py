@@ -19,6 +19,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(warnings, [])
         self.assertIn("high_contrast", DEFAULTS["page_styles"])
 
+    def test_personal_squint_method_is_allowed_and_v1_stays_default(self):
+        self.assertEqual(DEFAULTS["senses"]["squint_method"], "v1")
+        config = merge({"senses": {"squint_method": "personal"}})
+        errors, _warnings = validate(config, set())
+        self.assertFalse([error for error in errors if "senses.squint_method" in error])
+
     def test_syntax_error_reported(self):
         cfg, errors, _ = check("[agent\nname = 'x'")
         self.assertIsNone(cfg)
@@ -67,9 +73,9 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(any("nope" in w for w in warnings))
 
     def test_os_specific_shell(self):
-        cfg, errors, _ = check('[commands.calc]\nsteps = [{ shell = { mac = "open -a Calculator", windows = "calc" } }]\n')
+        cfg, errors, _ = check('[commands.calc]\nsteps = [{ shell = { windows = "calc", linux = "gnome-calculator" } }]\n')
         self.assertEqual(errors, [])
-        _, errors, _ = check('[commands.calc]\nsteps = [{ shell = { amiga = "calc" } }]\n')
+        _, errors, _ = check('[commands.calc]\nsteps = [{ shell = { mac = "open -a Calculator" } }]\n')
         self.assertTrue(errors)
 
     def test_profile_style_must_exist(self):
@@ -112,7 +118,6 @@ class KeyTests(unittest.TestCase):
             keys.split_combo("<ctrl>+")
 
     def test_mod_expansion(self):
-        self.assertEqual(keys.expand_mod("<mod>+r", "Darwin"), "<ctrl>+<cmd>+r")
         self.assertEqual(keys.expand_mod("<mod>+r", "Windows"), "<ctrl>+<alt>+r")
 
     def test_parse_combo(self):
@@ -124,7 +129,6 @@ class KeyTests(unittest.TestCase):
 
     def test_describe(self):
         self.assertEqual(keys.describe("<mod>+r", "Windows"), "Ctrl+Alt+R")
-        self.assertEqual(keys.describe("<mod>+r", "Darwin"), "Ctrl+Cmd+R")
 
 
 if __name__ == "__main__":

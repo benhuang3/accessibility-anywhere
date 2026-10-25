@@ -245,9 +245,9 @@ class VerifyBackOffTests(unittest.TestCase):
         self.assertTrue(report["verify"]["ok"])
 
     def test_text_backs_off_when_verify_fails(self):
-        ext = FakeExtension(breaks_above=1.25)  # 14px text predicts 150%, but the page breaks above 125%
+        ext = FakeExtension(breaks_above=1.3)  # 14px text predicts 150%, but the page breaks above 130%
         report = core.run_steps(Ctx(ext), ["text"])
-        self.assertAlmostEqual(ext.text_scale, 1.25)
+        self.assertAlmostEqual(ext.text_scale, 1.3)
         self.assertTrue(report["backed_off"])
         self.assertTrue(report["verify"]["ok"])
         self.assertEqual(ext.zoom, 1.0)
@@ -256,6 +256,12 @@ class VerifyBackOffTests(unittest.TestCase):
         ext = FakeExtension()
         core.run_steps(Ctx(ext), ["text"])
         self.assertAlmostEqual(ext.text_scale, 1.5)  # 14px x 1.5 = 21px >= 20px goal
+
+    def test_bigger_is_at_least_30_percent_even_for_big_text(self):
+        ext = FakeExtension()
+        ext.a_pageBaseline = lambda force=False: {"tabId": 7, "metrics": audit_entry(1.0, text_px=22)}
+        core.run_steps(Ctx(ext), ["text"])
+        self.assertAlmostEqual(ext.text_scale, 1.3)
 
     def test_bigger_again_and_smaller(self):
         ext = FakeExtension()
