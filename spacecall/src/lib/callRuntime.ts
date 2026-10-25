@@ -2,8 +2,9 @@ import { get, writable } from 'svelte/store';
 import workletUrl from './pcm-capture-worklet.ts?worker&url';
 import type { DbConnection } from '../module_bindings';
 import type { AudioFrame, VideoFrame } from './types';
+import { decodeJpeg } from './jpeg';
 import {
-  AUDIO_CHUNK_MS, AUDIO_SAMPLES, MAX_AUDIO_PENDING, AudioJitterBuffer, CallHealth, LatestFrameSender, audioStartTime, audioScheduleDue, serverDelayMs
+  AUDIO_CHUNK_MS, AUDIO_SAMPLES, MAX_AUDIO_PENDING, AudioJitterBuffer, CallHealth, CameraPolicy, LatestFrameSender, LatestFrameReceiver, audioStartTime, audioScheduleDue, serverDelayMs
 } from './mediaPolicy';
 
 export const localVideoStream = writable<MediaStream | null>(null);
@@ -14,6 +15,7 @@ export const audioNeedsTap = writable(false);
 export const mediaError = writable('');
 const emptyStats = {
   videoUp: 0, videoDown: 0, audioUp: 0, audioDown: 0, kbpsUp: 0, kbpsDown: 0,
+  screenDown: 0, screenKbps: 0, callBytesPerSecond: 0, cameraTarget: 12,
   playbackMs: 0, pending: 0, delayMs: null as number | null
 };
 export const callStats = writable({ ...emptyStats });
@@ -26,10 +28,11 @@ type Runtime = {
   conn: DbConnection; roomId: string; stream: MediaStream; context: AudioContext;
   video: HTMLVideoElement; node: AudioWorkletNode; source: MediaStreamAudioSourceNode;
   silent: GainNode; timer: number; watchdog: number; playbackTimer: number; sending: boolean; stopped: boolean;
-  audioPending: Map<number, number>; videoPending: boolean; otherPending: number; lastAudioSend: number; videoSeq: number; audioSeq: number;
-  nextPlay: number; lastAudioSeq: number; lastVideoSeq: number;
+  audioPending: Map<number, number>; otherPending: number; lastAudioSend: number; videoSeq: number; audioSeq: number;
+  nextPlay: number; lastAudioSeq: number;
   health: CallHealth; videoSender: LatestFrameSender; jitter: AudioJitterBuffer<AudioBuffer>;
-  highQuality: boolean; facing: 'user' | 'environment'; delayMs: number | null;
+  cameraPolicy: CameraPolicy; videoReceiver: LatestFrameReceiver<Uint8Array, string>;
+  facing: 'user' | 'environment'; delayMs: number | null;
   sources: Set<AudioBufferSourceNode>;
 };
 
@@ -56,7 +59,7 @@ export async function startCallRuntime(conn: DbConnection, roomId: string) {
     }
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 270 }, frameRate: { ideal: 8, max: 8 } }
+      video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 270 }, frameRate: { ideal: 15, max: 15 } }
     });
     if (ticket !== generation) { stream.getTracks().forEach(track => track.stop()); return; }
     await context.audioWorklet.addModule(workletUrl);
@@ -76,10 +79,16 @@ export async function startCallRuntime(conn: DbConnection, roomId: string) {
     source.connect(node).connect(silent).connect(context.destination);
     const rt: Runtime = {
       conn, roomId, stream, context, video, source, node, silent, timer: 0, watchdog: 0, playbackTimer: 0,
-      sending: false, stopped: false, audioPending: new Map(), videoPending: false, otherPending: 0, lastAudioSend: 0,
-      videoSeq: 0, audioSeq: 0, nextPlay: 0, lastAudioSeq: -1, lastVideoSeq: -1,
+      sending: false, stopped: false, audioPending: new Map(), otherPending: 0, lastAudioSend: 0,
+      videoSeq: 0, audioSeq: 0, nextPlay: 0, lastAudioSeq: -1,
       health: new CallHealth(performance.now()), videoSender: new LatestFrameSender(),
-      jitter: new AudioJitterBuffer(), highQuality: false, facing: 'user', sources: new Set(), delayMs: null
+      jitter: new AudioJitterBuffer(), cameraPolicy: new CameraPolicy(),
+      videoReceiver: new LatestFrameReceiver(decodeJpeg, url => {
+        const old = get(remoteVideoUrl);
+        remoteVideoUrl.set(url);
+        if (old) URL.revokeObjectURL(old);
+      }, url => URL.revokeObjectURL(url)),
+      facing: 'user', sources: new Set(), delayMs: null
     };
     runtime = rt;
     stream.getTracks().forEach(track => track.addEventListener('ended', () => {
@@ -95,12 +104,12 @@ export async function startCallRuntime(conn: DbConnection, roomId: string) {
       const now = performance.now();
       const starts = [...rt.audioPending.values()];
       if (rt.videoSender.pending) starts.push(rt.videoSender.since);
-      const pending = rt.audioPending.size + Number(rt.videoPending) + rt.otherPending;
-      const health = rt.health.sample(now, starts.length, starts.length ? now - Math.min(...starts) : 0,
+      const pending = rt.audioPending.size + rt.videoSender.pending + rt.otherPending;
+      const health = rt.health.sample(now, rt.audioPending.size + rt.videoSender.pending, starts.length ? now - Math.min(...starts) : 0,
         rt.context.state === 'running');
-      rt.highQuality = health.highQuality;
+      const camera = rt.cameraPolicy.sample(now, health, rt.videoSender.congested(now));
       connectionSlow.set(health.slow);
-      callStats.set({ ...health, playbackMs: rt.jitter.bufferedMs + scheduledAudioMs(rt), pending, delayMs: rt.delayMs });
+      callStats.set({ ...health, cameraTarget: camera.fps, playbackMs: rt.jitter.bufferedMs + scheduledAudioMs(rt), pending, delayMs: rt.delayMs });
     }, 250);
   } catch (error) {
     stream?.getTracks().forEach(track => track.stop());
@@ -118,11 +127,12 @@ export function setTransmitting(enabled: boolean) {
   if (!rt) return;
   if (enabled && !rt.sending) {
     rt.health = new CallHealth(performance.now());
-    rt.highQuality = false;
+    rt.cameraPolicy = new CameraPolicy();
     connectionSlow.set(false);
   }
   rt.sending = enabled;
   if (!enabled) {
+    rt.videoReceiver.clear();
     rt.jitter.clear();
     rt.sources.forEach(source => { try { source.stop(); } catch {} });
     rt.nextPlay = 0;
@@ -174,49 +184,66 @@ function captureAudio(rt: Runtime) {
 }
 
 function captureVideo(rt: Runtime) {
-  const canvas = document.createElement('canvas');
-  const graphics = canvas.getContext('2d');
+  // A deadline timer keeps capture cadence independent of reducer acknowledgments.
+  // Only encoding is single-flight; reducer acknowledgments can overlap three deep.
+  let canvas: HTMLCanvasElement | OffscreenCanvas = document.createElement('canvas');
+  try {
+    if (typeof OffscreenCanvas !== 'undefined' && typeof OffscreenCanvas.prototype.convertToBlob === 'function') {
+      const offscreen = new OffscreenCanvas(320, 180);
+      if (offscreen.getContext('2d')) canvas = offscreen;
+    }
+  } catch { /* Older Safari needs the DOM canvas. */ }
+  let graphics = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
   if (!graphics) { mediaError.set('Your browser could not start video. Please open the link again.'); return; }
+  let encoding = false;
+  let nextCapture = performance.now();
   const tick = () => {
     if (rt.stopped) return;
     const start = performance.now();
-    const fps = rt.highQuality ? 8 : 5;
-    const budget = 1000 / fps;
-    if (rt.sending && rt.video.readyState >= 2) {
+    const settings = rt.cameraPolicy.settings;
+    const budget = 1000 / settings.fps;
+    if (rt.sending && rt.video.readyState >= 2 && !encoding) {
       // Check before capture/encoding; a busy sender retains no stale frame.
       void rt.videoSender.run(start, async () => {
-        canvas.width = rt.highQuality ? 480 : 320;
-        canvas.height = rt.highQuality ? 270 : 180;
-        const scale = Math.max(canvas.width / rt.video.videoWidth, canvas.height / rt.video.videoHeight);
-        const width = rt.video.videoWidth * scale;
-        const height = rt.video.videoHeight * scale;
-        graphics.drawImage(rt.video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
-        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.6));
-        if (rt.stopped) return;
-        if (!blob || blob.size > 128000) throw new Error('Video frame too large');
-        const jpeg = new Uint8Array(await blob.arrayBuffer());
+        encoding = true;
+        const seq = rt.videoSeq++ >>> 0;
+        const { width: frameWidth, height: frameHeight } = settings;
+        let jpeg: Uint8Array;
+        try {
+          canvas.width = frameWidth;
+          canvas.height = frameHeight;
+          const scale = Math.max(canvas.width / rt.video.videoWidth, canvas.height / rt.video.videoHeight);
+          const width = rt.video.videoWidth * scale;
+          const height = rt.video.videoHeight * scale;
+          graphics!.drawImage(rt.video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+          const surface = canvas;
+          const blob = surface instanceof HTMLCanvasElement
+            ? await new Promise<Blob | null>(resolve => surface.toBlob(resolve, 'image/jpeg', settings.quality))
+            : await surface.convertToBlob({ type: 'image/jpeg', quality: settings.quality });
+          if (rt.stopped) return;
+          if (!blob || blob.size > 128000) throw new Error('Video frame too large');
+          jpeg = new Uint8Array(await blob.arrayBuffer());
+        } catch (error) {
+          if (!(canvas instanceof HTMLCanvasElement)) {
+            canvas = document.createElement('canvas');
+            graphics = canvas.getContext('2d');
+          }
+          throw error;
+        } finally { encoding = false; }
         if (rt.stopped || !rt.sending) return;
         rt.health.record('videoUp', performance.now(), jpeg.length);
-        rt.videoPending = true;
-        try {
-          await rt.conn.reducers.sendVideoFrame({
-            roomId: rt.roomId, seq: rt.videoSeq++ >>> 0, width: canvas.width, height: canvas.height, jpeg
-          });
-        } finally { rt.videoPending = false; }
+        await rt.conn.reducers.sendVideoFrame({
+          roomId: rt.roomId, seq, width: frameWidth, height: frameHeight, jpeg
+        });
       }).then(sent => {
         if (rt.stopped) return;
         if (!sent) rt.health.record('videoSkip', start);
-        // After missing a capture tick, capture fresh media as soon as the
-        // reducer frees up rather than waiting another entire frame period.
-        else if (performance.now() - start >= budget) {
-          clearTimeout(rt.timer);
-          rt.timer = window.setTimeout(tick, 0);
-        }
       }).catch(() => {
         if (!rt.stopped) rt.health.record('sendDrop', performance.now());
       });
     }
-    rt.timer = window.setTimeout(tick, Math.max(10, budget - (performance.now() - start)));
+    nextCapture = Math.max(nextCapture + budget, performance.now() + 1);
+    rt.timer = window.setTimeout(tick, nextCapture - performance.now());
   };
   tick();
 }
@@ -234,7 +261,7 @@ export async function flipCamera() {
   rt.stream.getVideoTracks().forEach(track => { track.stop(); rt.stream.removeTrack(track); });
   try {
     const camera = await navigator.mediaDevices.getUserMedia({
-      audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 480 }, height: { ideal: 270 }, frameRate: { ideal: 8, max: 8 } }
+      audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 480 }, height: { ideal: 270 }, frameRate: { ideal: 15, max: 15 } }
     });
     if (rt.stopped) { camera.getTracks().forEach(track => track.stop()); return; }
     camera.getVideoTracks().forEach(track => rt.stream.addTrack(track));
@@ -294,13 +321,14 @@ export function handleAudioEvent(row: AudioFrame) {
 
 export function handleVideoEvent(row: VideoFrame) {
   const rt = runtime;
-  if (!rt || !rt.sending || row.roomId !== rt.roomId || row.seq <= rt.lastVideoSeq) return;
-  rt.lastVideoSeq = row.seq;
+  if (!rt || !rt.sending || row.roomId !== rt.roomId) return;
   rt.health.record('videoDown', performance.now(), row.jpeg.length);
   rt.delayMs = serverDelayMs(row, Date.now());
-  const old = get(remoteVideoUrl);
-  remoteVideoUrl.set(URL.createObjectURL(new Blob([new Uint8Array(row.jpeg)], { type: 'image/jpeg' })));
-  if (old) URL.revokeObjectURL(old);
+  rt.videoReceiver.push(row.seq, row.jpeg);
+}
+
+export function recordScreenFrame(bytes: number) {
+  runtime?.health.record('screenDown', performance.now(), bytes);
 }
 
 export async function trackReducerCall<T>(call: () => Promise<T>): Promise<T> {
@@ -323,6 +351,7 @@ export function stopCallRuntime() {
     clearInterval(rt.watchdog);
     clearInterval(rt.playbackTimer);
     rt.jitter.clear();
+    rt.videoReceiver.clear(true);
     rt.node.port.onmessage = null;
     rt.node.disconnect(); rt.source.disconnect(); rt.silent.disconnect();
     rt.stream.getTracks().forEach(track => track.stop());

@@ -3,3 +3,4 @@
 .npm-cache/
 .svelte-kit/
 build/
+server/dist/

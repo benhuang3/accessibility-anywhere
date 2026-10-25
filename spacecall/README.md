@@ -93,9 +93,9 @@ An explicit **Call Priya** tap in Ally opens the elder page and starts Python sc
 
 **The helper sees everything captured on the screen, including bank pages, private messages and other open apps.** This is the purpose of the call. Capture uses the same `agent.platform.screenshot_png()` function as the risk guardian, and therefore the same platform/monitor coverage. It begins only after the explicit Call tap; it does not require `screen_review` or send images to Anthropic. Stop sharing blocks new screen events on the server and clears the helper's displayed screenshot. An already delivered image cannot be recalled from another person's device.
 
-`ally/risk/screenshare.py` uses stdlib HTTP with five-second timeouts and optional **Pillow** for in-memory resizing/JPEG encoding. Install Pillow in Ally's Python environment for screen sharing; if it is missing or encoding/capture/network fails, the sender stops quietly and the helper keeps a waiting/stale freshness hint. No PNG fallback is uploaded. Frames are captured about once a second, at most 1280 pixels wide, JPEG quality 60, reducing dimensions further until at most 150,000 bytes; the reducer hard cap is 200,000 bytes. No frames, room capabilities or identity tokens are written to disk or logged by this sender. A new call, call-window close, `RiskWire.stop()`, ended room, permanent rejection, or the 30-minute sender deadline stops sharing.
+`ally/risk/screenshare.py` uses stdlib HTTP with five-second timeouts and optional **Pillow** for in-memory resizing/JPEG encoding. Install Pillow in Ally's Python environment for screen sharing; if it is missing or encoding/capture/network fails, the sender stops quietly and the helper keeps a waiting/stale freshness hint. No PNG fallback is uploaded. Frames are captured up to four times a second while changing, at most 1280 pixels wide, JPEG quality 60, reducing dimensions further until at most 150,000 bytes; the reducer hard cap is 200,000 bytes. No frames, room capabilities or identity tokens are written to disk or logged by this sender. A new call, call-window close, `RiskWire.stop()`, ended room, permanent rejection, or the 30-minute sender deadline stops sharing.
 
-To make **Share my screen again** work, the capture/send loop stops while paused but a lightweight HTTP readiness watcher remains alive for the remainder of the same 30-minute deadline. It captures nothing while paused. The extra capability-only `screen_share_ready(room_id)` reducer rejects paused/ended rooms without returning private incident rows. Initial room creation may take up to 30 seconds; readiness checks wait for it before capturing. Other HTTP failures stop the sender. The browser's sharing flag is consent state, not confirmation that the Python sender is healthy; the helper's freshness hint exposes waiting or stale frames.
+To make **Share my screen again** work, the capture/send loop stops while paused but a lightweight HTTP readiness watcher remains alive for the remainder of the same 30-minute deadline. It captures nothing while paused. The extra capability-only `screen_share_ready(room_id)` reducer rejects paused/ended rooms without returning private incident rows. Initial room creation may take up to 30 seconds; readiness checks wait for it before capturing. Broken HTTP connections reconnect once; other HTTP failures stop the sender. The browser's sharing flag is consent state, not confirmation that the Python sender is healthy; the helper's freshness hint exposes waiting or stale frames.
 
 HTTP endpoints, checked against the current official docs:
 
@@ -143,3 +143,51 @@ python -m unittest discover -p "test_*.py":
 ```
 
 Python screenshot tests used Pillow 13 installed only into a temporary test dependency directory via `PYTHONPATH`; the repo environment was not changed. Broader Python errors involve missing NumPy and dependent hotkey teardown failures, Windows speech, and a sandbox socket privacy test. No failures occurred in the new sender, risk integration or config suites. The production build succeeds with the existing ignored native-loader workaround. Live device rendering/media, real generated bindings, HTTP transport against Maincloud, and subscription-level RLS remain unverified.
+
+
+## Higher frame rates and bandwidth
+
+Camera sending targets **12 fps at 320×180**, with at most three captures/reducers in flight.
+A full pipeline drops capture ticks instead of keeping old frames. Sustained good mediaPolicy
+health permits **15 fps at 480×270**. Falling receive fps, a pipeline full for over one second,
+bad health or bandwidth pressure steps down promptly, through 12 fps to 6 fps / JPEG quality 45.
+Recovery requires sustained good health again. Capture uses a deadline timer independent of reducer
+acknowledgments, with OffscreenCanvas JPEG encoding where supported and a DOM canvas fallback for
+Safari. Receivers decode one frame at a time, replace their single waiting frame, and discard stale
+sequences or decodes invalidated by newer arrivals, pause or call teardown.
+
+The Python screen sender reuses one HTTPS connection for readiness checks and reducer calls.
+One capture/encode thread overlaps posting; its single waiting slot always keeps the latest frame.
+A 64×36 grayscale thumbnail is compared against the last successfully sent frame (mean absolute
+difference threshold 1.5). Unchanged captures are skipped, with a keyframe every five seconds.
+Changing screens target **up to 4 fps**, versus about 1 fps previously. Posts over 400 ms lower
+JPEG quality from 60 to 45, then width from 1280 to 960, before lowering capture fps.
+Pause clears the waiting slot and suspends capture until readiness succeeds. Stop, permanent
+rejection and the 30-minute deadline still end the sender; all screenshots remain in memory.
+
+The **soft call budget is 1.2 MB/s averaged over ten seconds**, using decimal MB.
+The helper can observe both camera directions plus the incoming screen and lowers its camera
+quality when their combined JPEG payload exceeds that budget. Each camera also has a conservative
+150 KB/s allowance, while Python reserves the remaining 900 KB/s for its screen POST bodies
+(including the larger SATS-JSON byte arrays). These independent allowances let senders react
+without a new server schema; they are soft quality controls, not a hard traffic limit.
+The elder and Python cannot directly observe all other senders. A future server feedback signal
+for per-room byte rates would allow fully coordinated adaptation across all three senders.
+
+Add &debug=1 to the call fragment to see actual sent/received camera fps, screen receive fps
+and kbps, combined media kbps, the ten-second observed call JPEG rate, camera target fps and
+pending reducers. These count media payloads, excluding headers and transport overhead; the
+helper has the complete camera-plus-screen view. Received rates include frames later dropped
+during decoding. The existing delay estimate remains server-to-browser age, not end-to-end delay.
+
+For planning with the spec's **about 12.5 GB/month free Maincloud egress allowance**:
+two 6 KB camera JPEGs at 12 fps plus 40 KB screen JPEGs at 4 fps total
+2 × 6 × 12 + 40 × 4 = 304 KB/s, or **18.24 MB/minute** of images.
+Bidirectional 16 kHz / 16-bit mono audio adds 64 KB/s, giving **about 22.08 MB/minute**,
+before protocol overhead (roughly 566 minutes / 9.4 hours per 12.5 GB).
+An unchanged screen sends only its five-second keyframes, reducing that example to about
+12.96 MB/minute including audio. At the 1.2 MB/s image budget, images alone cost
+72 MB/minute: about 174 minutes / 2.9 hours per allowance. JPEG sizes vary substantially;
+these are estimates, not measured call performance or a guarantee of free-tier eligibility.
+No server changes are required for these frame-rate changes; live two-device and iOS checks
+remain necessary before publishing.

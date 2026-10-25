@@ -281,6 +281,8 @@
       <p>Video fps ↑ {$callStats.videoUp.toFixed(1)} ↓ {$callStats.videoDown.toFixed(1)}</p>
       <p>Audio chunks/s ↑ {$callStats.audioUp.toFixed(1)} ↓ {$callStats.audioDown.toFixed(1)}</p>
       <p>Media kbps ↑ {$callStats.kbpsUp.toFixed(1)} ↓ {$callStats.kbpsDown.toFixed(1)}</p>
+      <p>Screen {$callStats.screenDown.toFixed(1)} fps · {$callStats.screenKbps.toFixed(1)} kbps</p>
+      <p>Camera target {$callStats.cameraTarget} fps · Observed call {($callStats.callBytesPerSecond / 1000).toFixed(1)} KB/s (10 s)</p>
       <p>Playback buffer {$callStats.playbackMs.toFixed(0)} ms · Pending reducers {$callStats.pending}</p>
       <p>One-way estimate: {$callStats.delayMs === null ? 'unavailable (no server timestamp)' : `${$callStats.delayMs.toFixed(0)} ms (server → here; clocks may differ)`}</p>
     </aside>

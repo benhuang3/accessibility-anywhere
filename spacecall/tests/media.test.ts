@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  advanceChip, AudioJitterBuffer, CallHealth, LatestFrameSender, audioStartTime, audioScheduleDue, serverDelayMs,
-  AUDIO_CAP_MS, AUDIO_CHUNK_MS, AUDIO_TARGET_MS, AUDIO_SAMPLES
+  advanceChip, AudioJitterBuffer, CallHealth, CameraPolicy, LatestFrameSender, LatestFrameReceiver, audioStartTime, audioScheduleDue, serverDelayMs,
+  AUDIO_CAP_MS, AUDIO_CHUNK_MS, AUDIO_TARGET_MS, AUDIO_SAMPLES, MAX_VIDEO_PENDING, MAX_MEDIA_PENDING
 } from '../src/lib/mediaPolicy.ts';
 
 test('chip requires five seconds of trouble and five seconds of recovery', () => {
@@ -46,7 +46,7 @@ test('healthy received media stays healthy even with 200ms reducer acknowledgmen
   const health = new CallHealth(0);
   for (let now = 0; now <= 30000; now += 50) {
     feed(health, now);
-    const sample = health.sample(now, 5, 200, true);
+    const sample = health.sample(now, 8, 200, true);
     assert.equal(sample.slow, false);
     if (now >= 10000) assert.equal(sample.highQuality, true);
   }
@@ -140,7 +140,7 @@ test('queue depth, old pending calls and repeated skipped sends each detect cong
     for (let now = 0; now <= 15000; now += 50) {
       feed(health, now);
       if (reason === 'drops' && now % 1000 === 0) health.record('sendDrop', now);
-      sample = health.sample(now, reason === 'depth' ? 7 : 1, reason === 'age' ? 501 : 100, true);
+      sample = health.sample(now, reason === 'depth' ? MAX_MEDIA_PENDING + 1 : 1, reason === 'age' ? 501 : 100, true);
     }
     assert.equal(sample!.slow, true, reason);
   }
@@ -150,7 +150,7 @@ test('quality steps down on bad health before the chip appears', () => {
   const health = new CallHealth(0);
   for (let now = 0; now <= 10000; now += 50) { feed(health, now); health.sample(now, 0, 0, true); }
   assert.equal(health.sample(10000, 0, 0, true).highQuality, true);
-  const congested = health.sample(10001, 7, 100, true);
+  const congested = health.sample(10001, MAX_MEDIA_PENDING + 1, 100, true);
   assert.equal(congested.highQuality, false);
   assert.equal(congested.slow, false);
 });
@@ -230,32 +230,131 @@ test('a missed playback deadline counts even if a chunk is waiting on the main t
   assert.equal(queue.take(), undefined, 'the underrun restarts priming');
 });
 
-test('latest-frame-wins skips capture while a reducer is pending, then captures fresh media', async () => {
+test('three frames can be in flight; full ticks are dropped and the next capture is fresh', async () => {
   const sender = new LatestFrameSender();
   const captured: number[] = [];
   let frame = 1;
-  let finish!: () => void;
-  const pending = sender.run(10, async () => {
-    captured.push(frame);
-    await new Promise<void>(resolve => { finish = resolve; });
-  });
-  assert.equal(sender.pending, true);
-  for (frame = 2; frame <= 5; frame++) {
+  const finish: (() => void)[] = [];
+  const flights: Promise<boolean>[] = [];
+  for (; frame <= MAX_VIDEO_PENDING; frame++) {
+    flights.push(sender.run(frame * 10, async () => {
+      captured.push(frame);
+      await new Promise<void>(resolve => { finish.push(resolve); });
+    }));
+  }
+  assert.equal(sender.pending, 3);
+  assert.equal(sender.since, 10);
+  assert.equal(sender.congested(1030), false);
+  assert.equal(sender.congested(1031), true);
+  for (; frame <= 8; frame++) {
     assert.equal(await sender.run(20, async () => { captured.push(frame); }), false);
   }
-  assert.deepEqual(captured, [1]);
-  finish();
-  assert.equal(await pending, true);
-  assert.equal(sender.pending, false);
-  await sender.run(30, async () => { captured.push(frame); });
-  assert.deepEqual(captured, [1, 6]);
+  assert.deepEqual(captured, [1, 2, 3]);
+  finish[1]();
+  assert.equal(await flights[1], true);
+  assert.equal(sender.pending, 2);
+  assert.equal(sender.congested(2000), false);
+  await sender.run(2000, async () => { captured.push(frame); });
+  assert.deepEqual(captured, [1, 2, 3, 9]);
+  finish[0](); finish[2]();
+  await Promise.all(flights);
+  assert.equal(sender.pending, 0);
 });
 
-test('a failed capture releases the single-flight gate', async () => {
+test('a failed capture releases its in-flight slot', async () => {
   const sender = new LatestFrameSender();
   await assert.rejects(sender.run(0, async () => { throw new Error('send failed'); }));
-  assert.equal(sender.pending, false);
+  assert.equal(sender.pending, 0);
   assert.equal(await sender.run(1, async () => {}), true);
+});
+
+test('receiver decodes one at a time, retains the newest waiting frame and drops stale sequences', async () => {
+  const releases: ((value: number) => void)[] = [];
+  const decoded: number[] = [], drawn: number[] = [], discarded: number[] = [];
+  const receiver = new LatestFrameReceiver<number, number>(frame => {
+    decoded.push(frame);
+    return new Promise(resolve => releases.push(resolve));
+  }, frame => drawn.push(frame), frame => discarded.push(frame));
+  assert.equal(receiver.push(1, 1), true);
+  receiver.push(2, 2);
+  receiver.push(3, 3);
+  assert.equal(receiver.push(2, 2), false);
+  releases[0](1);
+  await Promise.resolve();
+  assert.deepEqual(decoded, [1, 3]);
+  assert.deepEqual(discarded, [1]);
+  assert.deepEqual(drawn, []);
+  releases[1](3);
+  await Promise.resolve();
+  assert.deepEqual(drawn, [3]);
+  assert.equal(receiver.push(3, 3), false);
+  assert.equal(receiver.push(1, 1), false);
+});
+
+test('clearing a receiver invalidates an outstanding decode, including across a new call', async () => {
+  let finish!: (value: number) => void;
+  const drawn: number[] = [], discarded: number[] = [];
+  const receiver = new LatestFrameReceiver<number, number>(() => new Promise(resolve => { finish = resolve; }),
+    value => drawn.push(value), value => discarded.push(value));
+  receiver.push(100, 100);
+  receiver.clear(true);
+  receiver.push(0, 0);
+  finish(100);
+  await Promise.resolve();
+  assert.deepEqual(discarded, [100]);
+  finish(0);
+  await Promise.resolve();
+  assert.deepEqual(drawn, [0]);
+});
+
+test('camera targets 12fps and steps up only after sustained existing health approval', () => {
+  const policy = new CameraPolicy();
+  const good = { highQuality: true, bad: false, videoDown: 12, overBudget: false };
+  assert.deepEqual(policy.settings, { fps: 12, width: 320, height: 180, quality: 0.6 });
+  assert.equal(policy.sample(0, { ...good, highQuality: false }, false).fps, 12);
+  assert.equal(policy.sample(5000, good, false).fps, 12);
+  assert.equal(policy.sample(9999, good, false).fps, 12);
+  assert.deepEqual(policy.sample(10000, good, false), { fps: 15, width: 480, height: 270, quality: 0.6 });
+});
+
+test('full pipeline, falling receive fps and bandwidth pressure each step down immediately', () => {
+  for (const reason of ['full', 'receive', 'bandwidth', 'health']) {
+    const policy = new CameraPolicy();
+    const good = { highQuality: true, bad: false, videoDown: 12, overBudget: false };
+    policy.sample(0, good, false);
+    assert.equal(policy.sample(5000, good, false).fps, 15);
+    const trouble = { ...good, videoDown: reason === 'receive' ? 5 : 12,
+      overBudget: reason === 'bandwidth', bad: reason === 'health' };
+    assert.equal(policy.sample(5001, trouble, reason === 'full').fps, 12, reason);
+    if (reason === 'receive') trouble.videoDown = 2;
+    assert.equal(policy.sample(6001, trouble, reason === 'full').fps, 6, reason);
+    assert.equal(policy.settings.quality, 0.45);
+    assert.equal(policy.sample(6002, good, false).fps, 6, 'no instant rebound');
+  }
+});
+
+test('ten-second call bandwidth includes screen and both cameras and expires old traffic', () => {
+  const health = new CallHealth(0);
+  for (let now = 250; now <= 10000; now += 250) {
+    health.record('videoUp', now, 100000);
+    health.record('videoDown', now, 100000);
+    health.record('screenDown', now, 110000);
+  }
+  const sample = health.sample(10000, 0, 0, false);
+  assert.equal(sample.callBytesPerSecond, 1240000);
+  assert.equal(sample.overBudget, true);
+  assert.equal(sample.screenDown, 4);
+  assert.equal(sample.screenKbps, 3520);
+  assert.equal(health.sample(20001, 0, 0, false).callBytesPerSecond, 0);
+  assert.equal(health.sample(20001, 0, 0, false).overBudget, false);
+});
+
+test('camera reserve can lower quality even when this browser cannot observe the screen', () => {
+  const health = new CallHealth(0);
+  health.record('videoUp', 10000, 1500001);
+  const sample = health.sample(10000, 0, 0, false);
+  assert.equal(sample.overBudget, true);
+  assert.ok(sample.callBytesPerSecond < 1200000);
 });
 
 test('timestamp estimates convert microseconds and disclose absent metadata or clock skew', () => {
