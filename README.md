@@ -390,6 +390,7 @@ Logs: `logs/ally.log` and `logs/supervisor.log`.
 
 Ally looks for fake virus warnings, lookalike bank addresses, card forms on unfamiliar sites,
 remote-control tools running while a bank page is open, and pages that try to trap you.
+It also warns when a remote tool is running and someone opens Event Viewer or another system tool used for fake scans.
 Local rules check first. If you turn on screen review, AI can look at a flagged screen for a second opinion.
 A calm panel explains the concern and asks before closing a page or remote tool. Tap Yes or No,
 or press Enter / Esc; the current risk prompts cannot hear spoken answers.

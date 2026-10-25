@@ -6,7 +6,7 @@ import threading
 import time
 
 from ally.contracts import EventBus, Offer, Risk
-from . import actions, behavior, contact, domains, fields, joined, process, soft, text
+from . import actions, behavior, contact, domains, fakescan, fields, joined, process, soft, text
 from .copy import load_copy, render
 from .guardian import Evidence
 
@@ -96,6 +96,8 @@ class Deduper:
     def key(risk):
         if isinstance(risk, tuple):
             return risk
+        if risk.source == "risk.fakescan":
+            return (risk.app, risk.kind, risk.source, risk.evidence)
         return (domains.host_of(risk.url) if risk.url else risk.app, risk.kind)
 
     def fresh(self, risk) -> bool:
@@ -154,6 +156,8 @@ class RiskWire:
         self._lock = threading.Lock()
         self._snapshot = []
         self._watcher = process.RemoteWatcher()
+        self._fake_scan_watcher = fakescan.FakeScanWatcher()
+        self._event_viewer_warned = False
         self._baseline = False
         self.last_page = {"url": "", "card_present": False, "last_scam_text_at": None}
         self._stop = threading.Event()
@@ -477,15 +481,21 @@ class RiskWire:
         with self._lock:
             previous_tools = set(joined.running_tools(self._snapshot))
             self._snapshot = snap if isinstance(snap, (list, tuple)) else []
+            tools = joined.running_tools(self._snapshot)
+            now = self.clock()
             page = self.last_page
             payment_open = page["card_present"] or joined.joined_risk(("context",), page["url"]) is not None
-            events = self._watcher.observe(self._snapshot, self.clock(),
+            events = self._watcher.observe(self._snapshot, now,
                                            page["last_scam_text_at"], payment_open)
+            names = [item.get("name") for item in self._snapshot if isinstance(item, dict)]
+            scare_tools = self._fake_scan_watcher.observe(names, tools, now)
+            if not tools:
+                self._event_viewer_warned = False
             if not self._baseline:
                 self._baseline = True
                 return
             risks = []
-            if set(joined.running_tools(self._snapshot)) - previous_tools:
+            if set(tools) - previous_tools:
                 combined = self._joined()
                 if combined:
                     risks.append(combined)
@@ -493,6 +503,18 @@ class RiskWire:
                               app=e.tool, source="risk.process") for e in events)
             fresh = [r for r in risks
                      if Deduper.key(r) not in self._inflight and self.deduper.fresh(r)]
+            pending_fake_scan = any(len(key) > 2 and key[2] == "risk.fakescan" for key in self._inflight)
+            if not pending_fake_scan:
+                for scare in fakescan.SCARE_TOOLS:
+                    if scare not in scare_tools or (scare == "mmc.exe" and self._event_viewer_warned):
+                        continue
+                    risk = Risk("remote_access", "high", _evidence(fakescan.SCARE_TOOLS[scare]),
+                                app=tools[0], source="risk.fakescan")
+                    if self.deduper.fresh(risk):
+                        fresh.append(risk)
+                        if scare == "eventvwr.exe":
+                            self._event_viewer_warned = True
+                        break
         for risk in fresh:
             self.bus.publish("risk", risk)
 
@@ -513,6 +535,7 @@ class RiskWire:
             self.deduper.clear()
             self._marks.clear()
             self._tab_ids.clear()
+            self._event_viewer_warned = False
         if self.guardian is not None:
             self.guardian.clear_cache()
             self.guardian.budget.clear_pages()

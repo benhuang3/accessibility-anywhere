@@ -48,6 +48,20 @@ suppress duplicates. Only the first question has the joined-risk pause and conta
    Without a valid call link, **Tell** only sends the push. The push says the kind of risk, never the page address or anything from
    the page. Setup uses `[risk]` keys `trusted_contact`, `contact_topic` and `contact_call_url`; accepted call hosts are listed below.
 
+### Fake scans during remote sessions
+
+`fakescan.FakeScanWatcher` notices Event Viewer (`eventvwr.exe` or `mmc.exe`), `tree.com`, `netstat.exe`,
+`msconfig.exe`, `msinfo32.exe` and `regedit.exe` appearing after the first snapshot with a remote tool running.
+It publishes a high `remote_access` warning from `risk.fakescan`: "This is a common scam trick."
+The warning names the system tool and offers to close the named remote tool through the existing confirmation,
+cooldown, close-failure and Call/Tell/automatic-alert flow. Each scare tool has its own dedupe key.
+Tools already present in the session's first snapshot are ignored; the baseline resets when no remote tool is running.
+
+**Limitations (NOT LIVE-TESTED):** a running remote tool does not prove someone is connected, and legitimate support can open
+these same Windows tools. Polling stays at ten seconds, so short-lived tools such as `tree.com` can start and finish between
+snapshots and be missed. `dir /s` is built into `cmd.exe` and cannot be identified from process names; common shells and Ally's
+own `tasklist.exe` and `taskkill.exe` never trigger this rule. An `mmc.exe` snapshot cannot tell which system console is open.
+
 ## 3. Architecture
 
 ```

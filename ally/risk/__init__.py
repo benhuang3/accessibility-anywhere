@@ -13,6 +13,14 @@ def warning_for(risk) -> tuple[str, str]:
         from . import copy as warning_copy
         from . import domains
 
+        if risk.source == "risk.fakescan":
+            from .fakescan import SCARE_TOOLS
+
+            scare = risk.evidence if risk.evidence in SCARE_TOOLS.values() else "a Windows system tool"
+            wording = warning_copy.load_copy()["fake_scan"]
+            return (wording["title"] + " " + wording["body"].format(scare=scare),
+                    wording["spoken"].format(scare=scare))
+
         usual_site = ""
         if risk.kind == "untrusted_site":
             brand = domains.check_domain(risk.url).brand

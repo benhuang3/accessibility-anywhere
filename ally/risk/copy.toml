@@ -4,7 +4,8 @@
 # Rules: say what we see, why it matters, offer one action. Spoken lines make no offer: Ally asks the yes/no
 # question right after them, so a question here would be asked twice. Hedge ("may", "looks like"). Never blame, no
 # capital-letter shouting, no exclamation marks, no phone numbers. The first action is the safe default.
-# Placeholders: {tool} {host} {usual_site}. Action ids are what the agent runs, and only after a yes:
+# Placeholders: {tool} {host} {usual_site}; {scare} is filled by warning_for for fake scans.
+# Action ids are what the agent runs, and only after a yes:
 #   close_page  close this tab          close_tool  close the remote-control tool
 #   open_usual  open {usual_site}       go_back     go back to the previous page
 #   explain     explain, change nothing  stay        do nothing
@@ -47,6 +48,17 @@ label = "Close it"
 [[remote_access.actions]]
 id = "stay"
 label = "I know this person"
+
+[fake_scan]
+title = "This is a common scam trick."
+body = "Someone connected to your computer just opened {scare}. Scammers show normal Windows messages to make it look broken. Your computer is probably fine."
+spoken = "Let's pause because scammers may use normal Windows tools to make your computer look broken."
+[[fake_scan.actions]]
+id = "close_tool"
+label = "Close the remote tool"
+[[fake_scan.actions]]
+id = "explain"
+label = "Tell me more"
 
 [page_tricks]
 title = "This page may be trying to trap you."
