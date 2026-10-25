@@ -252,6 +252,16 @@ class Overlay:
             self._panel.card(cmd[1], cmd[2], cmd[3])
             self._render()
             return
+        if kind == "extra_done":
+            offer_id, note = cmd[1:]
+            current = self._panel.current_offer
+            offer = self._offers.get(offer_id)
+            if current is None or current.id != offer_id or offer is None or offer.done:
+                self._extra_done.pop(offer_id, None)
+                return
+            self._extra_done[offer_id] = note
+            self._force_render()
+            return
         if kind == "offer":
             offer = self._offers.get(cmd[1])
             if offer is not None and not getattr(offer, "done", False):
@@ -327,6 +337,10 @@ class Overlay:
             self._offer_win = self._build_panel(self._offer_win, None, bubble)
             self._bubble_key = bubble
         self._park_offer_below_card()
+
+    def _force_render(self) -> None:
+        self._card_key = self._bubble_key = None
+        self._render()
 
     def _build_panel(self, win, card, offer):
         tk = self._tk
@@ -463,16 +477,27 @@ class Overlay:
             return
         label, callback = extra
 
+        self._button(row, label, lambda: self._start_extra(offer_id, label, callback), primary=False)
+
+    def _start_extra(self, offer_id: int, label: str, callback) -> None:
+        current = self._panel.current_offer
+        offer = self._offers.get(offer_id)
+        if (offer_id in self._extra_done or current is None or current.id != offer_id
+                or offer is None or offer.done):
+            return
+        target = label.partition(" ")[2] or label
+        self._extra_done[offer_id] = f"Contacting {target}\N{HORIZONTAL ELLIPSIS}"
+        self._force_render()
+
         def run():
             try:
                 note = callback() or "Done."
             except Exception:
                 log.exception("extra action failed")
                 note = "That didn't work. Please try again."
-            self._extra_done[offer_id] = str(note)[:120]
-            self._render()
+            self._q.put(("extra_done", offer_id, str(note)[:120]))
 
-        self._button(row, label, run, primary=False)
+        threading.Thread(target=run, name="overlay-contact", daemon=True).start()
 
     def _pick(self, offer_id: int, choice: str) -> str:
         current = self._panel.current_offer

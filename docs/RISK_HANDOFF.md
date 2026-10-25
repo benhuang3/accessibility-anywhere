@@ -35,8 +35,8 @@ run for real), **PROPOSED** (nobody has agreed yet). If this document and the co
    **Enter** / **Esc**. Voice answers are still open work, owned by Ben W.
 4. A page that went full screen is put back to a maximized window first, so it cannot hide the warning.
 5. One warning per page per 30 minutes, so the same site does not nag.
-6. **Pause:** when a remote tool is running and a bank page is open, the panel counts down for **30 seconds** before **Yes** can be
-   pressed (`wire.PAUSE_SECONDS`; the joined-risk offer also covers lookalike-bank and card pages).
+6. **Pause:** when a remote tool is running and a bank page is open, the panel counts down for **30 seconds** before **No** (continue) can be
+   pressed. **Yes** (close) works at once (`wire.PAUSE_SECONDS`; the joined-risk offer also covers lookalike-bank and card pages).
 7. **Call or Tell a trusted person:** high warnings have a third button when a trusted contact is configured. With `contact_call_url`
    set to the helper's standing Google Meet room, **Call** opens it in Chrome and sends an ntfy.sh push with a **Join the call** button.
    Without a valid call link, **Tell** only sends the push. The push says the kind of risk, never the page address or anything from

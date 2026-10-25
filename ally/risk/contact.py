@@ -19,8 +19,8 @@ _WHAT = {
 
 def message_for(kind: str) -> str:
     what = _WHAT.get(kind, "a page that looks like a scam")
-    return (f"Ally safety alert: {what}. Ally asked them to pause and nothing has been paid. "
-            "A quick call from you would help.")
+    return (f"Ally safety alert: {what}. Ally asked them to stop and wait. "
+            "Please contact them now.")
 
 
 # Video-call links Ally may open on the person's screen: a standing room the helper created in advance.
@@ -28,13 +28,15 @@ CALL_HOSTS = ("meet.google.com", "zoom.us", "whereby.com", "teams.microsoft.com"
 
 
 def valid_call_url(url) -> bool:
-    if not isinstance(url, str) or len(url) > 300:
+    if not isinstance(url, str) or len(url) > 300 or re.search(r"[\s\x00-\x1f\x7f-\x9f]", url):
         return False
     try:
-        parts = urllib.parse.urlsplit(url.strip())
+        parts = urllib.parse.urlsplit(url)
+        if parts.username is not None or ":" in parts.netloc:
+            return False
+        host = (parts.hostname or "").lower()
     except ValueError:
         return False
-    host = (parts.hostname or "").lower()
     return parts.scheme == "https" and any(host == h or host.endswith("." + h) for h in CALL_HOSTS)
 
 
@@ -52,8 +54,8 @@ def ntfy_sender(topic: str, server: str = "https://ntfy.sh", timeout: float = 4.
         headers = {"Title": "Ally safety alert", "Priority": "high", "Tags": "warning"}
         if valid_call_url(join_url):  # tapping the alert (or its button) joins the video call
             headers.update({"Click": join_url, "Actions": f"view, Join the call, {join_url}, clear=true"})
-        req = urllib.request.Request(url, data=text.encode("utf-8"), method="POST", headers=headers)
         try:
+            req = urllib.request.Request(url, data=text.encode("utf-8"), method="POST", headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return 200 <= resp.status < 300
         except Exception:

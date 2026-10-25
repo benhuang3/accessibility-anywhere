@@ -88,11 +88,17 @@ class TrustedContactTests(unittest.TestCase):
         with patch("urllib.request.urlopen", side_effect=OSError("offline")):
             self.assertFalse(contact.ntfy_sender("ally-priya-7f3k29qx")("hello"))
 
+    def test_sender_never_raises_when_building_the_request_fails(self):
+        with patch("urllib.request.Request", side_effect=ValueError("bad request")):
+            self.assertFalse(contact.ntfy_sender("ally-priya-7f3k29qx")("hello"))
+
     def test_message_for_every_kind_is_plain(self):
         for kind in ("remote_access", "scam_popup", "untrusted_site", "payment_field", "unknown"):
             text = contact.message_for(kind)
             self.assertTrue(text.startswith("Ally safety alert:"))
             self.assertNotRegex(text, r"\d")
+            self.assertNotIn("paid", text.lower())
+            self.assertTrue(text.endswith("Ally asked them to stop and wait. Please contact them now."))
 
 
 class CatalogueCloseTests(unittest.TestCase):
@@ -113,17 +119,37 @@ class VideoCallTests(unittest.TestCase):
                                   call=lambda action, args: opened.append((action, args)) or args["url"])
         label, run = offer.extra_action
         self.assertEqual(label, "Call Priya")
-        self.assertEqual(run(), "Calling Priya now. I've sent them the link.")
+        self.assertEqual(run(), "Opening a call with Priya. Hang up on the other caller first.")
         self.assertEqual(opened, [("openUrl", {"url": self.MEET, "newTab": True})])
         self.assertEqual(sent[0][1], self.MEET)
         self.assertIn("join the video call", sent[0][0])
+
+    def test_other_call_notes_ask_the_contact_to_join(self):
+        risk = Risk("scam_popup", "high", "A fake warning page.")
+        offer, _, _ = asked_offer(risk, contact=("Priya", lambda text, url: True, self.MEET),
+                                  call=lambda *args: None)
+        self.assertEqual(offer.extra_action[1](), "Opening a call with Priya. I've asked them to join.")
+
+    def test_failed_call_alert_keeps_the_couldnt_reach_wording(self):
+        offer, _, _ = asked_offer(JOINED, contact=("Priya", lambda text, url: False, self.MEET),
+                                  call=lambda *args: None)
+        self.assertEqual(offer.extra_action[1](), "I couldn't reach Priya. Please give them a call.")
 
     def test_only_known_video_services_over_https_count(self):
         for good in (self.MEET, "https://us02web.zoom.us/j/123", "https://whereby.com/priya"):
             self.assertTrue(contact.valid_call_url(good), good)
         for bad in ("http://meet.google.com/x", "https://meet.google.com.evil.example/x", "javascript:alert(1)",
-                    "https://evil.example/meet.google.com", "", None, "https://" + "a" * 400):
+                    "https://evil.example/meet.google.com", "", None, "https://" + "a" * 400,
+                    "https://user:pass@meet.google.com/x", "https://@meet.google.com/x",
+                    "https://meet.google.com:443/x", "https://meet.google.com:8443/x",
+                    "https://meet.google.com:/x", "https://meet.google.com:bad/x"):
             self.assertFalse(contact.valid_call_url(bad), bad)
+
+    def test_call_links_reject_whitespace_and_control_characters_anywhere(self):
+        for char in (" ", "\t", "\n", "\r", "\x00", "\x1f", "\x7f", "\x85", "\u00a0"):
+            for url in (char + self.MEET, self.MEET + char, "https://meet.google.com/a" + char + "b"):
+                with self.subTest(url=url):
+                    self.assertFalse(contact.valid_call_url(url))
 
     def test_a_bad_call_link_falls_back_to_tell(self):
         offer, _, _ = asked_offer(JOINED, contact=("Priya", lambda text, url="": True, "https://evil.example/x"))

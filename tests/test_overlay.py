@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -326,6 +327,59 @@ class PanelInteractionTests(unittest.TestCase):
         ov._pick(offer.id, "no")
         self.assertEqual(ov._panel.view[0], "card")
 
+    def test_force_render_clears_both_cached_keys_before_rendering(self):
+        ov = self.overlay()
+        ov._card_key = ov._bubble_key = object()
+        keys = []
+        ov._render.side_effect = lambda: keys.append((ov._card_key, ov._bubble_key))
+        ov._force_render()
+        self.assertEqual(keys, [(None, None)])
+
+    def test_extra_result_is_ignored_after_offer_is_answered_cleared_or_replaced(self):
+        for action in ("answer", "clear", "replace", "voice"):
+            with self.subTest(action=action):
+                ov = self.overlay()
+                offer = Offer("Close it?", context="risk")
+                ov.offer(offer)
+                ov._handle(ov._q.get_nowait())
+                release = threading.Event()
+
+                def callback():
+                    release.wait(2)
+                    return "I've sent Priya a message."
+
+                try:
+                    ov._start_extra(offer.id, "Tell Priya", callback)
+                    if action == "answer":
+                        ov._pick(offer.id, "yes")
+                    elif action == "clear":
+                        ov._handle(make_clear_command())
+                    elif action == "voice":
+                        offer.resolve("yes", "voice")
+                    else:
+                        replacement = Offer("Another question?", context="risk")
+                        ov.offer(replacement)
+                        ov._handle(ov._q.get_nowait())
+                    before = ov._panel.view
+                    ov._render.reset_mock()
+                    release.set()
+                    ov._handle(ov._q.get(timeout=2))
+                    self.assertEqual(ov._panel.view, before)
+                    self.assertNotIn(offer.id, ov._extra_done)
+                    ov._render.assert_not_called()
+                finally:
+                    release.set()
+
+    def test_extra_callback_failure_is_queued_as_a_plain_note(self):
+        ov = self.overlay()
+        offer = Offer("Close it?", context="risk")
+        ov.offer(offer)
+        ov._handle(ov._q.get_nowait())
+        with self.assertLogs("ally", level="ERROR"):
+            ov._start_extra(offer.id, "Tell Priya", Mock(side_effect=OSError("offline")))
+            ov._handle(ov._q.get(timeout=2))
+        self.assertEqual(ov._extra_done[offer.id], "That didn't work. Please try again.")
+
 
 class PanelRenderingTests(unittest.TestCase):
     def overlay(self):
@@ -413,6 +467,52 @@ class PanelRenderingTests(unittest.TestCase):
         self.assertIsNotNone(ov._card_win)
         self.assertIsNotNone(ov._offer_win)
         self.assertEqual(ov._offer_win.geometry.call_args.args[0], f"+150+{ov._card_bottom + 12}")
+
+    def test_extra_action_rebuilds_pending_and_final_notes_without_blocking_or_repeating(self):
+        for merged in (True, False):
+            with self.subTest(merged=merged):
+                ov = self.overlay()
+                release, started = threading.Event(), threading.Event()
+                workers = []
+
+                def callback():
+                    workers.append(threading.current_thread())
+                    started.set()
+                    release.wait(2)
+                    return "I've sent Priya a message."
+
+                offer = Offer("Close it?", context="risk")
+                offer.extra_action = ("Tell Priya", callback)
+                if merged:
+                    ov.show_card("Warning.", kind="risk")
+                ov.offer(offer)
+                while not ov._q.empty():
+                    ov._handle(ov._q.get_nowait())
+                run = next(c.kwargs["command"] for c in ov._tk.Button.call_args_list
+                           if c.kwargs["text"] == "Tell Priya")
+                ov._force_render = Mock(wraps=ov._force_render)
+                ov._tk.Button.reset_mock()
+                try:
+                    run()
+                    self.assertTrue(started.wait(2))
+                    self.assertFalse(release.is_set())
+                    self.assertTrue(workers[0].daemon)
+                    self.assertIsNot(workers[0], threading.current_thread())
+                    self.assertEqual(ov._extra_done[offer.id], "Contacting Priya\N{HORIZONTAL ELLIPSIS}")
+                    self.assertEqual(ov._tk.Label.call_args_list[-1].kwargs["text"],
+                                     "Contacting Priya\N{HORIZONTAL ELLIPSIS}")
+                    self.assertNotIn("Tell Priya", [c.kwargs["text"] for c in ov._tk.Button.call_args_list])
+                    run()  # even an already queued click cannot send twice
+                    self.assertEqual(len(workers), 1)
+                    release.set()
+                    result = ov._q.get(timeout=2)
+                    ov._force_render.assert_called_once_with()
+                    self.assertEqual(ov._extra_done[offer.id], "Contacting Priya\N{HORIZONTAL ELLIPSIS}")
+                    ov._handle(result)
+                    self.assertEqual(ov._force_render.call_count, 2)
+                    self.assertEqual(ov._tk.Label.call_args_list[-1].kwargs["text"], "I've sent Priya a message.")
+                finally:
+                    release.set()
 
 
 if __name__ == "__main__":

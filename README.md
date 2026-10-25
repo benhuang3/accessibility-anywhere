@@ -393,7 +393,7 @@ remote-control tools running while a bank page is open, and pages that try to tr
 Local rules check first. If you turn on screen review, AI can look at a flagged screen for a second opinion.
 A calm panel explains the concern and asks before closing a page or remote tool. Tap Yes or No,
 or press Enter / Esc; the current risk prompts cannot hear spoken answers.
-When a remote tool and bank page are open together, Yes waits for a 30-second countdown (`ally/risk/wire.py`).
+When a remote tool and bank page are open together, No (continue) waits for a 30-second countdown; Yes (close) works at once (`ally/risk/wire.py`).
 
 High warnings can also offer Call or Tell a trusted person. With a standing Google Meet link configured,
 Call opens the room in Chrome and sends the helper a phone push with a Join button; Tell sends only the push.

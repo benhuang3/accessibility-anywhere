@@ -199,7 +199,7 @@ class RiskWire:
         return url if contact.valid_call_url(url) else ""
 
     def _tell(self, risk) -> str:
-        """Runs on the overlay thread when the person taps 'Call/Tell <name>'. Returns the line shown in the panel.
+        """Runs in a worker when the person taps 'Call/Tell <name>'. Returns the line shown in the panel.
         With a call link: open the video call here and send the helper a push whose button joins it."""
         name, send = self.contact[0], self.contact[1]
         call_url = self._call_url()
@@ -222,8 +222,9 @@ class RiskWire:
         except Exception:
             log.debug("trusted contact send failed", exc_info=True)
         self.bus.publish("risk_contact", {"name": name, "kind": risk.kind, "ok": ok, "call_opened": opened})
-        if call_url and opened:
-            return f"Calling {name} now. I've sent them the link." if ok else f"I opened the call. {name} didn't get the alert yet."
+        if call_url and opened and ok:
+            next_step = "Hang up on the other caller first." if risk.kind == "remote_access" else "I've asked them to join."
+            return f"Opening a call with {name}. {next_step}"
         return f"I've sent {name} a message." if ok else f"I couldn't reach {name}. Please give them a call."
 
     def _joined(self):
