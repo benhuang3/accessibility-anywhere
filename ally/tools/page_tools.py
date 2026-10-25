@@ -14,6 +14,7 @@ from ..pagekit import picture
 from ..pagekit.core import CLUTTER_KINDS, STEP_ORDER, PageSession, join_said, run_steps, steps_for, summary
 from ..registry import ToolError, tool
 
+POPUP_REASON = "a pop-up is open"  # extension/page/classify.js
 ClutterKind = Literal["cookie", "promo", "chat", "ads", "share", "motion"]
 StepName = Literal["clutter", "menus", "text", "buttons"]
 
@@ -123,6 +124,13 @@ def simplified_mode(ctx, on: bool = True,
         return "Simple mode is off. The page is back to normal."
     session = PageSession(ctx)
     info = session.info
+    if info.get("type") == "excluded" and info.get("reasons") == [POPUP_REASON]:
+        # Only a pop-up is in the way (a consent or sign-up box: CNN, BBC): hide clutter, then look again.
+        session.call("stepOn", step="clutter", opts={"kinds": ["cookie", "promo"]})
+        info = session.call("pageInfo") or {}
+        session.info = info
+        if info.get("type") == "excluded":
+            session.call("stepOff", step="clutter", opts={})
     if info.get("type") == "excluded":
         why = (info.get("reasons") or ["this page shouldn't be changed"])[0]
         return f"I won't simplify this page because {why}. Say 'make it bigger' if you just want it bigger."

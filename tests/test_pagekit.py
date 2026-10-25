@@ -32,7 +32,7 @@ def audit_entry(zoom, text_px=14, vw=1400, overflow=0, sticky=0.1):
 class FakeExtension:
     """The extension's page-step actions on one page, as plain state."""
 
-    def __init__(self, page_type="general", breaks_above=None, buttons_break=False):
+    def __init__(self, page_type="general", breaks_above=None, buttons_break=False, popup=None):
         self.connected = True
         self.focused = True
         self.zoom = 1.0
@@ -45,6 +45,7 @@ class FakeExtension:
         self.buttons_break = buttons_break
         self.calls: list[tuple] = []
         self.simple = {}
+        self.popup = popup  # "cookie": a consent pop-up the clutter step hides; "stuck": one it can't
 
     # ---- the bridge
     def call(self, action, timeout=8.0, **args):
@@ -57,9 +58,12 @@ class FakeExtension:
 
     # ---- actions
     def a_pageInfo(self):
-        return {"tabId": 7, "url": "https://example.test/", "zoom": self.zoom, "defaultZoom": 1.0,
+        info = {"tabId": 7, "url": "https://example.test/", "zoom": self.zoom, "defaultZoom": 1.0,
                 "textScale": self.text_scale,
                 "type": self.page_type, "reasons": ["this page handles payments"] if self.page_type == "excluded" else []}
+        if self.popup == "stuck" or (self.popup == "cookie" and "cookie" not in self.marks.get("clutter", set())):
+            info.update(type="excluded", reasons=["a pop-up is open"])
+        return info
 
     def a_pageBaseline(self, force=False):
         return {"tabId": 7, "zoom": self.zoom, "metrics": audit_entry(self.zoom)}
@@ -328,6 +332,20 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(out.ok, out.error)
         self.assertIn("won't simplify", out.value)
         self.assertEqual(ext.state(), FakeExtension().state())
+
+    def test_simplified_mode_hides_a_consent_popup_first(self):
+        ext = FakeExtension(popup="cookie")
+        out = registry().call("simplified_mode", {}, ctx=Ctx(ext))
+        self.assertTrue(out.ok, out.error)
+        self.assertIn("Simple mode is on", out.text())
+        self.assertIn("cookie", ext.marks.get("clutter", set()))
+
+    def test_simplified_mode_still_refuses_a_popup_it_cannot_hide(self):
+        ext = FakeExtension(popup="stuck")
+        out = registry().call("simplified_mode", {}, ctx=Ctx(ext))
+        self.assertIn("because a pop-up is open", out.text())
+        self.assertNotIn("clutter", ext.marks)  # what it tried is put back
+        self.assertNotIn("ally_clutter", ext.layers)
 
     def test_simplified_mode_general_page(self):
         ext = FakeExtension()

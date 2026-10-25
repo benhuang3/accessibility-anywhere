@@ -163,6 +163,7 @@ STEPS.simple = {
     }
     await simpleMarkDoc(tabId);
     const r = await inPage(tabId, "simple.working", { on: !!on });
+    if (on && r.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, r.delayMs)); // demo pages only
     return { working: !!r.working, said: "" };
   },
 

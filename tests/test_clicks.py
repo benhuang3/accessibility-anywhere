@@ -93,6 +93,12 @@ class MatchTests(unittest.TestCase):
         self.assertIsNone(clicks.careful("Sign in"))
         self.assertIsNone(clicks.careful("Payment options explained"[:0]))
 
+    def test_light_stemming(self):
+        items = [target("c1", "Renew an adult passport"), target("c2", "Apply for a passport")]
+        self.assertEqual(clicks.match("renewing", items, VIEW)["items"][0]["id"], "c1")
+        self.assertEqual(len(clicks.match("passports", items, VIEW, shortest=False)["items"]), 2)
+        self.assertEqual(clicks.label_tokens("Sign in"), ["sign", "in"])
+
     def test_numbers(self):
         self.assertEqual(clicks.parse_number("7"), 7)
         self.assertEqual(clicks.parse_number("twenty three"), 23)

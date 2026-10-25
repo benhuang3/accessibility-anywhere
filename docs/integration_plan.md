@@ -140,6 +140,40 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 06:30 PT — Hayden (via Claude Code) — `main`, merges plus commit `f6793f1`
+
+**Merged into `main` (at Hayden's request):** 1120 tests pass.
+- `benh/os-layer` (Ben): eye scrolling, tab switching and the rest of the branch.
+- `hayden/handsfree-scroll`: the "hands free scrolling" phrases.
+- `uiux` (Ben): Clarity theme and mascot.
+
+`rules.py` help text conflict resolved by keeping both "set up my face" and "scroll with my eyes".
+
+**Fixed:** a frozen black box with a ring appeared next to the live gaze ring. The ring's animation
+thread never handled window messages, so Windows "ghosted" it after about 5 s. It now handles them
+every frame. Checked live for 8 s: the window is not marked hung.
+
+**Ben:** your branches are in `main`; pull before your next push.
+
+### Oct 25, 06:21 PT — Hayden (via Claude Code) — `main`, commit `0f4f587`
+
+**Fixed:** the gaze ring did not appear after the smooth-ring change. `ReleaseDC` had no ctypes
+argtypes, so the 64-bit screen DC handle overflowed on the first frame. The argtypes are now
+declared for `ReleaseDC`, `DeleteDC` and `DeleteObject`. Checked live: the window shows and the
+animation runs.
+
+### Oct 25, 06:17 PT — Hayden (via Claude Code) — `main`, commit `6e10826`
+
+**Fixed:** squint and lean stopped after the face setup. 1094 tests pass.
+- **Lean:** the setup used the full deliberate lean-in (x1.45) as the trigger. The trigger is now
+  40% of that lean, between 1.10 and 1.20.
+- **Squint, personal model:** when unsure, it no longer sets `squint_reliable = False`, which had
+  turned off the default squint detector too.
+- **Squint, regular detector:** a naturally uneven resting face no longer turns squint off. The
+  detector already subtracts each person's left/right difference, so it now checks only that the
+  difference is steady.
+- **Anyone who ran the face setup:** re-run it, or start Ally once (the lean fix applies on load).
+
 ### Oct 25, 06:03 PT — Ganesh (via Claude Code) — `main`, merge of `risk-branch` (`883ce1c` and earlier)
 
 **Changed:** Ally Call (spacecall) and the safety overlay, for the demo.
@@ -221,6 +255,42 @@ tracker tests pass.
 - **Ben:** `uiux` (Clarity theme and mascot) is not merged. When you merge it,
   `test_risk_cooldown` expects the old button color `#7A4100`; the theme uses `#0B57D0`.
 - **Ganesh:** deploy `spacecall/server/src/profile.ts` (steps in the face-setup entry below).
+### Oct 25, 06:25 PT — Hayden (via Claude Code) — branch `hayden/handsfree-scroll` (from `benh/os-layer`), commit `7d9a7c2`
+
+**Added:** "turn on hands free scrolling", "hands-free scrolling" and "turn off / stop hands free
+scrolling" now switch eye scrolling (`eye_scroll`) on and off. Only the two `eye_scroll` rules in
+`ally/rules.py` change, plus a test. **Ben:** this is based on your `benh/os-layer` (eye scrolling is
+not on `main` yet). Merge it into your branch, or I will merge it into `main` after yours lands.
+
+### Oct 25, 05:45 PT — Ben H (via Claude Code) — branch `benh/os-layer`
+
+**Pushed to `benh/os-layer`.** Simplified mode no longer refuses a page just because a consent pop-up is open: it
+hides clutter first and looks again (BBC News now simplifies; this was the CNN open issue, not re-tested).
+`demo/capture_site.py` captures a site four ways for slides; BBC News, Wikipedia and allrecipes captures are on Ben
+H's machine only (`.gitignore`), with READMEs. allrecipes blocks automated browsers: capture it by hand.
+
+### Oct 25, 05:30 PT — Ben H (via Claude Code) — branch `benh/os-layer`
+
+**Pushed to `benh/os-layer`.** "Switch back to facebook" / "go back to my email" now switch tabs by name without the
+word "tab" ("go back", "go back to normal", "switch to dark mode", "go back to the top" keep their meaning; plain
+"go to X" still goes to Claude). Demo page: the story is one sentence and the photo is capped at 300 px, so after
+simple mode the headline, text, button and photo fit on one screen. Demo voice script: "Ally, simple mode", then
+"click show image" (not "show the image", which means the picture viewer).
+
+### Oct 25, 05:00 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commits `eab8109`, `95f78bc`
+
+**Pushed to `benh/os-layer` only (not `main`).**
+- **Tabs (task 6):** "go to the other tab", "next tab", "tab 3", "go to the gmail tab", "list my tabs".
+- **"Show me where to click" (task 7):** "where do I click to sign in" puts a yellow box, arrow and note on the
+  control without clicking; "highlight the menu / the section about X" dims the rest. `docs/tabs_and_pointing.md`.
+- **Eye scrolling (Hayden: please try it with real eyes):** not zoomed in, looking near the bottom or top of the
+  page scrolls; `ally/gaze_scroll.py` only reads `gaze.latest()` (assumed physical screen pixels, as the
+  magnifier uses it). Settings `[gaze] scroll*`; "scroll with my eyes" / "stop scrolling with my eyes".
+- **Demo (Ganesh):** `demo/simple-mode/news.html`, a cluttered cable-news page for the Simplified mode beat
+  (README has the script). Your `demo/news.html` is untouched. Pages with `<meta name="ally-demo">` get two
+  demo-only behaviours: everything tagged `data-demo-clutter` is hidden, and `data-delay-ms` (max 5 s) holds the
+  "Simplifying" card before the reveal. Open it from `localhost`, not `127.0.0.1` (raw IPs trigger `untrusted_site`).
+- Clutter summary wording: "pop-ups and banners". Full run in the Windows VM: 52 modules OK.
 
 ### Oct 25, 03:30 PT — Ben H (via Claude Code) — branch `benh/os-layer` -> `main`, commits `348d419`, `1f9d611`
 

@@ -19,6 +19,7 @@ from .context import Context
 from .habits import HabitMemory
 from .gaze import GazeManager
 from .hotkeys import HotkeyManager
+from .gaze_scroll import EyeScroller
 from .listener import WakeListener
 from .log import EventLog, set_level, setup_logging
 from .macros import Macros
@@ -80,6 +81,7 @@ class Agent:
                                     events=self.events, state=self.state, log_dir=self.paths.log_dir)
         install_voice(self.confirm)
         self.gaze = GazeManager(self)
+        self.eye_scroll = EyeScroller(self)  # look near the bottom or top of a page to scroll (not zoomed in)
         g = self.config.data["gaze"]
         self.platform.set_gaze_source(self.gaze.latest, float(g.get("pan_speed", 0.85)),
                                       float(g.get("max_pan_speed", 0.35)))
@@ -457,6 +459,7 @@ class Agent:
         self.listener.apply()
         self.senses.apply()
         self.gaze.apply()
+        self.eye_scroll.start()
         if self.proactive_cfg().get("enabled", True):
             self.start_proactive()
         threading.Thread(target=self._housekeeping, name="housekeeping", daemon=True).start()
@@ -529,7 +532,7 @@ class Agent:
         if hasattr(self.proactive.voice, "close"):
             extra.append(self.proactive.voice.close)
         for step in (*extra, self.confirm.cancel, self.hotkeys.stop, self.listener.stop, self.senses.stop,
-                     self.gaze.stop, self.speaker.stop, self.platform.shutdown, self.bridge.close_all):
+                     self.eye_scroll.stop, self.gaze.stop, self.speaker.stop, self.platform.shutdown, self.bridge.close_all):
             try:
                 step()
             except Exception:

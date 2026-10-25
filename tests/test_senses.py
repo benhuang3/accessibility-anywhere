@@ -66,6 +66,13 @@ class BaselineTests(unittest.TestCase):
         self.assertTrue(b.squint_why)
         self.assertFalse(Baseline.from_dict(b.to_dict()).squint_reliable)
 
+    def test_a_steady_uneven_face_keeps_squint_sensing(self):
+        # One eye reads narrower at rest (0.42 vs 0.28, as on a real recording). That difference is
+        # subtracted later, so only an unsteady difference may turn squint off.
+        b = Baseline.from_samples([frame(l=0.42, r=0.28) for _ in range(40)], 1.0)
+        self.assertTrue(b.squint_reliable, b.squint_why)
+        self.assertAlmostEqual(b.asym, 0.14, places=3)
+
     def test_rejects_bad_setups(self):
         with self.assertRaisesRegex(ValueError, "only 5 frames"):
             Baseline.from_samples([frame()] * 5, 1.0)

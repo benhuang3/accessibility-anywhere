@@ -136,7 +136,11 @@
       root.replaceChildren(wrap);
     }
     cardTimer = setTimeout(() => removeHost(CARD_ID), CARD_MAX_MS);
-    return { working: true };
+    // A demo page can ask for a pause here, so the audience sees the cluttered page and the card before the reveal:
+    // <meta name="ally-demo" content="simple-mode" data-delay-ms="2500"> (demo/simple-mode).
+    const demo = document.querySelector('meta[name="ally-demo"][data-delay-ms]');
+    const delayMs = demo ? Math.max(0, Math.min(5000, Number(demo.getAttribute("data-delay-ms")) || 0)) : 0;
+    return { working: true, delayMs };
   }
 
   // ------------------------------------------------------------ "Simple mode on · Undo" chip

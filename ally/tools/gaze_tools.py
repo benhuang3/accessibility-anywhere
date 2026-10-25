@@ -61,7 +61,7 @@ def face_setup_words(result: dict, senses: dict | None) -> str:
         return f"{eyes} Face sensing needs another try: {why}"
     if senses.get("squint_enabled"):
         return f"{eyes} Squint sensing is on for you."
-    return f"{eyes} Squint sensing is off for you. Lean and the other signals still work."
+    return f"{eyes} Squint sensing uses the standard check for you. Lean and the other signals work as usual."
 
 
 def _run_face_setup(ctx) -> str:
@@ -190,6 +190,22 @@ def _element_at(info: dict) -> dict | None:
     except Exception:
         return None
 
+
+
+@tool(ai=False)
+def eye_scroll(ctx, on: bool = True):
+    """Scrolling with the eyes when not zoomed in: look near the bottom of a page to scroll down, near the top to
+    scroll up. on=false stops it (until Ally restarts; [gaze] scroll in config.toml keeps it off for good)."""
+    scroller = getattr(ctx.agent, "eye_scroll", None)
+    if scroller is None:
+        raise ToolError("Eye scrolling isn't available.")
+    scroller.on_override = bool(on)
+    if not on:
+        return "Eye scrolling is off. Say scroll with my eyes to turn it back on."
+    if ctx.agent.gaze.status() != "tracking":
+        return ("Eye scrolling is on, but the eye tracker isn't following you yet. "
+                + str(ctx.agent.gaze.problem()))
+    return "Eye scrolling is on. Look near the bottom of the page to scroll down, near the top to scroll up."
 
 @tool
 def where_am_i_looking(ctx):

@@ -9,7 +9,7 @@
 
   // Overlays Ally creates. Never includes Ganesh's #ally-risk-banner: reset must not remove it.
   const HOSTS = ["ally-reader-host", "ally-menu-host", "ally-menu-strip", "ally-simple-chip", "ally-simplifying",
-    "ally-picture-host", "ally-click-host"];
+    "ally-picture-host", "ally-highlight-host", "ally-click-host"];
   const ALLY_IDS = new Set([...HOSTS, "ally-risk-banner"]);
   const CLICKABLE = "a[href], button, input:not([type=hidden]), select, textarea, summary, [role=button], [role=link], [role=menuitem], [role=tab], [onclick]";
   const MAX_TARGETS = 300;

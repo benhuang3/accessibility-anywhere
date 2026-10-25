@@ -20,7 +20,7 @@ const MOTION_CSS = `${MOTION_ON}, ${MOTION_ON} *, ${MOTION_ON} *::before, ${MOTI
 // Spoken names: [one, many].
 const CLUTTER_NAMES = {
   cookie: ["a cookie banner", "cookie banners"],
-  promo: ["a pop-up", "pop-ups"],
+  promo: ["a pop-up", "pop-ups and banners"],
   chat: ["a chat button", "chat buttons"],
   ads: ["an ad", "ads"],
   share: ["a share bar", "share bars"],
