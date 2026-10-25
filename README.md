@@ -124,7 +124,8 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
    it does not get in the way), and **"hide the eye dot"** to remove it. `[gaze] show_dot` remembers
    that, and it is off until you ask.
 4. A yes or no can be answered by looking. Ally shows the choices as large cards (two choices: the
-   left half and the right half). Look at one for a moment.
+   left half and the right half). Look at one for a moment. That look teaches the tracker, using the
+   centre of the card you chose.
 5. Say **"Ally, check my eye tracker"** for the 5 check dots only (about 12 seconds), without a full setup.
 
 The check uses plain words:

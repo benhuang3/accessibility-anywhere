@@ -14,10 +14,10 @@ from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
 from ally import gaze_element
 from ally.doctor import describe_calibration
-from ally.gaze import RETUNE_OFFER, GazeManager, choice_index, ongoing_choice
-from ally.gaze_helper import (LearningStore, RecentFeatures, adopt_model, apply_click, classify_command,
-                              learning_path, load_learning, nearest_click_frame, restore_corrector,
-                              save_learning)
+from ally.gaze import RETUNE_OFFER, GazeManager, choice_center, choice_index, ongoing_choice
+from ally.gaze_helper import (FEATURE_MEMORY, LearningStore, RecentFeatures, adopt_model, apply_choice,
+                              apply_click, classify_command, learning_path, load_learning,
+                              nearest_click_frame, restore_corrector, save_learning)
 from ally.registry import ToolError
 from ally.senses import clickable
 from ally.senses.manager import Senses
@@ -199,9 +199,12 @@ class ClickTests(unittest.TestCase):
         recent = RecentFeatures()
         for t in (0.0, 0.50, 0.85, 1.00, 1.20):
             recent.add(t, [t])
-        self.assertTrue(all(frame[0] >= 0.2 for frame in recent.frames))
+        # The buffer covers a dwell (a few seconds), so these close frames all stay.
+        self.assertGreaterEqual(FEATURE_MEMORY, 2.0)
+        self.assertEqual([frame[0] for frame in recent.frames], [0.0, 0.50, 0.85, 1.00, 1.20])
+        recent.add(0.0 + FEATURE_MEMORY + 0.1, ["later"])
         self.assertNotIn(0.0, [frame[0] for frame in recent.frames])
-        picked = nearest_click_frame(recent.frames, 1.0)
+        picked = nearest_click_frame([(0.0, ["old"]), (0.85, ["look"]), (1.0, ["click"])], 1.0)
         self.assertEqual(picked[0], 0.85)
 
         class Recorder:
@@ -217,6 +220,55 @@ class ClickTests(unittest.TestCase):
         self.assertTrue(apply_click(recorder, frames, 2.0, 8, 9))
         self.assertEqual(recorder.got, (["look"], (8.0, 9.0), 2.0))
         self.assertIsNone(nearest_click_frame([(0.0, ["old"])], 2.0))
+
+    def test_a_settled_look_sends_a_choice_sample(self):
+        screen = (1920, 1080)
+        self.assertEqual(choice_center(screen, 2, 0), (480.0, 540.0))
+        self.assertEqual(choice_center(screen, 2, 1), (1440.0, 540.0))
+        self.assertEqual(choice_center(screen, 4, 3), (1440.0, 810.0))
+        gaze, _agent = manager()
+        stdin = _Stdin()
+        gaze.proc = types.SimpleNamespace(poll=lambda: None, stdin=stdin)
+        for i in range(10):
+            gaze.points.append((10.0 + i * 0.1, 100, 400, 40))
+        clock = {"now": 10.9}
+
+        def sleep(_dt):
+            clock["now"] += 1.0
+
+        self.assertEqual(gaze.choose(["Yes", "No"], timeout=2, clock=lambda: clock["now"], sleep=sleep), "Yes")
+        line = [item for item in stdin.buf.splitlines() if item.startswith("choice ")]
+        self.assertEqual(line, ["choice 10.000 10.900 480.0 540.0"])
+        kind, payload = classify_command(line[0])
+        self.assertEqual(kind, "choice")
+        self.assertEqual(payload, (10.0, 10.9, 480.0, 540.0))
+
+        class _Choice:
+            def __init__(self):
+                self.got = None
+
+            def add(self, features, target, t, source="click"):
+                self.got = (list(features), tuple(target), t, source)
+                return True
+
+        corrector = _Choice()
+        frames = [(10.0, ["start"]), (10.45, ["middle"]), (10.9, ["end"]), (12.0, ["later"])]
+        self.assertTrue(apply_choice(corrector, frames, *payload))
+        self.assertEqual(corrector.got, (["middle"], (480.0, 540.0), 10.45, "choice"))
+        self.assertFalse(apply_choice(corrector, [(1.0, ["old"])], *payload))
+
+        class _NoSource:
+            def __init__(self):
+                self.got = None
+
+            def add(self, features, target, t):
+                self.got = (list(features), tuple(target), t)
+                return True
+
+        plain = _NoSource()
+        self.assertTrue(apply_choice(plain, frames, *payload))
+        self.assertEqual(plain.got[0], ["middle"])
+        self.assertEqual(plain.got[1], (480.0, 540.0))
 
 
 class _Learned:

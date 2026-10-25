@@ -32,6 +32,7 @@ With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This tak
   page. Say "follow my eyes slower" or "follow my eyes faster". That is saved as `[gaze] pan_speed`.
 - A yes or no by looking: Ally shows the choices as large cards. Two choices use the left and right
   halves of the screen. Look at one for about a second. Up to four choices. If you don't settle, Ally says none.
+  That look also teaches the tracker: the features from the dwell, and the centre of the chosen card.
 - "Check my eye tracker": only the 5 check dots, about 10 seconds. Ally re-tunes the saved model
   from those dots (a shift, not a new fit) and says how far off it was before and after.
 - "Set up my eyes" runs the full setup again.

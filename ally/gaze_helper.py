@@ -17,6 +17,8 @@ progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the
 sent anywhere). What that learning has learned is saved next to the calibration, as numbers only,
 at most once a minute and on exit, and restored on start. A new calibration starts fresh.
 "choose {json}" shows 2 to 4 large cards and "choose off" closes them;
+"choice <t0> <t1> <x> <y>" learns from a look that settled on a card (features from that dwell,
+the card centre as the target);
 "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
 "card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds) and
 "card off" closes it. The card also closes itself after seconds. "dot on" / "dot off" show or hide
@@ -318,11 +320,11 @@ def eye_jumped(prev, vector, limit: float = JUMP) -> bool:
 
 CLICK_LAG = 0.1  # people look at a spot, then click; the look is a little earlier than the click
 CLICK_SLACK = 0.25  # ignore a click when no frame is this close to that moment
-FEATURE_MEMORY = 1.0  # seconds of recent feature vectors kept for click correction
+FEATURE_MEMORY = 3.0  # recent feature vectors: a click needs the look just before it, a choice needs the dwell
 
 
 class RecentFeatures:
-    """About one second of feature vectors, so a click can use the look just before it."""
+    """A few seconds of feature vectors, so a click or a look-to-answer can use that look."""
 
     def __init__(self, seconds: float = FEATURE_MEMORY):
         self.seconds = float(seconds)
@@ -349,12 +351,56 @@ def nearest_click_frame(frames, click_time, lag: float = CLICK_LAG, slack: float
     return best
 
 
+def add_sample(corrector, features, target, t, source: str = "click") -> bool:
+    """One learning sample. `source` is sent only when this Corrector.add accepts it."""
+    if corrector is None or not hasattr(corrector, "add"):
+        return False
+    kwargs = {}
+    try:
+        import inspect
+        if "source" in inspect.signature(corrector.add).parameters:
+            kwargs["source"] = source
+    except (TypeError, ValueError):
+        kwargs = {}
+    try:
+        return bool(corrector.add(features, target, float(t), **kwargs))
+    except TypeError:
+        if not kwargs:
+            return False
+        return bool(corrector.add(features, target, float(t)))
+
+
 def apply_click(corrector, frames, t, x, y) -> bool:
     """Teach the corrector from the frame nearest 0.1 s before this click. False if none qualifies."""
     frame = nearest_click_frame(frames, t)
     if frame is None or corrector is None:
         return False
-    return bool(corrector.add(frame[1], (float(x), float(y)), float(t)))
+    return add_sample(corrector, frame[1], (float(x), float(y)), float(t), "click")
+
+
+def apply_choice(corrector, frames, t0, t1, x, y) -> bool:
+    """One choice sample: features from the middle of the dwell, target at the card centre."""
+    if corrector is None:
+        return False
+    try:
+        start, end = float(t0), float(t1)
+    except (TypeError, ValueError):
+        return False
+    if end < start:
+        start, end = end, start
+    picked = []
+    for frame in frames or []:
+        try:
+            stamp = float(frame[0])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if start - 0.05 <= stamp <= end + 0.05:
+            picked.append(frame)
+    if not picked:
+        return False
+    mid = (start + end) / 2.0
+    best = min(picked, key=lambda frame: abs(float(frame[0]) - mid))
+    return add_sample(corrector, best[1], (float(x), float(y)), float(best[0]), "choice")
 
 
 _FEATURE_SETS = ("v1", "v2", "v3", "v4", "v5")
@@ -1759,6 +1805,14 @@ def classify_command(cmd: str) -> tuple[str, object]:
         if cmd.startswith("choose"):
             spec = parse_choose(cmd[6:].strip())
             return ("choose", spec) if spec else ("ignore", None)
+        if cmd.startswith("choice "):
+            parts = cmd.split()
+            if len(parts) != 5:
+                return "ignore", None
+            try:
+                return "choice", (float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4]))
+            except ValueError:
+                return "ignore", None
         if cmd.startswith("click "):
             parts = cmd.split()
             if len(parts) != 4:
@@ -2239,6 +2293,10 @@ def main(argv: list[str]) -> int:
                     recent = RecentFeatures()
             elif kind == "click" and corrector is not None and calib is None:
                 if apply_click(corrector, recent.frames, payload[0], payload[1], payload[2]):
+                    learning.mark()
+            elif kind == "choice" and corrector is not None and calib is None:
+                t0, t1, x, y = payload
+                if apply_choice(corrector, recent.frames, t0, t1, x, y):
                     learning.mark()
             elif kind == "hud_off":
                 if hud:
