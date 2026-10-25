@@ -140,6 +140,43 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 19:15 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `dd26242`
+
+**Committed (local, not pushed yet):** Windows OS-layer fixes, the reading card and an OS-only test harness. **Not merged.**
+Branch also has `hayden/bus-fixes` and `benjamin-w/voice-integration` merged in (change log only
+conflict). Tests: the AGENTS.md suite plus `test_senses`, `test_os_layer`, `test_ui_text`,
+`test_win_uia` pass on macOS. **Not yet run on Windows**; that's next, in a Parallels VM.
+
+**Changed:**
+- **UI Automation threading (`ally/platforms/win_uia.py`):** every tool runs on a new thread, and
+  the shared COM object was used from threads that never set up COM, so `focused_element()` likely
+  returned `None` inside the agent. All UIA calls now run on one worker thread (multithreaded
+  apartment) with a 2 s timeout; a hung app gets a fresh worker instead of a frozen tool.
+- **No corner zoom:** an element UIA can't place, `(0, 0, 0, 0)`, is no longer treated as a box.
+- **DPI (`windows.py`):** per-monitor DPI awareness when the adapter starts, not only when the
+  magnifier first runs, so UIA boxes, the cursor and the magnifier agree on 150%/200% displays.
+- **Reading card (Tier B):** `ally/card_helper.py` (Tk, its own process) + `ally/platforms/cards.py`.
+  `show_text_overlay(box, text)` / `clear_text_overlays()` now work on Windows and macOS: a big
+  card just below (or above) the box, Close button and Esc.
+- **Native rewrite:** `enlarge_text(goal="...")` writes into the focused native text box via UIA
+  when it's editable and holds 200 characters or less (a ValuePattern replaces the whole value,
+  i.e. a whole document in an editor). The old text is kept; `restore_ui_text` and `reset_all` put it
+  back. Anything else gets the reading card.
+- **`scripts/os_lab.py`:** tests only the OS layer (no agent, server, port 8765, Claude, senses,
+  voice or risk). `--auto` changes nothing on screen; the default asks y/n after each visible step.
+  **`scripts/win_setup.ps1`:** copies the repo off the Parallels `\\Mac` share, installs Python and
+  the 4 OS packages, runs the lab.
+
+**For others:**
+- **Ganesh:** `Platform.show_text_overlay` is the hook for your overlay. If `ally/overlay/` should
+  draw reading cards instead, replace `self.cards` in `windows.py`/`macos.py`; the tool side
+  (`enlarge_text`, `restore_ui_text`, `reset_all`) doesn't change.
+- **Hayden:** the agent process is now DPI-aware on Windows from the start. Your gaze helper already
+  was; the senses input helper (pynput) isn't, so its click x/y may be scaled on a 150% display.
+- **Your notes for me (18:35 entry):** read, not done yet. Next on my list: the `Target.from_dict`
+  guard, one confidence gate, `senses.answer()` on `offer_result`, and wiring `enlarge_text` in as an
+  accommodation.
+
 ### Oct 24, 19:10 PT — Ben W (via Claude Code) — branch `benjamin-w/voice-integration`, plan only
 
 **Changed:** this file only (the "Voice layer v2: plan" section above). No code yet.
