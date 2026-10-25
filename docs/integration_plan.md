@@ -140,6 +140,31 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 21:05 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `01d34a0`
+
+**Changed:** live gaze points are now steady.
+- **Live testing found the gaze dot jumping.** Single frames are much noisier than the per-target
+  medians the evaluator reported: median 128 px error, and 10% of frames off by more than 274 px,
+  with jumps of about 60 px between frames.
+- **New `gaze_model.GazeSmoother`, used for the camera helper's gaze points:** it holds a fixation
+  steady, ignores single stray frames, and moves only when 3 frames agree. That feeds the gaze dot,
+  the magnifier following the eyes, and `target()`.
+- **Evaluator:** `ally.gaze_eval` now reports per-frame error, jitter, spread and settle time.
+- **Tests:** 437 pass.
+
+**Medians over 5 recordings, right after calibration:**
+
+| Method | Error (typical / worst 10%) | Movement per frame | Spread while looking at one dot | Settle |
+| --- | --- | --- | --- | --- |
+| Old One Euro filter | 152 / 293 px | 38 px | 54 px | 192 ms |
+| New smoother | 147 / 330 px | 0.1 px | 2 px | 91 ms |
+
+**Not fixed:** accuracy. A steady wrong point stays wrong; the worst 10% got a little worse.
+
+**In progress:** a benchmark of the open-source MobileGaze model (MIT, ONNX, 12–48 ms per frame on
+this CPU) against ours, on the user's own face. Research is summarized in the next entry once the
+benchmark has run.
+
 ### Oct 24, 20:25 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `f4292fc`
 
 **Fixed:** offline phrase rules for the gaze dot and the eye-follow speed. Without an API key the
