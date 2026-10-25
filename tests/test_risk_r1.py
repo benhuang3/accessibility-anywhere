@@ -56,7 +56,7 @@ class TextScoreTests(unittest.TestCase):
 
     def test_high_requires_phone_and_alarm(self):
         self.check_score("Windows virus call now bitcoin", 7, "medium")
-        self.check_score("Windows call now 1-800-555-0100", 8, "medium")
+        self.check_score("Windows call now 1-800-555-0100", 8, None)   # no scare: ordinary support pages look like this
 
     def test_allowlist_preserves_score(self):
         # On Microsoft's own site "Microsoft" is not a brand claim, so the score drops by the brand's 2 points.

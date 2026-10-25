@@ -1,0 +1,143 @@
+{
+  "rows": [
+    {
+      "id": "s1 fake virus alert",
+      "kind": "scam",
+      "rules": true,
+      "agent": true,
+      "verdict": "scam",
+      "confidence": 0.97,
+      "explanation": "This is a fake warning trying to scare you into calling a number so someone can take money or control of your computer. Do not call the number. Close this page now, and if it will not close, press Ctr",
+      "rules_ok": true,
+      "agent_ok": true
+    },
+    {
+      "id": "s2 lookalike bank sign-in",
+      "kind": "scam",
+      "rules": true,
+      "agent": true,
+      "verdict": "scam",
+      "confidence": 0.95,
+      "explanation": "This page is trying to trick you into typing your card number and PIN so someone else can take your money. A real bank never asks for your PIN this way. Please do not type anything here; close this pa",
+      "rules_ok": true,
+      "agent_ok": true
+    },
+    {
+      "id": "s3 official arrest threat",
+      "kind": "scam",
+      "rules": false,
+      "agent": true,
+      "verdict": "scam",
+      "confidence": 0.97,
+      "explanation": "This page falsely claims you will be arrested and demands payment in gift cards or Bitcoin. Real tax agencies do not do this, so please close this page and do not pay or call the number.",
+      "rules_ok": false,
+      "agent_ok": true
+    },
+    {
+      "id": "s4 remote access invite",
+      "kind": "scam",
+      "rules": false,
+      "agent": true,
+      "verdict": "scam",
+      "confidence": 0.97,
+      "explanation": "This page is trying to get you to let a stranger control your computer and to hide the reason you're taking out cash, which is how scammers steal savings. Please do not download the tool, and close th",
+      "rules_ok": false,
+      "agent_ok": true
+    },
+    {
+      "id": "s5 refund overpayment",
+      "kind": "scam",
+      "rules": false,
+      "agent": true,
+      "verdict": "scam",
+      "confidence": 0.95,
+      "explanation": "This page says you were charged by mistake and pushes you to phone a number right away and leave your screen open for someone to control. This is a common trick to steal money or access your computer.",
+      "rules_ok": false,
+      "agent_ok": true
+    },
+    {
+      "id": "s6 scam with injected instructions",
+      "kind": "scam",
+      "rules": true,
+      "agent": true,
+      "verdict": "scam",
+      "confidence": 0.97,
+      "explanation": "This looks like a fake warning designed to frighten you into calling a scammer. Windows does not lock up with a phone number like this. Please close this window and do not call the number.",
+      "rules_ok": true,
+      "agent_ok": true
+    },
+    {
+      "id": "b1 news about tech-support scams",
+      "kind": "safe",
+      "rules": false,
+      "agent": false,
+      "verdict": "(not asked)",
+      "confidence": null,
+      "explanation": "",
+      "rules_ok": true,
+      "agent_ok": true
+    },
+    {
+      "id": "b2 bank help page",
+      "kind": "safe",
+      "rules": true,
+      "agent": false,
+      "verdict": "safe",
+      "confidence": 0.8,
+      "explanation": "",
+      "rules_ok": false,
+      "agent_ok": true
+    },
+    {
+      "id": "b3 small shop checkout",
+      "kind": "safe",
+      "rules": true,
+      "agent": false,
+      "verdict": "safe",
+      "confidence": 0.8,
+      "explanation": "",
+      "rules_ok": false,
+      "agent_ok": true
+    },
+    {
+      "id": "b4 consumer advice page",
+      "kind": "safe",
+      "rules": false,
+      "agent": false,
+      "verdict": "safe",
+      "confidence": 0.9,
+      "explanation": "",
+      "rules_ok": true,
+      "agent_ok": true
+    },
+    {
+      "id": "b5 recipe blog",
+      "kind": "safe",
+      "rules": false,
+      "agent": false,
+      "verdict": "(not asked)",
+      "confidence": null,
+      "explanation": "",
+      "rules_ok": true,
+      "agent_ok": true
+    },
+    {
+      "id": "b6 dentist contact page",
+      "kind": "safe",
+      "rules": false,
+      "agent": false,
+      "verdict": "(not asked)",
+      "confidence": null,
+      "explanation": "",
+      "rules_ok": true,
+      "agent_ok": true
+    }
+  ],
+  "spend": {
+    "calls_today": 9,
+    "daily_cap": 200,
+    "calls_this_hour": 9,
+    "input_tokens_today": 18617,
+    "output_tokens_today": 2277
+  }
+}

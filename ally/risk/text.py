@@ -154,8 +154,10 @@ def score_text(text: str, url: str = "", overlay_text: str = "", fullscreen: boo
         if (score >= 7 and "phone" in signals and "alarm" in signals
                 and ("brand" in signals or "fullscreen" in signals or overlay_hit)):
             severity = "high"
-        elif score >= 4 and len(signals) >= 2:
-            # One signal alone (a contact number on a help page) is not a scam.
+        elif score >= 4 and len(signals) >= 2 and "alarm" in signals:
+            # A scare (virus, locked, "do not close") is the core of these pages: every scam case in the eval has one,
+            # while a 500-site sweep showed brand + phone + "gift card" or "contact support" on ordinary homepages.
+            # Scams without a scare (refunds, remote-access pressure) go through the weak-sign gate and the model.
             severity = "medium"
     evidence = "Page signals: " + ", ".join(phrases) + "." if phrases else "No page signals."
     return TextScore(score, severity, tuple(signals), evidence, allowed)
