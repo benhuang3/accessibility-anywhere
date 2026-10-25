@@ -6,7 +6,8 @@ import threading
 import time
 
 from ally.contracts import EventBus, Offer, Risk
-from . import actions, domains, fields, joined, process, text
+from . import actions, behavior, domains, fields, joined, process, soft, text
+from .guardian import Evidence
 
 log = logging.getLogger("ally")
 _ORDER = ("scam_popup", "remote_access", "untrusted_site", "payment_field")
@@ -24,6 +25,7 @@ def _page(page) -> dict:
              for key in ("url", "text", "overlay_text")}
     clean.update({key: page.get(key) is True for key in ("fullscreen", "has_tel_link")})
     clean["fields"] = page.get("fields") if isinstance(page.get("fields"), list) else []
+    clean["signals"] = page.get("signals") if isinstance(page.get("signals"), dict) else {}
     return clean
 
 
@@ -58,6 +60,10 @@ def _scan(page: dict, remote_session: bool = False) -> list[Risk]:
     if payment.severity:
         risks.append(Risk("payment_field", payment.severity, _evidence(payment.evidence), url,
                           source="risk.fields"))
+    return _sorted(risks)
+
+
+def _sorted(risks: list) -> list:
     return sorted(risks, key=lambda r: (r.severity != "high", _ORDER.index(r.kind)))
 
 
@@ -82,12 +88,20 @@ class Deduper:
             self._seen[key] = now
             return True
 
+    def forget(self, risk) -> None:
+        with self._lock:
+            self._seen.pop((domains.host_of(risk.url) if risk.url else risk.app, risk.kind), None)
+
 
 class RiskWire:
     def __init__(self, bus: EventBus, snapshot_fn=process.snapshot_processes,
                  poll_seconds=10.0, clock=time.time, deduper=None, ask=None, call=None,
-                 broadcast=None, kill=actions._kill):
+                 broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None):
         self.bus = bus
+        self.guardian = guardian        # second opinion from a vision model (consent and budget live inside it)
+        self.highlight = highlight      # unused here; marks go to the offer so the overlay draws them
+        self.screen_size = screen_size  # () -> (width, height) of the screenshot the guardian saw
+        self._marks = {}
         self.ask = ask
         self.call = call
         self.broadcast = broadcast
@@ -129,7 +143,9 @@ class RiskWire:
 
         def ask_and_act():
             try:
-                offer = Offer(prompt, context="risk", reason=risk, timeout=20.0)
+                with self._lock:
+                    box = self._marks.pop(key, None)
+                offer = Offer(prompt, context="risk", reason=risk, timeout=20.0, highlight=box)
                 if self.ask(offer) == "yes" and not self._stop.is_set():
                     ok = actions.perform(action_id, risk, self.call,
                                          snapshot=self.snapshot_fn, kill=self.kill)
@@ -161,6 +177,10 @@ class RiskWire:
             return
         with self._lock:
             risks = _scan(page, bool(joined.running_tools(self._snapshot)))
+            beh = behavior.behavior_flags(page["signals"])
+            if beh.suspicious:
+                risks = _sorted(risks + [Risk("scam_popup", "medium", beh.evidence, page["url"],
+                                              source="risk.behavior")])
             self.last_page.update(url=page["url"],
                                   card_present=fields.detect_card_fields(page["fields"]).present)
             if any(r.kind == "scam_popup" for r in risks):
@@ -168,8 +188,73 @@ class RiskWire:
             combined = self._joined()
             candidates = ([combined] if combined else []) + risks
             chosen = next((r for r in candidates if self.deduper.fresh(r)), None)
+            tools = joined.running_tools(self._snapshot)
+        extra, provisional = (), False
+        if chosen is None and self.guardian is not None and not text.is_allowlisted(page["url"]):
+            # Nothing hard enough to warn on. A few weak signs still earn a look, and only a confirmed scam warns.
+            phone = "phone" in text.score_text(page["text"], page["url"], page["overlay_text"], False,
+                                               page["has_tel_link"]).signals
+            extra = soft.soft_flags(page["text"], phone)
+            if soft.soft_gate(extra):
+                candidate = Risk("scam_popup", "medium", "This page has several warning signs.", page["url"],
+                                 source="risk.soft")
+                if self.deduper.fresh(candidate):
+                    chosen, provisional = candidate, True
+        if chosen and self.guardian is not None:
+            before = chosen
+            chosen = self._second_opinion(chosen, page, risks, beh, tools, extra, provisional)
+            if chosen is None and provisional:
+                self.deduper.forget(before)
         if chosen:
             self.bus.publish("risk", chosen)
+
+    def _second_opinion(self, chosen, page, risks, beh, tools, extra=(), provisional=False):
+        """Ask the vision model. The local rules stay the floor: it can add an explanation, raise a
+        medium warning to high, or hide a medium one it is sure is harmless, never hide a high one."""
+        sources = {r.source for r in risks}
+        flags = [name for name, source in (("scam_text", "risk.text"), ("lookalike", "risk.domain"),
+                                           ("card_fields", "risk.fields")) if source in sources]
+        flags += [f for f in (*beh.flags, *extra) if f not in flags]
+        if page["fullscreen"] and "fullscreen" not in flags:
+            flags.append("fullscreen")
+        if tools:
+            flags.append("remote_tools")
+        try:
+            verdict = self.guardian.review(Evidence(chosen.url or page["url"], tuple(flags), page["text"][:1500],
+                                                    tuple(tools), chosen.kind))
+        except Exception:
+            log.debug("guardian review failed", exc_info=True)
+            return chosen
+        if provisional and (verdict is None or verdict.verdict == "safe"):
+            return None  # weak signs plus no confirmation: stay quiet
+        if verdict is None:
+            return chosen
+        if verdict.verdict == "safe":
+            return None if chosen.severity != "high" and verdict.confidence >= 0.8 else chosen
+        severity = "high" if (verdict.verdict == "scam" and verdict.confidence >= 0.6) else chosen.severity
+        upgraded = Risk(chosen.kind, severity, _evidence(verdict.explanation) or chosen.evidence, chosen.url,
+                        chosen.app, "risk.guardian")
+        self._keep_marks(upgraded, verdict)
+        return upgraded
+
+    def _keep_marks(self, risk, verdict) -> None:
+        """Remember where on the screen the model saw the red flag, for the offer's highlight."""
+        if not verdict.evidence or self.screen_size is None:
+            return
+        try:
+            width, height = self.screen_size()
+            x, y, w, h = verdict.evidence[0].box
+            box = (int(x * width), int(y * height), max(8, int(w * width)), max(8, int(h * height)))
+        except Exception:
+            return
+        with self._lock:
+            if len(self._marks) > 20:
+                self._marks.clear()
+            self._marks[(domains.host_of(risk.url), risk.kind)] = box
+
+    def info(self) -> dict:
+        guardian = self.guardian
+        return {"second_opinion": guardian is not None, "budget": guardian.budget.snapshot() if guardian else None}
 
     def poll_once(self) -> None:
         try:
@@ -228,12 +313,53 @@ class RiskWire:
             thread.join(timeout=0.5)
 
 
+def _make_guardian(agent):
+    """The vision second opinion, off until the user turns on [risk] screen_review in config.toml."""
+    from .guardian import Budget, Guardian
+
+    def cfg() -> dict:
+        try:
+            return agent.config.data.get("risk", {}) or {}
+        except Exception:
+            return {}
+
+    size = {"wh": (1920, 1080)}
+
+    def shot():
+        from ally.platforms.base import png_to_jpeg_if_possible
+
+        png = agent.platform.screenshot_png()
+        try:
+            import io
+            from PIL import Image
+
+            size["wh"] = Image.open(io.BytesIO(png)).size
+        except Exception:
+            pass
+        return png_to_jpeg_if_possible(png)
+
+    budget = Budget(daily_calls=int(cfg().get("daily_calls", 50)), max_per_hour=int(cfg().get("hourly_calls", 20)),
+                    state_path=agent.paths.state_dir / "guardian_budget.json")
+
+    def allowed() -> bool:
+        return bool(cfg().get("screen_review", False)) and agent.brain.mode() != "offline"
+
+    model = (getattr(agent.brain, "cfg", {}) or {}).get("model", "claude-haiku-5-5")
+    return Guardian(screenshot=shot, budget=budget, consented=allowed, model=model), (lambda: size["wh"])
+
+
 def attach(agent) -> RiskWire:
     bridge = getattr(agent, "bridge", None)
     proactive = getattr(agent, "proactive", None)
+    guardian, screen_size = None, None
+    try:
+        guardian, screen_size = _make_guardian(agent)
+    except Exception:
+        log.debug("risk second opinion unavailable", exc_info=True)
     wire = RiskWire(agent.bus, ask=getattr(proactive, "ask", None),
                     call=getattr(bridge, "call", None),
-                    broadcast=getattr(bridge, "broadcast", None))
+                    broadcast=getattr(bridge, "broadcast", None),
+                    guardian=guardian, screen_size=screen_size)
     if hasattr(bridge, "on_page"):
         bridge.on_page = wire.on_page
     wire.start()

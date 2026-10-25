@@ -270,6 +270,7 @@ class Agent:
             "gaze": self.gaze.info(),
             "senses": self.senses.info(),
             "proactive": dict(self.proactive.status(), overlay=bool(self.overlay)),
+            "risk": self.risk.info() if self.risk else None,
             "screen": {"magnify": self.platform.magnify_level, "color": self.platform.color},
             "config": {"error": self.config.error, "errors": self.config.errors, "warnings": self.config.warnings},
             "plugins": {"folder": str(self.plugins.folder), "errors": self.plugins.errors},

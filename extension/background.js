@@ -583,8 +583,8 @@ async function handlePopup(msg) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.kind === "pageRisk") {
     // From extension/risk.js: pass the page to the agent over the existing bridge.
-    const { url, title, text, fields, overlay_text, fullscreen, has_tel_link } = msg;
-    sendResponse({ ok: send({ type: "event", name: "page", url, title, text, fields, overlay_text, fullscreen, has_tel_link }) });
+    const { url, title, text, fields, overlay_text, fullscreen, has_tel_link, signals } = msg;
+    sendResponse({ ok: send({ type: "event", name: "page", url, title, text, fields, overlay_text, fullscreen, has_tel_link, signals }) });
     return false;
   }
   if (!msg || msg.kind !== "popup") return false;

@@ -1,8 +1,15 @@
 """Plain warning wording for the proactive coordinator."""
 
 
+_GUARDIAN_TITLES = {"high": "This looks like a scam.", "medium": "Please be careful with this page."}
+
+
 def warning_for(risk) -> tuple[str, str]:
     try:
+        if risk.source == "risk.guardian" and risk.evidence:
+            # The vision model's own plain-language explanation, already redacted and length-capped.
+            title = _GUARDIAN_TITLES.get(risk.severity, _GUARDIAN_TITLES["medium"])
+            return f"{title} {risk.evidence}", risk.evidence
         from . import copy as warning_copy
         from . import domains
 
