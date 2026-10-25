@@ -18,7 +18,7 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
 // Page steps (docs/page_steps.md). Each file is loaded on its own so one broken step can't stop the extension.
 for (const file of ["steps/core.js", "steps/classify.js", "steps/clutter.js", "steps/menus.js", "steps/enlarge.js",
-  "steps/simple.js", "steps/fix.js", "steps/picture.js", "steps/clicks.js"]) {
+  "steps/simple.js", "steps/fix.js", "steps/picture.js", "steps/clicks.js", "steps/highlight.js"]) {
   try {
     importScripts(file);
   } catch (e) {
@@ -324,6 +324,23 @@ function toggleReader(on, fontPx, customTitle, customText) {
   globalThis.__allyReaderClose = close;
   wrap.focus();
   return true;
+}
+
+// Scrolls what the user is reading: the scrollable box in the middle of the window (web apps like Gmail scroll
+// an inner box, not the page), else the page. Returns how far it moved and whether it hit an end.
+function scrollByScreens(screens) {
+  let box = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+  while (box && box !== document.body && box !== document.documentElement) {
+    const cs = getComputedStyle(box);
+    if (/(auto|scroll|overlay)/.test(cs.overflowY) && box.scrollHeight > box.clientHeight + 4) break;
+    box = box.parentElement;
+  }
+  const page = !box || box === document.body || box === document.documentElement;
+  const el = page ? document.scrollingElement || document.documentElement : box;
+  const before = el.scrollTop;
+  el.scrollBy({ top: Math.round((page ? innerHeight : el.clientHeight) * screens), behavior: "instant" });
+  const moved = el.scrollTop - before;
+  return { moved: Math.round(moved), atEnd: Math.abs(moved) < 1, box: page ? "page" : "inner" };
 }
 
 function scrollPage(direction, amount) {
@@ -741,6 +758,54 @@ const ACTIONS = {
     const tab = await resolveTab(args);
     const direction = args.direction === "out" ? "out" : "in";
     return await withTab(tab.id, () => inPage(tab.id, "picture.zoom", { direction, closeAtFit: !!args.closeAtFit }));
+  },
+  // Eye scrolling (ally/gaze_scroll.py): where the page is on the screen, and scrolling by part of a screen.
+  async viewport(args = {}) {
+    const tab = await resolveTab(args);
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => ({ screenX, screenY, outerW: outerWidth, outerH: outerHeight, innerW: innerWidth, innerH: innerHeight,
+        dpr: devicePixelRatio || 1 }),
+    });
+    return { ...(r && r.result), zoom: await chrome.tabs.getZoom(tab.id) };
+  },
+  async scrollBy(args = {}) {
+    const tab = await resolveTab(args);
+    const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: scrollByScreens,
+      args: [clamp(Number(args.screens) || 0, -3, 3)] });
+    return r ? r.result : null;
+  },
+  // Tabs (docs/tabs_and_pointing.md): every normal window's tabs, and the most-recently-used order.
+  async tabList() {
+    const current = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => null);
+    const tabs = await chrome.tabs.query({ windowType: "normal" });
+    const { recentTabs = [] } = await chrome.storage.session.get("recentTabs");
+    const out = tabs.map((t) => ({ id: t.id, index: t.index, title: t.title || "", url: t.url || "", active: t.active,
+      windowId: t.windowId, current: !!current && t.windowId === current.id }));
+    console.debug("Ally: tabList", out.length, "tabs");
+    return { tabs: out, recent: recentTabs.filter((id) => out.some((t) => t.id === id)) };
+  },
+  async tabSwitch({ tabId }) {
+    const tab = await chrome.tabs.update(Number(tabId), { active: true });
+    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    await rememberTab(tab.id).catch(() => {});
+    console.debug("Ally: tabSwitch", tab.id, tab.title);
+    return { id: tab.id, title: tab.title || "", url: tab.url || "" };
+  },
+  // "Show me where to click" / "highlight the menu" (steps/highlight.js).
+  async highlightFind(args = {}) {
+    const tab = await resolveTab(args);
+    const out = await withTab(tab.id, () => inPage(tab.id, "highlight.find", { max: Number(args.max) || 400 }));
+    console.debug("Ally: highlightFind", out.items.length, "items");
+    return { tabId: tab.id, ...out };
+  },
+  async highlightShow(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, () => STEPS.highlight.on(tab.id, args));
+  },
+  async highlightClear(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, () => STEPS.highlight.off(tab.id));
   },
   async pictureOutline(args = {}) {
     const tab = await resolveTab(args);

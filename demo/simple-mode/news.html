@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Opt in: Ally's clutter step also removes everything tagged data-demo-clutter on this page (demo only). -->
+<meta name="ally-demo" content="simple-mode" data-delay-ms="5000">
+<title>Heartwarming: Dog and Cat are best friends | Ledger News</title>
+<link rel="stylesheet" href="news.css">
+</head>
+<body>
+  <!-- A deliberately overwhelming (fictional) cable-news style page for the Simplified mode demo. Say "Ally, simple
+       mode". Every distracting piece is tagged data-demo-clutter="<kind>": banner, animation, popup, toast, ad,
+       cookie, chat, share, promo or menu (menus are hidden too; Ally's menu keeps their links). Blinking stays at or
+       under 1 per second (well below the 3 per second photosensitivity limit). -->
+
+  <!-- Other news sites, along the very top -->
+  <div class="network" data-demo-clutter="banner">
+    <span class="network-label">AROUND THE WEB</span>
+    <a href="#w1"><img src="photo-city.jpg" alt="">Metro Times: City budget vote tonight</a>
+    <a href="#w2"><img src="photo-storm.jpg" alt="">WeatherNow: Storm watch for the coast</a>
+    <a href="#w3"><img src="photo-game.jpg" alt="">SportsDaily: Late goal stuns fans</a>
+    <a href="#w4"><img src="photo-market.jpg" alt="">MoneyWire: Markets open higher</a>
+    <a href="#w5"><img src="photo-space.jpg" alt="">SciPost: New moon photos released</a>
+  </div>
+
+  <div class="terms" data-demo-clutter="banner">
+    ⚠ We've updated our Terms of Use and Privacy Policy. By continuing to use this site you accept the updated terms.
+    <a href="#terms">Read the changes</a> <button type="button">OK</button>
+  </div>
+
+  <header class="top">
+    <div class="bar" data-demo-clutter="menu">
+      <button class="burger" type="button" aria-label="Open the full menu">☰</button>
+      <span class="logo">LN</span><span class="logo-name">Ledger News</span>
+      <nav class="mega" aria-label="Sections">
+        <ul>
+          <li class="has-sub"><a href="#us">US ▾</a>
+            <ul class="sub"><li><a href="#crime">Crime + Justice</a></li><li><a href="#energy">Energy</a></li>
+              <li><a href="#weather">Weather</a></li><li class="has-sub"><a href="#regions">Regions ▸</a>
+                <ul class="sub sub2"><li><a href="#ne">Northeast</a></li><li><a href="#south">South</a></li>
+                  <li><a href="#midwest">Midwest</a></li><li><a href="#west">West</a></li></ul></li></ul></li>
+          <li class="has-sub"><a href="#world">World ▾</a>
+            <ul class="sub"><li><a href="#africa">Africa</a></li><li><a href="#americas">Americas</a></li><li><a href="#asia">Asia</a></li>
+              <li><a href="#europe">Europe</a></li><li><a href="#mideast">Middle East</a></li></ul></li>
+          <li class="has-sub"><a href="#politics">Politics ▾</a>
+            <ul class="sub"><li><a href="#congress">Congress</a></li><li><a href="#courts">Courts</a></li><li><a href="#polls">Polls</a></li></ul></li>
+          <li class="has-sub"><a href="#business">Business ▾</a>
+            <ul class="sub"><li><a href="#markets">Markets</a></li><li><a href="#tech">Tech</a></li><li><a href="#media">Media</a></li></ul></li>
+          <li><a href="#health">Health</a></li><li><a href="#ent">Entertainment</a></li><li><a href="#style">Style</a></li>
+          <li><a href="#travel">Travel</a></li><li><a href="#sports">Sports</a></li>
+          <li class="has-sub"><a href="#more">More ▾</a>
+            <ul class="sub cols"><li><a href="#science">Science</a></li><li><a href="#climate">Climate</a></li>
+              <li><a href="#weather2">Weather</a></li><li><a href="#ukraine">World desk</a></li><li><a href="#photos">Photos</a></li>
+              <li><a href="#video">Videos</a></li><li><a href="#podcasts">Podcasts</a></li><li><a href="#games">Games</a></li>
+              <li><a href="#about">About us</a></li><li><a href="#newsletters">Newsletters</a></li><li><a href="#work">Work for us</a></li></ul></li>
+        </ul>
+      </nav>
+      <span class="bar-right">
+        <a href="#watch" class="watch">▶ Watch</a><a href="#listen">🎧 Listen</a><a href="#live" class="live-tv">● Live TV</a>
+        <span class="bell" data-demo-clutter="animation">🔔<span class="count">9</span></span>
+        <a href="#subscribe" class="subscribe">Subscribe</a><a href="#signin">Sign in</a><span>🔍</span>
+      </span>
+    </div>
+  </header>
+
+  <div class="breaking" data-demo-clutter="banner">
+    <span class="breaking-tag blink">BREAKING</span>
+    <span class="breaking-track">Officials announce new bridge repairs &nbsp;|&nbsp; Storm watch issued for coastal towns
+      &nbsp;|&nbsp; Markets open higher on jobs report &nbsp;|&nbsp; Late goal sends home team to the final</span>
+  </div>
+
+  <div class="leader" aria-label="Advertisement" data-ad-slot="top-leaderboard" data-demo-clutter="ad">
+    <span class="ad-tag">Advertisement</span>
+    <img src="photo-car.jpg" alt=""><strong>THE ALL-NEW ROADSTER</strong>&nbsp;Zero down. Drive it home this weekend.
+    <span class="ad-fb">Ad Feedback</span>
+  </div>
+
+  <div class="layout">
+    <main>
+      <div class="hero-grid" data-demo-clutter="promo">
+        <a href="#h1" class="hero"><img src="photo-storm.jpg" alt=""><span class="hero-tag live-dot">LIVE UPDATES</span>
+          Storm watch: what to know tonight</a>
+        <a href="#h2"><img src="photo-city.jpg" alt="">City council approves bridge repairs</a>
+        <a href="#h3"><img src="photo-market.jpg" alt="">Markets rally on jobs report</a>
+        <a href="#h4"><img src="photo-space.jpg" alt="">Moon photos show new detail</a>
+      </div>
+
+      <div class="disclaimer" data-demo-clutter="banner">Ledger News may receive a commission when you buy through
+        links on this page. Content in "Paid partner" boxes is not produced by our newsroom.</div>
+
+      <div class="story">
+        <div class="kicker">Pets <span class="hot" data-demo-clutter="animation">🔥 TRENDING</span></div>
+        <h1>Heartwarming: Dog and Cat are best friends</h1>
+        <div class="byline">By Maria Alvarez, Ledger News · Updated 6:02 AM EDT, Sat Oct 25, 2026</div>
+        <div class="para">Biscuit the golden retriever and Pepper the tabby cat have been inseparable for two years,
+          and nap nose to nose every afternoon.</div>
+        <div class="ad-inline" aria-label="Paid partner" data-ad-slot="mid-article" data-demo-clutter="ad">
+          <span class="ad-tag">Paid partner</span> <span class="wiggle">👉</span> Seniors are switching to this one
+          simple kitchen gadget. See why everyone is talking about it! <span class="ad-fb">Ad Feedback</span>
+        </div>
+        <div class="photo-row"><button id="show-photo" class="show-photo" type="button" aria-expanded="false"
+          aria-controls="photo">Show image</button></div>
+        <figure id="photo" class="photo" hidden>
+          <img id="photo-img" src="dog-and-cat.jpg" width="540" height="360"
+               alt="A golden-haired dog and a tabby cat sitting side by side, both looking at the camera">
+          <figcaption>Biscuit and Pepper at home.</figcaption>
+        </figure>
+      </div>
+
+      <div class="related" data-demo-clutter="ad">
+        <div class="related-head">Paid content · <span class="ad-fb">Ad Feedback</span></div>
+        <div class="cards">
+          <a href="#s1"><img src="photo-car.jpg" alt="">The car deal dealers don't want you to see</a>
+          <a href="#s2"><img src="photo-beach.jpg" alt="">These beach towns are surprisingly cheap to visit</a>
+          <a href="#s3"><img src="photo-food.jpg" alt="">Doctors are amazed by this morning habit</a>
+          <a href="#s4"><img src="photo-market.jpg" alt="">Retirees are rushing to this new savings trick</a>
+        </div>
+      </div>
+
+      <div class="more-grid" data-demo-clutter="promo">
+        <div class="related-head">More from Ledger News</div>
+        <div class="cards">
+          <a href="#m1"><img src="photo-game.jpg" alt="">High school team heads to state final</a>
+          <a href="#m2"><img src="photo-food.jpg" alt="">The fall soup everyone is making</a>
+          <a href="#m3"><img src="photo-beach.jpg" alt="">Best quiet beaches for the off season</a>
+          <a href="#m4"><img src="photo-city.jpg" alt="">Downtown parking rules change Monday</a>
+        </div>
+      </div>
+    </main>
+
+    <aside class="rail">
+      <div class="ad-box" aria-label="Advertisement" data-ad-slot="right-rail" data-demo-clutter="ad">
+        <span class="ad-tag">Advertisement</span><div class="fake-video"><span class="play">▶</span></div>
+        <strong>Fall cruise deals</strong>Seven nights on the coast from $899.*
+        <div class="fine">*Prices per person, double occupancy. Taxes and fees extra. Terms apply.</div>
+      </div>
+      <div class="most-read" data-demo-clutter="promo"><div class="related-head">Most read</div><ol>
+        <li><a href="#t1">Five fall walks with the best views</a></li><li><a href="#t2">New bakery opens on Elm</a></li>
+        <li><a href="#t3">School board meeting recap</a></li><li><a href="#t4">Pumpkin festival photos</a></li>
+        <li><a href="#t5">Road work on Route 9 this week</a></li></ol></div>
+      <div class="ad-box pulse" aria-label="Advertisement" data-ad-slot="right-rail-2" data-demo-clutter="ad">
+        <span class="ad-tag">Advertisement</span><strong>Hearing clearly again</strong>Book a free hearing check this
+        month. <span class="ad-fb">Ad Feedback</span>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Notifications -->
+  <div class="notif-panel" data-demo-clutter="popup">
+    <div class="win-title">Notifications <span>9 new</span></div>
+    <div class="notif"><img src="photo-storm.jpg" alt="">Storm watch issued for your area <em>2m</em></div>
+    <div class="notif"><img src="photo-market.jpg" alt="">Markets: Dow up 300 points <em>8m</em></div>
+    <div class="notif"><img src="photo-game.jpg" alt="">Final score: home team wins <em>15m</em></div>
+    <div class="notif"><img src="photo-space.jpg" alt="">New: Moon photos gallery <em>22m</em></div>
+  </div>
+
+  <div class="allow" data-demo-clutter="popup">
+    <div class="win-title">ledgernews.example wants to <button type="button" aria-label="Close">×</button></div>
+    🔔 Show notifications
+    <div class="allow-row"><button type="button">Allow</button><button type="button">Block</button></div>
+  </div>
+
+  <!-- Windows -->
+  <div class="window pip" data-demo-clutter="popup">
+    <div class="win-title">● LIVE · Ledger News TV <span class="win-btns">— ▢ ×</span></div>
+    <div class="fake-video live"><span class="play">▶</span><span class="lower-third">STORM WATCH · COASTAL TOWNS</span></div>
+  </div>
+  <div class="window partner" data-demo-clutter="popup">
+    <div class="win-title">Trending on partner sites <span class="win-btns">— ▢ ×</span></div>
+    <a href="#p1"><img src="photo-beach.jpg" alt="">TravelHub: 10 islands to see before you're 80</a>
+    <a href="#p2"><img src="photo-food.jpg" alt="">FoodBeat: The one pan dinner everyone loves</a>
+    <a href="#p3"><img src="photo-car.jpg" alt="">AutoWeek: Cars that hold their value</a>
+  </div>
+
+  <div class="app-sheet" data-demo-clutter="toast">
+    📱 <strong>Ledger News is better in the app.</strong> Get breaking news alerts and live video.
+    <button type="button">Open the app</button> <button type="button" class="ghost">Not now</button>
+  </div>
+  <div class="toast t1" data-demo-clutter="toast">✅ Breaking news alerts: turn them on in Settings</div>
+  <div class="toast t2" data-demo-clutter="toast">📰 You have <b>2 free articles</b> left this month.</div>
+
+  <div class="share-bar" data-demo-clutter="share">
+    <a href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fexample.test%2Fdog-cat" aria-label="Share on Facebook">f</a>
+    <a href="https://twitter.com/intent/tweet?url=https%3A%2F%2Fexample.test%2Fdog-cat" aria-label="Share on X">X</a>
+    <a href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fexample.test%2Fdog-cat" aria-label="Share on LinkedIn">in</a>
+    <a href="https://wa.me/?text=https%3A%2F%2Fexample.test%2Fdog-cat" aria-label="Share on WhatsApp">w</a>
+  </div>
+
+  <div id="livechat-widget" class="chat-bubble bounce" data-demo-clutter="chat" aria-label="Chat with us">
+    💬 Questions? Chat with us <span class="badge">1</span>
+  </div>
+
+  <div class="promo-backdrop" data-demo-clutter="popup">
+    <div class="promo">
+      <button class="promo-x" type="button" aria-label="Close">×</button>
+      <div class="promo-h">Never miss a story</div>
+      <div class="para">Sign up for the free Ledger Morning newsletter: the day's top stories in your inbox.</div>
+      <div class="promo-row"><input type="email" placeholder="Your email address" aria-label="Email address">
+        <button type="button" class="blink-btn">SIGN ME UP</button></div>
+      <div class="promo-small">By signing up you agree to our Terms and Privacy Policy. You can unsubscribe at any time.</div>
+    </div>
+  </div>
+
+  <div id="cookie-banner" class="cookies" data-demo-clutter="cookie">
+    🍪 We and our 847 partners use cookies and similar technologies to personalize ads, measure traffic and improve
+    your experience. By continuing you agree to our use of cookies.
+    <button type="button">Accept all</button> <button type="button">Manage choices</button>
+  </div>
+
+  <script src="news.js"></script>
+  <footer class="foot">© 2026 Ledger News (fictional, made for the Ally demo) · Terms · Privacy · Ad choices · About</footer>
+</body>
+</html>

@@ -338,6 +338,26 @@ class Platform:
             raise ToolError("Moving the pointer needs pynput: pip install pynput")
         Controller().position = (x, y)
 
+    def pointer_pos(self) -> tuple[int, int] | None:
+        try:
+            from pynput.mouse import Controller  # type: ignore
+        except Exception:
+            return None
+        x, y = Controller().position
+        return int(x), int(y)
+
+    def scroll_wheel(self, notches: float) -> None:
+        """Turn the mouse wheel: positive scrolls down. Scrolls whatever is under the pointer."""
+        try:
+            from pynput.mouse import Controller  # type: ignore
+        except Exception:
+            raise ToolError("Scrolling needs pynput: pip install pynput")
+        Controller().scroll(0, -notches)
+
+    def work_area(self) -> tuple[int, int, int, int] | None:
+        """(left, top, width, height) of the screen without the taskbar, in screen pixels; None if unknown."""
+        return None
+
     def color_filter(self, kind: str) -> str:
         raise ToolError(f"Screen color filters aren't supported on {self.label} yet.")
 

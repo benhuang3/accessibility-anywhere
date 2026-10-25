@@ -585,6 +585,24 @@ class WindowsPlatform(Platform):
         set_dpi_aware()
         self.cards = ReadingCards()
 
+    def pointer_pos(self) -> tuple[int, int] | None:
+        import ctypes.wintypes as wt
+
+        pt = wt.POINT()
+        return (pt.x, pt.y) if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)) else None
+
+    def scroll_wheel(self, notches: float) -> None:
+        # MOUSEEVENTF_WHEEL; a positive delta scrolls up, 120 per notch (fractions scroll smoothly in most apps)
+        ctypes.windll.user32.mouse_event(0x0800, 0, 0, int(round(-notches * 120)), 0)
+
+    def work_area(self) -> tuple[int, int, int, int] | None:
+        import ctypes.wintypes as wt
+
+        r = wt.RECT()
+        if not ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0):  # SPI_GETWORKAREA
+            return None
+        return r.left, r.top, r.right - r.left, r.bottom - r.top
+
     def _magnifier(self) -> _MagThread | None:
         with self._lock:
             if self._mag is None:
