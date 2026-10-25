@@ -12,7 +12,7 @@
   import { remoteScreen } from '$lib/screenshare';
   import SharedScreen from '$lib/SharedScreen.svelte';
   import { screenFreshness } from '$lib/screenPolicy';
-  import { parseRoomHash, kindLabels, type RoomLink } from '$lib/room';
+  import { parseRoomHash, isDifferentCall, kindLabels, type RoomLink } from '$lib/room';
   import { elderCallPresentation, noAnswerNote, playJoinChime } from '$lib/ringing';
 
   const { pending: pendingActions, results: actionResults } = helperActions;
@@ -155,7 +155,14 @@
     const freshnessTimer = setInterval(() => { now = Date.now(); }, 1000);
     const updateDebug = () => { debug = new URLSearchParams(window.location.hash.slice(1)).get('debug') === '1'; };
     updateDebug();
-    window.addEventListener('hashchange', updateDebug);
+    const handleHashChange = () => {
+      if (isDifferentCall(link, window.location.hash)) {
+        window.location.reload();
+        return;
+      }
+      updateDebug();
+    };
+    window.addEventListener('hashchange', handleHashChange);
     try {
       link = parseRoomHash(window.location.hash);
       const room = link;
@@ -183,7 +190,7 @@
       relay.stop();
       clearInterval(freshnessTimer);
       window.removeEventListener('pagehide', leave);
-      window.removeEventListener('hashchange', updateDebug);
+      window.removeEventListener('hashchange', handleHashChange);
       leave();
       if (link?.role === 'elder') delete document.documentElement.dataset.allyCall;
     };

@@ -25,3 +25,12 @@ export function parseRoomHash(hash: string): RoomLink {
   }
   return { roomId, role, name, kind };
 }
+
+export function isDifferentCall(current: RoomLink | null, newHash: string): boolean {
+  try {
+    const next = parseRoomHash(newHash);
+    return next.roomId !== current?.roomId || next.role !== current?.role;
+  } catch {
+    return false;
+  }
+}
