@@ -141,6 +141,16 @@ def tts_body(text: str, voice_id: str, model: str, speed: float = 1.0, language:
     }
 
 
+# Spoken spellings. Voices read the name Ally like Allie (AL-ee); it is said like the word ally (AL-eye).
+PRONOUNCE = {"Ally": "Al-eye", "ALLY": "Al-eye"}
+_PRONOUNCE_RE = re.compile(r"\b(" + "|".join(map(re.escape, PRONOUNCE)) + r")\b")
+
+
+def pronounce(text: str) -> str:
+    """Respell words the voices say wrong. Only the capitalized name, so the word "ally" is untouched."""
+    return _PRONOUNCE_RE.sub(lambda m: PRONOUNCE[m.group(1)], text or "")
+
+
 def fix_wav_sizes(data: bytes) -> bytes:
     """Put the real sizes in a WAV header.
 
@@ -374,7 +384,7 @@ class Speaker:
     def say(self, text: str, interrupt: bool = True, wait: bool = False, style: dict | None = None) -> bool:
         cfg = self.settings()
         engine = self.engine(cfg)
-        text = (text or "").strip()
+        text = pronounce((text or "").strip())
         if engine == "off" or not strip_ssml(text):
             return False
         limit = int(cfg.get("max_chars", 4000))
@@ -453,6 +463,7 @@ class Speaker:
         when no Cartesia audio can be had, so the caller falls back to the OS voice."""
         cfg = cfg or self.settings()
         style = style or {}
+        text = pronounce(text)
         speed, emotion, volume = self._style_values(cfg, style)
         voice = cfg.get("cartesia_voice_id", "")  # the configured value keys the cache (works offline)
         cacheable = bool(style.get("cache")) and bool(cfg.get("cache_prompts", True))

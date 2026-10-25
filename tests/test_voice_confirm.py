@@ -816,6 +816,12 @@ class StreamingWavTests(unittest.TestCase):
         self.assertEqual(speech.fix_wav_sizes(fixed), fixed)
         self.assertEqual(speech.fix_wav_sizes(b"not a wav"), b"not a wav")
 
+    def test_the_name_is_said_like_the_word_ally(self):
+        self.assertEqual(speech.pronounce("Ally is ready. Say Ally, then what you need."),
+                         "Al-eye is ready. Say Al-eye, then what you need.")
+        self.assertEqual(speech.pronounce("a trusted ally"), "a trusted ally")
+        self.assertEqual(speech.pronounce("Allyson"), "Allyson")
+
     def test_cached_prompts_saved_before_the_fix_are_repaired(self):
         cache = speech.PromptCache(tempfile.mkdtemp())
         (cache.folder / "old.wav").write_bytes(self.streaming_wav())
