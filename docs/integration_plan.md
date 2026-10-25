@@ -240,6 +240,13 @@ tracker tests pass.
 - **Ben:** `uiux` (Clarity theme and mascot) is not merged. When you merge it,
   `test_risk_cooldown` expects the old button color `#7A4100`; the theme uses `#0B57D0`.
 - **Ganesh:** deploy `spacecall/server/src/profile.ts` (steps in the face-setup entry below).
+### Oct 25, 06:25 PT — Hayden (via Claude Code) — branch `hayden/handsfree-scroll` (from `benh/os-layer`), commit `7d9a7c2`
+
+**Added:** "turn on hands free scrolling", "hands-free scrolling" and "turn off / stop hands free
+scrolling" now switch eye scrolling (`eye_scroll`) on and off. Only the two `eye_scroll` rules in
+`ally/rules.py` change, plus a test. **Ben:** this is based on your `benh/os-layer` (eye scrolling is
+not on `main` yet). Merge it into your branch, or I will merge it into `main` after yours lands.
+
 ### Oct 25, 05:45 PT — Ben H (via Claude Code) — branch `benh/os-layer`
 
 **Pushed to `benh/os-layer`.** Simplified mode no longer refuses a page just because a consent pop-up is open: it

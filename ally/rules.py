@@ -84,11 +84,11 @@ RULES = [
          loose=r"\bcheck (?:my |the )?(?:eye ?track(?:er|ing)|eyes)\b"),
     # Eye scrolling (ally/gaze_scroll.py). Before scroll_down/up, whose full patterns would take "scroll".
     Rule("eye_scroll_off", [("eye_scroll", {"on": False})],
-         full=r"(?:stop|turn off|no more|don't) (?:eye scrolling|scrolling with my eyes|scroll(?:ing)? with my eyes)|"
-              r"eye scroll(?:ing)? off"),
+         full=r"(?:stop|turn off|no more|don't) (?:eye scrolling|scrolling with my eyes|scroll(?:ing)? with my eyes|"
+              r"hands[- ]?free scroll(?:ing)?)|eye scroll(?:ing)? off|hands[- ]?free scroll(?:ing)? off"),
     Rule("eye_scroll_on", [("eye_scroll", {"on": True})],
-         full=r"(?:turn on |start )?(?:eye scrolling|scroll(?:ing)? with my eyes)(?: on)?|eye scroll(?:ing)? on|"
-              r"let me scroll with my eyes"),
+         full=r"(?:turn on |start )?(?:eye scrolling|scroll(?:ing)? with my eyes|hands[- ]?free scroll(?:ing)?)(?: on)?|"
+              r"eye scroll(?:ing)? on|let me scroll with my eyes"),
     Rule("follow_eyes", [("magnifier_follow", {"target": "eyes"})],
          full=r"(?:follow|track) (?:my )?(?:eyes|gaze)|(?:magnifier|zoom) (?:should )?follows? (?:my )?(?:eyes|gaze)"),
     Rule("follow_mouse", [("magnifier_follow", {"target": "mouse"})],
