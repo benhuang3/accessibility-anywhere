@@ -37,6 +37,7 @@ CALIBRATION_SECONDS = 15.0
 GAP_SECONDS = 3.0
 ACTION_SECONDS = 8.0
 STRUGGLE_SECONDS = 10.0
+TINY_LONG_SECONDS = 20.0
 TOKEN = re.compile(r"[A-Za-z0-9_-]{1,40}")
 # Anything that could carry a picture is dropped before a line is written.
 _IMAGE_KEYS = {"frame", "image", "jpeg", "jpg", "png", "video", "pixels", "data", "bmp", "raw", "png_b64"}
@@ -49,29 +50,50 @@ _DROP = object()
 RECORD_SIGNALS_FPS = 15
 
 # Ground truth for each acted part. "natural" is scored on its own. Gaps and calibration are not scored.
+# name, title, text, seconds, expect, size, place.
+# Squint parts (acted squint, tiny text, lean-and-squint) are never next to each other, so a soft
+# squint is not scored against the squint that came right before it.
 _TASKS = (
     ("read_normal", "Normal text", "Read this sentence normally. Do not squint or lean closer.",
-     ACTION_SECONDS, "none", "normal"),
-    ("read_tiny", "Small text", "Read this small line naturally. Do not act it out.",
-     ACTION_SECONDS, "natural", "tiny"),
-    ("act_squint", "Squint", "Squint as if this text were too small to read, and hold it.",
-     ACTION_SECONDS, "squint", "normal"),
+     ACTION_SECONDS, "none", "normal", ""),
+    ("look_bottom", "Bottom", "Read this line at the bottom of the screen.",
+     ACTION_SECONDS, "none", "normal", "bottom"),
+    ("squint_soft", "Soft squint", "Squint a little, the way you would at text that is slightly too small.",
+     ACTION_SECONDS, "squint", "normal", ""),
     ("smile", "Smile", "Smile, and keep smiling for a few seconds.",
-     ACTION_SECONDS, "none", "normal"),
+     ACTION_SECONDS, "none", "normal", ""),
+    ("read_tiny", "Small text", "Read this small line naturally. Do not act it out.",
+     ACTION_SECONDS, "natural", "tiny", ""),
+    ("look_top", "Top", "Read this line at the top of the screen.",
+     ACTION_SECONDS, "none", "normal", "top"),
+    ("act_squint", "Squint", "Squint as if this text were too small to read, and hold it.",
+     ACTION_SECONDS, "squint", "normal", ""),
+    ("blink_fast", "Fast blinks", "Blink quickly, several times.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("lean_soft", "Lean a little", "Lean in a little, as you would to read something. Do not squint.",
+     ACTION_SECONDS, "lean", "normal", ""),
+    ("wink", "Wink", "Wink with either eye, a few times.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("read_tiny_long", "Small text", "Read this small text naturally. Do not act.",
+     TINY_LONG_SECONDS, "natural", "tiny", ""),
     ("laugh", "Laugh", "Laugh for a few seconds, then relax your face.",
-     ACTION_SECONDS, "none", "normal"),
-    ("look_down", "Phone", "Look down at a phone in your lap, then look back at the screen.",
-     ACTION_SECONDS, "none", "normal"),
-    ("close_left", "Left eye", "Close only your LEFT eye. Keep the right eye open.",
-     ACTION_SECONDS, "none", "normal"),
-    ("close_right", "Right eye", "Close only your RIGHT eye. Keep the left eye open.",
-     ACTION_SECONDS, "none", "normal"),
-    ("turn_head", "Turn", "Turn your head left, then right, then face the screen again.",
-     ACTION_SECONDS, "none", "normal"),
+     ACTION_SECONDS, "none", "normal", ""),
+    ("tired", "Tired", "Let your eyelids feel heavy, as if you were tired, and keep reading.",
+     ACTION_SECONDS, "none", "normal", ""),
     ("lean", "Lean in", "Lean in close to the screen. Do not squint.",
-     ACTION_SECONDS, "lean", "normal"),
+     ACTION_SECONDS, "lean", "normal", ""),
+    ("look_down", "Phone", "Look down at a phone in your lap, then look back at the screen.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("close_left", "Left eye", "Close only your LEFT eye. Keep the right eye open.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("sit_back", "Sit back", "Lean back in your chair and keep reading.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("close_right", "Right eye", "Close only your RIGHT eye. Keep the left eye open.",
+     ACTION_SECONDS, "none", "normal", ""),
+    ("turn_head", "Turn", "Turn your head left, then right, then face the screen again.",
+     ACTION_SECONDS, "none", "normal", ""),
     ("lean_squint", "Lean and squint", "Lean in and squint, as if this were too small to read.",
-     STRUGGLE_SECONDS, "struggle", "normal"),
+     STRUGGLE_SECONDS, "struggle", "normal", ""),
 )
 
 
@@ -88,26 +110,26 @@ def protocol(free_minutes: float = 0, rearm_seconds: float = Tuning.rearm_second
              cooldown_seconds: float = 30.0) -> list[dict]:
     """The scripted parts, with a 3 s rest between them. Calibration is first and lasts 15 s.
 
-    The rest before a struggle part outlasts rearm_seconds and cooldown_seconds: a detector that just
-    fired (the lean in "Lean in") waits rearm_seconds before firing again, and after any struggle no
-    other is reported for cooldown_seconds. Either would hide the struggle.
+    The rest before a struggle part outlasts rearm_seconds and cooldown_seconds: a detector that
+    fired earlier waits rearm_seconds before it can fire again, and after any struggle no other is
+    reported for cooldown_seconds. Either would hide the struggle.
     """
     parts = [{
         "name": "calibration", "title": "Read normally",
         "text": "Read this sentence at a comfortable size. Keep a relaxed face and sit as you usually do.",
-        "seconds": CALIBRATION_SECONDS, "expect": "baseline", "size": "normal",
+        "seconds": CALIBRATION_SECONDS, "expect": "baseline", "size": "normal", "place": "center",
     }]
     gap = {
         "name": "gap", "title": "Rest", "text": "Relax your face and look at the screen.",
-        "seconds": GAP_SECONDS, "expect": "gap", "size": "normal",
+        "seconds": GAP_SECONDS, "expect": "gap", "size": "normal", "place": "center",
     }
-    for name, title, text, seconds, expect, size in _TASKS:
+    for name, title, text, seconds, expect, size, place in _TASKS:
         rest = dict(gap)
         if expect == "struggle":
             rest["seconds"] = max(GAP_SECONDS, float(rearm_seconds) + 2.0, float(cooldown_seconds) + 2.0)
         parts.append(rest)
         parts.append({"name": name, "title": title, "text": text, "seconds": float(seconds),
-                      "expect": expect, "size": size})
+                      "expect": expect, "size": size, "place": place or "center"})
     if free_minutes > 0:
         parts.append(dict(gap))
         parts.append({
@@ -121,6 +143,8 @@ def protocol(free_minutes: float = 0, rearm_seconds: float = Tuning.rearm_second
 def card_line(part: dict) -> str:
     """Stdin command the camera helper understands: `card` plus a JSON object."""
     payload = {"text": part["text"], "title": part["title"], "size": part["size"], "seconds": part["seconds"]}
+    if part.get("place") in ("top", "bottom"):
+        payload["place"] = part["place"]
     return "card " + json.dumps(payload, ensure_ascii=True)
 
 

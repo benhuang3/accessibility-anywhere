@@ -24,8 +24,10 @@ at most once a minute and on exit, and restored on start. A new calibration star
 "choice <t0> <t1> <x> <y>" learns from a look that settled on a card (features from that dwell,
 the card centre as the target);
 "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
-"card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds) and
-"card off" closes it. The card also closes itself after seconds. "dot on" / "dot off" show or hide
+"card {json}" shows a readable card (text, optional title, size normal|large|tiny, place
+center|top|bottom, seconds) and
+"card off" closes it. The card also closes itself after seconds. place top or bottom puts a
+short card on that edge of the screen so the line being read is there. "dot on" / "dot off" show or hide
 the click-through gaze circle. "view LEVEL LEFT TOP" is the magnified view, so the circle can sit
 on the glass point while zoomed in. Unknown or broken lines are ignored.
 It exits when the agent closes its stdin (like the hotkey helper),
@@ -1775,7 +1777,25 @@ def parse_card(arg: str) -> dict | None:
     except (TypeError, ValueError):
         seconds = 0.0
     title = spec.get("title") if isinstance(spec.get("title"), str) else ""
-    return {"text": text.strip(), "title": title.strip(), "size": size, "seconds": max(0.0, seconds)}
+    place = spec.get("place", "center")
+    if place not in ("center", "top", "bottom"):
+        place = "center"
+    return {"text": text.strip(), "title": title.strip(), "size": size, "seconds": max(0.0, seconds),
+            "place": place}
+
+
+def card_origin(screen: tuple[int, int], window: tuple[int, int], place: str) -> tuple[int, int]:
+    """Top-left of the card window. top and bottom pin a short card to that edge of the screen."""
+    sw, sh = int(screen[0]), int(screen[1])
+    ww, wh = int(window[0]), int(window[1])
+    x = max(0, (sw - ww) // 2)
+    if place == "top":
+        y = 0
+    elif place == "bottom":
+        y = max(0, sh - wh)
+    else:
+        y = max(0, (sh - wh) // 2)
+    return x, y
 
 
 def classify_command(cmd: str) -> tuple[str, object]:
@@ -1872,13 +1892,16 @@ class CardWindow:
         except Exception:
             pass
         try:
-            cv2.moveWindow(CARD, max(0, (int(screen[0]) - width) // 2), max(0, (int(screen[1]) - height) // 2))
+            x, y = card_origin(screen, (width, height), self.spec.get("place") or "center")
+            cv2.moveWindow(CARD, x, y)
         except Exception:
             pass
         self.step()
 
     def _window_size(self) -> tuple[int, int]:
         sw, sh = int(self.screen[0]), int(self.screen[1])
+        if self.spec.get("place") in ("top", "bottom"):
+            return min(max(sw - 80, 1), 1100), min(max(sh, 1), 160)
         if self.spec["size"] == "tiny":
             return min(max(sw, 1), 900), min(max(sh, 1), 420)
         if self.spec["size"] == "large":
