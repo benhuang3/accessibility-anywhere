@@ -335,5 +335,59 @@ class DownloadTests(unittest.TestCase):
         self.assertFalse(list(state.rglob("*.onnx")))
 
 
+class WiringTests(unittest.TestCase):
+    def test_config_defaults_are_off(self):
+        from ally import config as config_mod
+
+        senses = config_mod.DEFAULTS["senses"]
+        self.assertEqual(senses["au_model"], "off")
+        self.assertIs(senses["raw_live"], False)
+        errors, _warnings = config_mod.validate(config_mod.DEFAULTS)
+        self.assertEqual([item for item in errors if "au_model" in item or "raw_live" in item], [])
+        bad = config_mod.merge({"senses": {"au_model": "torch"}})
+        errors, _warnings = config_mod.validate(bad)
+        self.assertTrue(any("au_model" in item for item in errors))
+
+    def test_helper_args_follow_the_method(self):
+        from ally.gaze_helper import sense_helper_args
+
+        off = sense_helper_args({"au_model": "off", "squint_method": "v1", "lean_method": "v1", "raw_live": False})
+        self.assertEqual(off, {"au": "off", "raw_live": False})
+        relative = sense_helper_args({"squint_method": "relative", "lean_method": "v1"})
+        self.assertIs(relative["raw_live"], True)
+        distance = sense_helper_args({"lean_method": "distance"})
+        self.assertIs(distance["raw_live"], True)
+        forced = sense_helper_args({"raw_live": True, "squint_method": "v1", "lean_method": "v1"})
+        self.assertIs(forced["raw_live"], True)
+        on = sense_helper_args({"au_model": "libreface", "squint_method": "v1", "lean_method": "v1"})
+        self.assertEqual(on["au"], "libreface")
+        self.assertEqual(on["au_fps"], 5)
+        self.assertIs(on["raw_live"], False)
+
+    def test_doctor_line_names_the_files_and_the_license(self):
+        from ally.doctor import describe_au
+
+        state = Path(tempfile.mkdtemp(prefix="ally-au-doctor-"))
+        status, name, detail = describe_au(state)
+        self.assertEqual((status, name), ("warn", "Action units"))
+        self.assertIn("LibreFace AU models are missing", detail)
+        self.assertIn("USC research license", detail)
+        self.assertIn("non-profit", detail)
+        self.assertIn("python scripts/get_au_models.py", detail)
+        models = state / "models"
+        models.mkdir()
+        (models / "LibreFace_AU_Encoder.onnx").write_bytes(b"e")
+        (models / "LibreFace_AU_Presence.onnx").write_bytes(b"p")
+        status, _name, detail = describe_au(state)
+        self.assertIn("USC research license", detail)
+        if au is not None and au.au_readiness(state)["onnxruntime"]:
+            self.assertEqual(status, "ok")
+            self.assertIn("present", detail)
+            self.assertIn("onnxruntime imports", detail)
+        else:
+            self.assertEqual(status, "warn")
+            self.assertIn("onnxruntime is not installed", detail)
+
+
 if __name__ == "__main__":
     unittest.main()

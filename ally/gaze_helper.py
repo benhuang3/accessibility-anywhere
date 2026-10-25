@@ -2343,6 +2343,23 @@ def au_due(last: float, now: float, fps) -> bool:
     return (float(now) - float(last)) >= (1.0 / au_rate(fps))
 
 
+def sense_helper_args(senses_cfg: dict | None) -> dict:
+    """au and raw_live for the camera helper.
+
+    raw_live is on when [senses] raw_live is true, or when squint_method or lean_method is not v1.
+    Those detectors need landmarks, blendshapes, and the face matrix on the live line.
+    """
+    cfg = senses_cfg if isinstance(senses_cfg, dict) else {}
+    mode = au_mode(cfg.get("au_model", AU_OFF))
+    squint = str(cfg.get("squint_method", "v1") or "v1")
+    lean = str(cfg.get("lean_method", "v1") or "v1")
+    raw_live = cfg.get("raw_live") is True or squint != "v1" or lean != "v1"
+    out = {"au": mode, "raw_live": raw_live}
+    if mode == AU_LIBREFACE:
+        out["au_fps"] = DEFAULT_AU_FPS
+    return out
+
+
 def _au_out(values) -> list[float] | None:
     """12 probabilities, 4 decimals. Any other shape is left off the line."""
     if values is None:
