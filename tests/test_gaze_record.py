@@ -21,8 +21,9 @@ from ally.gaze_helper import (CAL_COLLECT, CAL_SETTLE, CLOSER, CENTER_HEAD, EYES
                               grid_points, intro_lines, kept_model, likely_cause, pose_count,
                               readiness_issue, result_grade, setup_duration, validation_points,
                               validation_score, with_check)
-from ally.gaze_record import (BLENDSHAPES, READING_SECONDS, RunLog, click_record, frame_record,
-                              gaze_run_path, meta_record, record, target_record)
+from ally.gaze_record import (BLENDSHAPES, READING_SECONDS, RunLog, _cnn_readings, _cnn_warned,
+                              attach_cnn, click_record, frame_record, gaze_run_path, image_like,
+                              meta_record, record, target_record)
 from ally.paths import Paths
 
 try:
@@ -491,6 +492,101 @@ class FormatTests(unittest.TestCase):
             self.assertEqual(record("a person", "no", "bright", paths=Paths(home), ally_running=lambda: False), 2)
             self.assertEqual(record("ada", "sometimes", "bright", paths=Paths(home), ally_running=lambda: False), 2)
         self.assertEqual(READING_SECONDS, 120.0)
+
+
+class CnnRecordTests(unittest.TestCase):
+    def _frame(self):
+        landmarks = [(0.2, 0.4, 0.0)] * 478
+        return frame_record(10.0, 640, 480, landmarks, {"eyeLookUpLeft": 0.1}, None)
+
+    def test_cnn_fields_are_written_only_when_asked(self):
+        row = self._frame()
+        self.assertNotIn("cnn", row)
+        self.assertNotIn("cnn_ms", row)
+        self.assertIs(attach_cnn(row, {}), row)
+        self.assertIs(attach_cnn(row, {"mobileone_s0": (float("nan"), 1.0, 1.0)}), row)
+        blob = "data:image/png;base64," + ("A" * 400)
+        self.assertIs(attach_cnn(row, {"mobileone_s0": (blob, 1.0, 1.0)}), row)
+
+        stamped = attach_cnn(row, {
+            "mobileone_s0": (1.23456, -2.5, 12.345),
+            "resnet18": (None, None, 40.0),
+        })
+        self.assertNotIn("cnn", row)
+        self.assertEqual(stamped["cnn"], {"mobileone_s0": [1.2346, -2.5]})
+        self.assertEqual(stamped["cnn_ms"], {"mobileone_s0": 12.35})
+        self.assertFalse(image_like(stamped))
+
+        home = Path(tempfile.mkdtemp(prefix="ally-gaze-cnn-"))
+        path = gaze_run_path(home, "run1", "ada", "no", "bright")
+        log = RunLog(path)
+        self.assertTrue(log.write(stamped))
+        self.assertFalse(log.write({"rec": "frame", "cnn": {"mobileone_s0": ["A" * 400]}}))
+        log.close()
+        text = path.read_text(encoding="utf-8")
+        self.assertIn('"cnn"', text)
+        self.assertNotIn("base64", text.lower())
+        self.assertNotIn("jpeg", text.lower())
+        self.assertNotIn("png", text.lower())
+        saved = json.loads(text)
+        keys = set()
+
+        def walk(value):
+            if isinstance(value, dict):
+                keys.update(name.lower() for name in value)
+                for item in value.values():
+                    walk(item)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+
+        walk(saved)
+        for banned in ("image", "jpeg", "jpg", "png", "video", "pixels", "bmp", "frame"):
+            self.assertNotIn(banned, keys)
+
+    def test_a_missing_model_does_not_open_the_camera(self):
+        home = Path(tempfile.mkdtemp(prefix="ally-gaze-cnn-miss-"))
+        models = home / "state" / "models"
+        models.mkdir(parents=True)
+        (models / "face_landmarker.task").write_bytes(b"face")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = record("ada", "no", "bright", paths=Paths(home), ally_running=lambda: False,
+                          cnn="mobileone_s0,resnet18")
+        self.assertEqual(code, 2)
+        text = buf.getvalue()
+        self.assertIn("python scripts/get_gaze_models.py", text)
+        self.assertIn("mobileone_s0_gaze.onnx", text)
+        self.assertFalse((home / "state" / "gaze_runs").exists())
+
+    def test_readings_are_numbers_from_the_runner(self):
+        class Runner:
+            def __init__(self, name, angles):
+                self.name = name
+                self._angles = angles
+                self.frames = []
+
+            def angles(self, frame, landmarks):
+                self.frames.append(frame)
+                if isinstance(self._angles, Exception):
+                    raise self._angles
+                return self._angles
+
+        good = Runner("mobileone_s0", (4.0, -1.25))
+        bad = Runner("resnet18", RuntimeError("skip"))
+        _cnn_warned.clear()
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            readings = _cnn_readings([bad, good], [[1, 2, 3]], [[0.2, 0.3, 0.0]])
+        self.assertEqual(set(readings), {"mobileone_s0"})
+        yaw, pitch, ms = readings["mobileone_s0"]
+        self.assertEqual((yaw, pitch), (4.0, -1.25))
+        self.assertGreaterEqual(ms, 0.0)
+        self.assertIn("resnet18", buf.getvalue())
+        row = attach_cnn(self._frame(), readings)
+        self.assertEqual(row["cnn"]["mobileone_s0"][0], 4.0)
+        self.assertNotIn("resnet18", row["cnn"])
+        self.assertEqual(good.frames, [[[1, 2, 3]]])
 
 
 if __name__ == "__main__":
