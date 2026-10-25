@@ -140,6 +140,25 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 07:20 PT — Ganesh (via Claude Code) — `main`, merge of `risk-branch` (`3a63185` and earlier)
+
+**Changed:**
+- **Voice → the bear:** the planned `voice` bus topic now exists (`listening` / `thinking` / `speaking` /
+  `idle`, with captions). The overlay bear appears whenever someone talks to Ally: "Listening…", their
+  words, then the reply while it is spoken, fading 4 s after speech ends. Risk cards, done notes and
+  offers always win; nothing shows during a helper call. Publish lines only in `listener.py`,
+  `voice.py`, `agent.py`.
+- **Looser voice requests:** the wake word accepts speech-to-text spellings (Allie, Alley, Ollie, …) and
+  up to two filler words before it. New `rules.closest()` fills loose wording in to the nearest rule
+  (example phrasings per rule in `rules.EXAMPLES`) after the strict rules and before Claude; never for
+  clicks/numbers, reset, setup or anything that sends data. 91-utterance corpus: 27.5% → 98.9%.
+  **New rules need an `EXAMPLES` entry** (a test checks this); I added ones for `eye_scroll_on/off`.
+  Your new strict rules (tabs, show where to click, eye scrolling) still win; checked.
+- **Call Priya + camera:** a call that fails to open now gives the camera back to eye tracking at once
+  (Hayden's handoff otherwise waited 45 min).
+
+**Others need to:** nothing; 394 tests pass on the merged `main`.
+
 ### Oct 25, 06:30 PT — Hayden (via Claude Code) — `main`, merges plus commit `f6793f1`
 
 **Merged into `main` (at Hayden's request):** 1120 tests pass.

@@ -124,7 +124,7 @@ CORPUS = [
     ("how do i read the whole page aloud", None, False),
     ("make it easier to read but keep the ads", None, False),
     ("put the colors back to normal on all websites", None, False),
-    ("go back to my bank page", None, False),
+    ("go back to my bank page", "switch_tab", False),  # the team's tab switching, not "back"
     ("my friend Ali said the alley was dark", None, True),
     ("my friend Ali scroll down", None, True),
     ("i told Allie to read this to me", None, True),
