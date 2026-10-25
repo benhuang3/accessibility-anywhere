@@ -164,6 +164,7 @@ class BenchTests(unittest.TestCase):
             _personal_frame(aperture=0.35, lower_raise=0.12, mouthSmile=0.6),
             _personal_frame(aperture=0.30, lower_raise=0.16, eyeBlink=0.9),
             _personal_frame(aperture=0.30, lower_raise=0.16, head_yaw=30),
+            _personal_frame(aperture=0.30, lower_raise=0.16, light=20),
         ]
         for frame in confounders:
             detector = PersonalSquintDetector(Tuning())
@@ -294,7 +295,8 @@ def _personal_parts():
 
 
 def _personal_frame(aperture, lower_raise, iris_vertical=0.5, eyeLookDown=0.0,
-                    mouthSmile=0.0, eyeBlink=0.0, head_yaw=0.0, head_pitch=0.0):
+                    mouthSmile=0.0, eyeBlink=0.0, head_yaw=0.0, head_pitch=0.0,
+                    light=100):
     return {
         "aperture": aperture,
         "aperture_r": aperture,
@@ -314,6 +316,7 @@ def _personal_frame(aperture, lower_raise, iris_vertical=0.5, eyeLookDown=0.0,
         "head_distance": 50.0,
         "iris_diameter": 12.0,
         "face_width": 180.0,
+        "light": light,
     }
 
 

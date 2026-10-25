@@ -528,6 +528,10 @@ class PersonalSquintDetector(_RawHeld):
         score = _personal_score(sig, model)
         gate_ok = _pose_ok(sig, self.tune)
         gate_ok &= sig.get("eyeBlink", sig.get("blink", 0.0)) < self.tune.blink_gate
+        light = sig.get("light", -1.0)
+        gate_ok &= light < 0 or light >= self.tune.light_floor
+        iris_diameter = sig.get("iris_diameter", 1.0)
+        gate_ok &= iris_diameter > 0
         eye_scores = _personal_eye_scores(sig, model)
         gate_ok &= min(eye_scores) > 0.1
         if sig.get("mouthSmile", 0.0) > 0.85:

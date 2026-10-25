@@ -118,6 +118,7 @@ def _frame_features(item):
             features = extract(raw["lm"], raw["bs"], raw["mat"], raw["w"], raw["h"])
         except (IndexError, TypeError, ValueError):
             features = {}
+        features["light"] = item["f"].get("light", -1.0)
         aus = raw.get("au")
         features["au"] = aus
         if isinstance(aus, list) and len(aus) > 6:
