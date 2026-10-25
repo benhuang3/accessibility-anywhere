@@ -204,6 +204,22 @@ buttons. Issues 3 (small list/menu toggles) and 4 (buttons already 44px tall) ar
 Tests: new browser checks for label growth, link-buttons and order independence; both browser suites pass on
 Windows. **Ganesh:** your risk banner's own buttons aren't touched (Ally hosts are skipped).
 
+### Oct 25, 00:11 PT — Hayden (via Claude Code) — branch `hayden/start-fixes` (from `main` `35b7608`), commit `d1dbe07`
+
+**Fixed Ben H's open issues 7 and 8 (23:45 entry).** 858 tests pass. Merged into `main` (fast-forward); it touches
+only `ally/gaze_model.py`, `tests/test_runtime.py` and `tests/test_senses.py`.
+- **7. Ally starts without numpy again.**
+  - `ally/gaze_model.py` imports numpy only when it is installed. Only the eye tracker's math needs
+    it, and mediapipe brings it.
+  - `fixation()`, which the agent process calls, is now plain Python.
+  - New test (`test_runtime.NoNumpyTests`): Ally starts in a process with numpy blocked, and the eye
+    tracker tools are still registered.
+- **8. `test_senses` `test_calibration` is no longer timing-dependent.**
+  - The fake camera now stamps frames 20 ms apart in frame time, which is what the setup window
+    measures.
+  - A simulated slow machine (16 real frames a second) now collects 51 frames. It used to fail with
+    28.
+
 ### Oct 25, 00:10 PT — Ben H (via Claude Code) — `main` (merged from `benh/os-layer`, commit `53b75d1`)
 
 **Merged `benh/os-layer` into `main` and pushed.** `main` now has every branch: page steps + Simplified mode +

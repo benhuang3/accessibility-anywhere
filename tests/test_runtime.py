@@ -264,6 +264,35 @@ class GlobalHotKeys:
 """
 
 
+NO_NUMPY_START = """
+import sys
+sys.modules['numpy'] = None  # this machine has no numpy
+sys.path.insert(0, sys.argv[1])
+sys.path.insert(0, sys.argv[2])
+from helpers import temp_home
+from ally.agent import Agent
+a = Agent(temp_home(), start_hotkeys=False)
+try:
+    names = a.registry.names()
+    assert 'magnify_where_i_look' in names and 'calibrate_eye_tracker' in names, sorted(names)[:10]
+    from ally import gaze_model
+    assert gaze_model.fixation([(0.0, 10, 10), (0.3, 12, 11)], 0, 1, 50)['samples'] == 2
+    print('started')
+finally:
+    a.close()
+"""
+
+
+class NoNumpyTests(unittest.TestCase):
+    def test_ally_starts_without_numpy(self):
+        """The core has no required packages; only the eye tracker's math needs numpy."""
+        tests = str(Path(__file__).resolve().parent)
+        env = dict(os.environ, ANTHROPIC_API_KEY="")
+        out = subprocess.run([sys.executable, "-c", NO_NUMPY_START, str(CODE_ROOT), tests],
+                             capture_output=True, text=True, timeout=60, env=env)
+        self.assertIn("started", out.stdout, out.stderr[-2000:])
+
+
 class HotkeyProcessTests(unittest.TestCase):
     def make_agent(self, extra_path=None):
         from ally.agent import Agent

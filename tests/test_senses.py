@@ -696,9 +696,13 @@ class SensesManagerTests(unittest.TestCase):
         stop = threading.Event()
 
         def camera():
+            # Frames are stamped 20 ms apart whatever the machine's speed: the setup window is
+            # measured in frame time, so a slow VM still sees 50 frames a second (it used to see 28).
+            t = time.time()
             while not stop.is_set():
-                s.on_face(time.time(), frame(0.12, width=0.28))
-                time.sleep(0.02)
+                s.on_face(t, frame(0.12, width=0.28))
+                t += 0.02
+                time.sleep(0.005)
 
         threading.Thread(target=camera, daemon=True).start()
         try:
