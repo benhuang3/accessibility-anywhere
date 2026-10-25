@@ -11,10 +11,12 @@ from unittest import mock
 
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
+from ally import gaze_element
 from ally.doctor import describe_calibration
 from ally.gaze import RETUNE_OFFER, GazeManager, choice_index, ongoing_choice
 from ally.gaze_helper import RecentFeatures, adopt_model, apply_click, classify_command, nearest_click_frame
 from ally.registry import ToolError
+from ally.senses import clickable
 from ally.senses.manager import Senses
 from ally.tools.gaze_tools import (calibration_words, check_eye_tracker, check_words, choose_by_looking,
                                    looking_text, where_am_i_looking)
@@ -376,6 +378,103 @@ class DoctorTests(unittest.TestCase):
         status, detail = describe_calibration(poor, camera=0, features="v1", now=now)
         self.assertEqual(status, "warn")
         self.assertIn("400", detail)
+
+
+class UnknownElementTests(unittest.TestCase):
+    def test_unnamed_client_and_pane_are_not_controls(self):
+        info = {"region": "middle", "source": "eyes", "why": ""}
+        for role in ("client", "pane", "control", "Client", "Pane"):
+            text = looking_text(info, {"role": role, "name": "  "})
+            self.assertEqual(text, "Region: middle.")
+            self.assertNotIn("control", text.lower())
+            self.assertNotIn(role.lower(), text.lower())
+        self.assertIn("Button: Save", looking_text(info, {"role": "button", "name": "Save"}))
+        gaze, agent = manager()
+        gaze.target = lambda t0=None, t1=None: {
+            "x": 8, "y": 9, "radius_px": 40, "confidence": 0.8,
+            "region": "top left", "source": "eyes", "why": ""}
+        ctx = types.SimpleNamespace(agent=agent)
+        with mock.patch("ally.tools.gaze_tools._element_at", return_value={"role": "pane", "name": ""}):
+            text = where_am_i_looking(ctx)
+        self.assertEqual(text, "Region: top left.")
+        self.assertNotIn("pane", text.lower())
+        self.assertNotIn("control", text.lower())
+
+    def test_client_and_pane_stay_unknown_to_clickable(self):
+        self.assertIsNone(clickable.hint_for_role(0x0A))
+        self.assertIsNone(clickable.hint_for_role(0x10))
+        self.assertIs(clickable.hint_for_role(0x2B), True)
+        # The older role map still marks them non-clickable; the point lookup uses the hint.
+        self.assertIs(clickable._role_result(0x0A), False)
+        self.assertIs(clickable._role_result(0x10), False)
+
+    def test_lookups_initialize_com_on_the_worker_thread(self):
+        seen = {}
+
+        def co_initialize(_reserved, mode):
+            seen["mode"] = int(mode)
+            return 0
+
+        def co_uninitialize():
+            seen["uninit"] = True
+
+        windll = types.SimpleNamespace(ole32=types.SimpleNamespace(
+            CoInitializeEx=co_initialize, CoUninitialize=co_uninitialize))
+        with mock.patch("ctypes.windll", windll, create=True):
+            self.assertTrue(gaze_element._com_init())
+            gaze_element._com_uninit()
+            self.assertTrue(clickable._com_init())
+            clickable._com_uninit()
+        self.assertEqual(seen["mode"], 0x2)
+        self.assertTrue(seen["uninit"])
+
+        def changed(_reserved, _mode):
+            return 0x80010106
+
+        blocked = types.SimpleNamespace(ole32=types.SimpleNamespace(CoInitializeEx=changed))
+        with mock.patch("ctypes.windll", blocked, create=True):
+            self.assertFalse(gaze_element._com_init())
+            self.assertFalse(clickable._com_init())
+
+        order = []
+
+        def init():
+            order.append("init")
+            return True
+
+        def uninit():
+            order.append("uninit")
+
+        def describe_at(x, y):
+            order.append(("lookup", x, y))
+            return {"role": "button", "name": "Ok"}
+
+        with mock.patch("ally.gaze_element.sys.platform", "win32"), \
+                mock.patch("ally.gaze_element._com_init", init), \
+                mock.patch("ally.gaze_element._com_uninit", uninit), \
+                mock.patch("ally.gaze_element._describe", describe_at):
+            got = gaze_element.describe(3, 4, timeout=1)
+        self.assertEqual(got, {"role": "button", "name": "Ok"})
+        self.assertEqual(order, ["init", ("lookup", 3, 4), "uninit"])
+
+        clicked = []
+
+        def click_init():
+            clicked.append("init")
+            return True
+
+        def click_uninit():
+            clicked.append("uninit")
+
+        def lookup(x, y):
+            clicked.append(("lookup", x, y))
+            return None
+
+        with mock.patch("ally.senses.clickable._com_init", click_init), \
+                mock.patch("ally.senses.clickable._com_uninit", click_uninit), \
+                mock.patch("ally.senses.clickable._lookup", lookup):
+            self.assertIsNone(clickable.is_clickable(5, 6, timeout=1))
+        self.assertEqual(clicked, ["init", ("lookup", 5, 6), "uninit"])
 
 
 if __name__ == "__main__":

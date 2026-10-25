@@ -87,6 +87,10 @@ def _save_check_retune(ctx, result: dict) -> dict:
     return out
 
 
+# Windows often reports these with no name for Chrome, Electron, and the taskbar. That is not a control.
+_UNKNOWN_ROLES = {"client", "pane", "control"}
+
+
 def looking_text(info: dict, element: dict | None = None) -> str:
     """Region, the mouse fallback when there is one, and an optional control name."""
     region = info.get("region") or "middle"
@@ -99,6 +103,8 @@ def looking_text(info: dict, element: dict | None = None) -> str:
         return text
     role = str(element.get("role") or "").strip()
     name = str(element.get("name") or "").strip()
+    if not name and role.lower() in _UNKNOWN_ROLES:
+        return text
     if role and name:
         return f"{text} {role[:1].upper()}{role[1:]}: {name}."
     if role:

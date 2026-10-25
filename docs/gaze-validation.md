@@ -22,6 +22,10 @@ With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This tak
 - "What am I looking at", and "this", "that", or "here" when you mean a spot: the area of the screen.
   On Windows, also the role and name of the control there (a button, a link, some text). That name is
   read only when you ask, and it goes to Claude only as part of your request.
+  A Chrome page, an Electron window, or the Windows 11 taskbar often comes back as only a pane or a
+  client with no name. Ally then says the region only, and does not call it a control. Naming the
+  thing inside Chrome needs the extension: a content script that asks `document.elementFromPoint`.
+  That is the extension owner's area.
 - "Magnify what I'm looking at", or "magnify here": zoom around that spot. The view then follows your eyes.
 - A yes or no by looking: Ally shows the choices as large cards. Two choices use the left and right
   halves of the screen. Look at one for about a second. Up to four choices. If you don't settle, Ally says none.
