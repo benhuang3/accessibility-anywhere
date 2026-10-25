@@ -5,7 +5,8 @@ from __future__ import annotations
 import sys
 from typing import Annotated, Literal
 
-from ..gaze_helper import likely_cause, result_grade, result_lines
+from .. import gaze_model
+from ..gaze_helper import likely_cause, result_grade, result_lines, retune_check, retune_sentence
 from ..registry import ToolError, tool
 
 
@@ -34,15 +35,56 @@ def calibration_words(result: dict) -> str:
 
 
 def check_words(result: dict) -> str:
-    """Plain result for the 5-dot check. Same words as a full setup."""
+    """Plain result for the 5-dot check, including how far off it was before and after re-tuning."""
     if not result.get("validation") and not result.get("lines"):
         why = result.get("why") or "The eye tracker needs a setup first."
         raise ToolError(str(why))
     grade, lines = _quality(result)
     body = " ".join(lines)
+    sentence = retune_sentence(result.get("error_before"), result.get("error_after"))
+    if sentence and sentence not in body:
+        body = f"{body} {sentence}".strip()
     if grade == "poor":
         return f"Eye tracker check was poor. {body}"
     return f"Eye tracker check. {body}"
+
+
+def _save_check_retune(ctx, result: dict) -> dict:
+    """Re-tune the saved model from the 5 check dots and tell the camera helper to load it."""
+    samples = result.get("samples")
+    if not result.get("calibrated") or not isinstance(samples, list) or len(samples) < 3:
+        out = dict(result)
+        out.pop("samples", None)
+        return out
+    gaze = ctx.agent.gaze
+    model = gaze_model.load(gaze.calibration_path, getattr(gaze, "screen", None))
+    if not model:
+        out = dict(result)
+        out.pop("samples", None)
+        return out
+    tuned = retune_check(model, samples)
+    try:
+        gaze_model.save(tuned["model"], gaze.calibration_path)
+    except OSError as e:
+        raise ToolError(f"couldn't save the eye tracker check ({e})")
+    gaze.send("reload")
+    out = dict(result)
+    out.pop("samples", None)
+    out["error_before"] = tuned["error_before"]
+    out["error_after"] = tuned["error_after"]
+    out["validation"] = tuned["validation"]
+    out["grade"] = tuned["grade"]
+    cause = out.get("cause") or likely_cause(None)
+    score = dict(tuned["validation"] or {})
+    if tuned["error_after"] is not None:
+        score["error_px"] = tuned["error_after"]
+    lines = result_lines(tuned["grade"], score, cause)
+    sentence = retune_sentence(tuned["error_before"], tuned["error_after"])
+    if sentence:
+        lines.append(sentence)
+    out["lines"] = lines
+    out["cause"] = cause
+    return out
 
 
 def looking_text(info: dict, element: dict | None = None) -> str:
@@ -138,7 +180,8 @@ def calibrate_eye_tracker(ctx):
 def check_eye_tracker(ctx):
     """Check eye-tracker accuracy with 5 dots (about 10 seconds), without a full setup.
 
-    Use when the user asks to check the eye tracker. Updates the saved validation numbers.
+    Use when the user asks to check the eye tracker, or after they have moved. Re-tunes the
+    saved model from those dots and says the error before and after.
     """
     p = ctx.os
     level = p.view()[0]
@@ -146,11 +189,11 @@ def check_eye_tracker(ctx):
         p.magnify(1.0)
     ctx.say("Checking the eye tracker. Look at each dot.")
     try:
-        result = ctx.agent.gaze.check()
+        result = dict(ctx.agent.gaze.check() or {})
     finally:
         if level > 1.0:
             p.magnify(level)
-    return check_words(result)
+    return check_words(_save_check_retune(ctx, result))
 
 
 @tool(timeout=60)

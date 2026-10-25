@@ -392,6 +392,87 @@ def with_check(model: dict, score: dict | None, camera: int) -> dict:
     return out
 
 
+def _per_target(samples: list) -> list:
+    """One sample per dot: the median feature vector, so each dot counts once."""
+    grouped: dict[tuple[float, float], list] = {}
+    for item in samples or []:
+        try:
+            feat, target = item[0], item[1]
+            key = (float(target[0]), float(target[1]))
+            grouped.setdefault(key, []).append([float(v) for v in feat])
+        except (TypeError, ValueError, IndexError):
+            continue
+    out = []
+    for key, feats in grouped.items():
+        width = min(len(row) for row in feats)
+        if width <= 0:
+            continue
+        med = [float(statistics.median(row[i] for row in feats)) for i in range(width)]
+        out.append((med, key))
+    return out
+
+
+def public_samples(samples: list) -> list:
+    """Check frames as plain lists, so they can be sent to the agent as JSON."""
+    out = []
+    for item in samples or []:
+        try:
+            feat, target = item[0], item[1]
+            out.append([[float(v) for v in feat], [float(target[0]), float(target[1])]])
+        except (TypeError, ValueError, IndexError):
+            continue
+    return out
+
+
+def retune_sentence(before, after) -> str | None:
+    """The before-and-after line for a check, or None when there is no number."""
+    if before is None or after is None:
+        return None
+    try:
+        return f"It was about {int(before)} pixels off. After re-tuning, about {int(after)}."
+    except (TypeError, ValueError):
+        return None
+
+
+def retune_check(model: dict, samples: list) -> dict:
+    """Re-tune a saved model from the 5 check dots. Nothing is written here.
+
+    `error_before` is the check as the model stands. `error_after` is the same dots
+    after gaze_model.retune shifts it. Fewer than 3 dots leaves the model unmoved.
+    """
+    from ally import gaze_model
+
+    raw = model.get("screen") or (1920, 1080)
+    screen = (int(raw[0]), int(raw[1]))
+    before = validation_score(model, samples, screen)
+    tuned = dict(model)
+    per = _per_target(samples)
+    if len(per) >= 3:
+        try:
+            tuned = gaze_model.retune(model, per)
+        except (ValueError, TypeError):
+            tuned = dict(model)
+    after = validation_score(tuned, samples, screen)
+    try:
+        camera = int(model.get("camera", 0))
+    except (TypeError, ValueError):
+        camera = 0
+    tuned = with_check(tuned, after, camera)
+    return {"model": tuned, "error_before": before.get("error_px"), "error_after": after.get("error_px"),
+            "validation": tuned.get("validation"), "grade": result_grade(after)}
+
+
+def adopt_model(path, screen, camera: int, click_learning: bool):
+    """The model a check just saved, and a fresh click corrector. (None, None) if it cannot be used."""
+    from ally import gaze_model
+
+    loaded = kept_model(gaze_model.load(path, screen), camera)
+    if not loaded:
+        return None, None
+    corrector = gaze_model.Corrector(loaded) if click_learning else None
+    return loaded, corrector
+
+
 def kept_model(model: dict | None, camera: int) -> dict | None:
     """None when this file was fit for a different camera. An older file with no camera still loads.
 
@@ -1200,6 +1281,8 @@ def classify_command(cmd: str) -> tuple[str, object]:
             return "calibrate", None
         if cmd == "check":
             return "check", None
+        if cmd == "reload":
+            return "reload", None
         if cmd == "choose off":
             return "choose_off", None
         if cmd.startswith("choose"):
@@ -1641,6 +1724,12 @@ def main(argv: list[str]) -> int:
                 else:
                     calib = Calibration(size)
                     calib.begin_check()
+            elif kind == "reload":
+                loaded, new_corrector = adopt_model(calib_path, size, camera, click_learning)
+                if loaded is not None:
+                    model = loaded
+                    corrector = new_corrector
+                    recent = RecentFeatures()
             elif kind == "click" and corrector is not None and calib is None:
                 apply_click(corrector, recent.frames, payload[0], payload[1], payload[2])
             elif kind == "hud_off":
@@ -1748,13 +1837,39 @@ def main(argv: list[str]) -> int:
                     emit(result)
                     calib.finish(result, ["Calibration didn't work.", result["why"]])
             elif state == "score":
-                scoring = model if getattr(calib, "check_only", False) else calib.model
+                check_only = getattr(calib, "check_only", False)
+                scoring = model if check_only else calib.model
+                samples = calib.validation_samples()
                 if scoring is None:
                     result = {"calibrated": False, "why": "The eye tracker needs a setup first."}
                     lines = ["The eye tracker needs a setup first."]
+                elif check_only:
+                    # The 5 dots re-tune the saved model. check_eye_tracker does the
+                    # retune and the save, then sends "reload" so this process uses it.
+                    try:
+                        preview = retune_check(scoring, samples)
+                        score = dict(preview["validation"] or {})
+                        score["error_px"] = preview["error_after"]
+                        grade = preview["grade"]
+                    except Exception:
+                        preview = None
+                        score = {"error_px": None, "region_hits": 0, "region_total": 0}
+                        grade = result_grade(score)
+                    cause = likely_cause(calib.cause_stats())
+                    lines = result_lines(grade, score, cause)
+                    sentence = None if preview is None else retune_sentence(
+                        preview.get("error_before"), preview.get("error_after"))
+                    if sentence:
+                        lines.append(sentence)
+                    result = {"calibrated": True, "error_px": scoring.get("error_px"),
+                              "dots": scoring.get("dots"), "validation": score, "grade": grade,
+                              "lines": lines, "cause": cause, "check": True,
+                              "error_before": None if preview is None else preview.get("error_before"),
+                              "error_after": None if preview is None else preview.get("error_after"),
+                              "samples": public_samples(samples)}
                 else:
                     try:
-                        score = validation_score(scoring, calib.validation_samples(), size)
+                        score = validation_score(scoring, samples, size)
                     except Exception:
                         score = {"error_px": None, "region_hits": 0, "region_total": 0}
                     cause = likely_cause(calib.cause_stats())
@@ -1763,8 +1878,6 @@ def main(argv: list[str]) -> int:
                     checked = with_check(scoring, score, camera)
                     result = {"calibrated": True, "error_px": checked.get("error_px"), "dots": checked.get("dots"),
                               "validation": checked["validation"], "grade": grade, "lines": lines, "cause": cause}
-                    if getattr(calib, "check_only", False):
-                        result["check"] = True
                     try:
                         gaze_model.save(checked, calib_path)
                         model = checked

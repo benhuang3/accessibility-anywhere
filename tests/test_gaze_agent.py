@@ -13,11 +13,11 @@ from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
 from ally.doctor import describe_calibration
 from ally.gaze import GazeManager, choice_index, ongoing_choice
-from ally.gaze_helper import RecentFeatures, apply_click, classify_command, nearest_click_frame
+from ally.gaze_helper import RecentFeatures, adopt_model, apply_click, classify_command, nearest_click_frame
 from ally.registry import ToolError
 from ally.senses.manager import Senses
-from ally.tools.gaze_tools import (calibration_words, check_words, choose_by_looking, looking_text,
-                                   where_am_i_looking)
+from ally.tools.gaze_tools import (calibration_words, check_eye_tracker, check_words, choose_by_looking,
+                                   looking_text, where_am_i_looking)
 
 
 class _Stdin:
@@ -238,6 +238,66 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(calibration_words({"calibrated": False, "why": "cancelled"}), "Eye tracker setup cancelled.")
         with self.assertRaises(ToolError):
             check_words({"calibrated": False, "why": "The eye tracker needs a setup first."})
+
+    def test_check_eye_tracker_retunes_and_saves(self):
+        import numpy as np
+
+        from ally import gaze_model
+        from ally.gaze_helper import retune_check
+
+        gaze, agent = manager()
+        screen = gaze.screen
+        rnd = np.random.default_rng(2)
+        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.1, 0.5, 0.9) for fx in (0.08, 0.5, 0.92)]
+        trained = []
+        for tx, ty in dots:
+            for _ in range(8):
+                u, v = tx / screen[0] - 0.5, ty / screen[1] - 0.5
+                feat = np.array([0.3 * u, 0.2 * v, 0.8 * u, 0.6 * v, 0, 0, 0, 0, 0.4], dtype=float)
+                feat = (feat + rnd.normal(0, 0.001, 9)).tolist()
+                trained.append((feat, (tx, ty)))
+        model = gaze_model.fit(trained, screen)
+        model["camera"] = 0
+        gaze_model.save(model, gaze.calibration_path)
+        samples = []
+        for feat, _target in trained[::8][:5]:
+            pred = gaze_model.predict(model, feat)
+            shifted = (pred[0] + 400.0, pred[1] - 150.0)
+            for _ in range(4):
+                samples.append((list(feat), shifted))
+        sent = []
+        gaze.send = lambda line: sent.append(line) or True
+        gaze.check = lambda timeout=40: {"calibrated": True, "check": True, "samples": samples,
+                                         "cause": "Sit still, with light on your face, and try again."}
+
+        class _Os:
+            def view(self):
+                return (1.0, 0, 0)
+
+            def other_magnifier_open(self):
+                return False
+
+            def magnify(self, _level):
+                raise AssertionError("the check dots are already unmagnified")
+
+        ctx = types.SimpleNamespace(agent=agent, os=_Os(), say=lambda _text: None)
+        with mock.patch("ally.gaze_model.retune", wraps=gaze_model.retune) as retuned:
+            text = check_eye_tracker(ctx)
+        retuned.assert_called_once()
+        self.assertEqual(sent, ["reload"])
+        saved = gaze_model.load(gaze.calibration_path, screen)
+        self.assertIsNotNone(saved)
+        self.assertNotEqual(saved["offset"], [0.0, 0.0])
+        preview = retune_check(model, samples)
+        self.assertGreater(preview["error_before"], preview["error_after"])
+        self.assertIn(str(preview["error_before"]), text)
+        self.assertIn(str(preview["error_after"]), text)
+        self.assertIn("re-tuning", text.lower())
+        self.assertEqual(saved["validation"]["error_px"], preview["error_after"])
+        loaded, corrector = adopt_model(gaze.calibration_path, screen, 0, True)
+        self.assertEqual(loaded["offset"], saved["offset"])
+        self.assertIsNotNone(corrector)
+        self.assertEqual(classify_command("reload"), ("reload", None))
 
 
 class DoctorTests(unittest.TestCase):
