@@ -140,6 +140,25 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 06:03 PT — Ganesh (via Claude Code) — `main`, merge of `risk-branch` (`883ce1c` and earlier)
+
+**Changed:** Ally Call (spacecall) and the safety overlay, for the demo.
+- The bear is the new companion design: bear in the bottom-right corner, one white card, amber
+  "Safety check" badge, buttons "Yes, close it" / "Keep it open", "Call Priya" as a footer link.
+- **Call Priya** opens a small mini-player in that corner ("Calling Priya…", then Priya's face), kept on
+  top of the page by Ally; Chrome is never resized. Ally's notes stack above it. Ended calls show
+  "Call ended" and close after ~4 s; only one call window at a time. A successful call closes the
+  warning question, so "Are you sure?" only follows a real "Keep it open".
+- The helper (phone or iPad) gets **Highlight** (live yellow marker on the elder's screen),
+  **Use their screen** (tap = click, drag = scroll; never typing) and **Close tab**, sent through new
+  SpacetimeDB reducers. The `ally-call` module and the GitHub Pages site are already published.
+- `bridge.py` (Ben H): now dispatches `helper_action` and `risk_call_ended` events to hooks (the second
+  was set by `ally/risk/wire.py` but never called before).
+- Demo: `demo/fakebook/` (feed, cluttered news article, gift-card scam page).
+
+**Others need to:** reload the Ally extension in `chrome://extensions` (new content script
+`call-relay.js`). Merged cleanly with Hayden's webcam handoff (`2c0f91f`); 338 tests pass.
+
 ### Oct 25, 05:51 PT — Hayden (via Claude Code) — `main`, commit `4d1d50e`
 
 **Changed:** the gaze ring now moves smoothly. It is redrawn at 60 fps on its own thread, with eased
