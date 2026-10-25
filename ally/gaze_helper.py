@@ -12,10 +12,11 @@
 Settings "gaze" (default true) turns gaze points on; "signals" sends face numbers (ally.senses.face) at
 "signals_fps". Frames never leave this process and are never written to disk.
 
-Commands on stdin: "calibrate"; "stop" cancels a calibration in progress; "hud on" / "hud off" show a live
-senses window, and "hud [[text, level], ...]" sets its rows; "card {json}" shows a readable card (text,
-optional title, size normal|large|tiny, seconds) and "card off" closes it. The card also closes itself
-after seconds. Unknown or broken lines are ignored.
+Commands on stdin: "calibrate"; "stop" cancels a calibration in progress; "click <t> <x> <y>" notes a
+mouse click so the estimate can learn (the click is not saved and is not sent anywhere); "hud on" /
+"hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows; "card {json}" shows
+a readable card (text, optional title, size normal|large|tiny, seconds) and "card off" closes it. The
+card also closes itself after seconds. Unknown or broken lines are ignored.
 It exits when the agent closes its stdin (like the hotkey helper),
 so a camera or MediaPipe crash can never take Ally down. The agent never opens the camera.
 ally.gaze_record opens it only while Ally is stopped, and it writes numbers, not pictures.
@@ -236,6 +237,47 @@ def eye_jumped(prev, vector, limit: float = JUMP) -> bool:
         return math.hypot(float(vector[0]) - float(prev[0]), float(vector[1]) - float(prev[1])) > limit
     except (TypeError, ValueError, IndexError):
         return False
+
+
+CLICK_LAG = 0.1  # people look at a spot, then click; the look is a little earlier than the click
+CLICK_SLACK = 0.25  # ignore a click when no frame is this close to that moment
+FEATURE_MEMORY = 1.0  # seconds of recent feature vectors kept for click correction
+
+
+class RecentFeatures:
+    """About one second of feature vectors, so a click can use the look just before it."""
+
+    def __init__(self, seconds: float = FEATURE_MEMORY):
+        self.seconds = float(seconds)
+        self.frames: list = []
+
+    def add(self, t, features) -> None:
+        t = float(t)
+        self.frames.append((t, features))
+        cutoff = t - self.seconds
+        self.frames = [frame for frame in self.frames if frame[0] >= cutoff]
+
+
+def nearest_click_frame(frames, click_time, lag: float = CLICK_LAG, slack: float = CLICK_SLACK):
+    """The feature frame closest to `lag` seconds before the click, or None when none is close."""
+    goal = float(click_time) - float(lag)
+    best = None
+    best_dt = None
+    for frame in frames:
+        dt = abs(float(frame[0]) - goal)
+        if best_dt is None or dt < best_dt:
+            best, best_dt = frame, dt
+    if best is None or best_dt > slack:
+        return None
+    return best
+
+
+def apply_click(corrector, frames, t, x, y) -> bool:
+    """Teach the corrector from the frame nearest 0.1 s before this click. False if none qualifies."""
+    frame = nearest_click_frame(frames, t)
+    if frame is None or corrector is None:
+        return False
+    return bool(corrector.add(frame[1], (float(x), float(y)), float(t)))
 
 
 def feature_set_name(value) -> str:
@@ -988,6 +1030,14 @@ def classify_command(cmd: str) -> tuple[str, object]:
             return "stop", None
         if cmd == "calibrate":
             return "calibrate", None
+        if cmd.startswith("click "):
+            parts = cmd.split()
+            if len(parts) != 4:
+                return "ignore", None
+            try:
+                return "click", (float(parts[1]), float(parts[2]), float(parts[3]))
+            except ValueError:
+                return "ignore", None
         if cmd == "card off":
             return "card_off", None
         if cmd.startswith("card"):
@@ -1255,12 +1305,15 @@ def main(argv: list[str]) -> int:
 
     gaze_on, signals_on = bool(cfg.get("gaze", True)), bool(cfg.get("signals", False))
     feature_set = feature_set_name(cfg.get("features", "v1"))
+    click_learning = bool(cfg.get("click_learning", True))
     if signals_on:
         from ally.senses import face as face_signals
     size = screen_size()
     calib_path = Path(cfg.get("calibration", "gaze_calibration.json"))
     camera = int(cfg.get("camera", 0))
     model = kept_model(gaze_model.load(calib_path, size), camera)
+    corrector = gaze_model.Corrector(model) if model is not None and click_learning else None
+    recent = RecentFeatures()
     try:
         landmarker = vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(cfg["model"])), running_mode=vision.RunningMode.VIDEO,
@@ -1317,6 +1370,8 @@ def main(argv: list[str]) -> int:
         try:
             if kind == "calibrate" and calib is None:
                 calib = Calibration(size)
+            elif kind == "click" and corrector is not None and calib is None:
+                apply_click(corrector, recent.frames, payload[0], payload[1], payload[2])
             elif kind == "hud_off":
                 if hud:
                     try:
@@ -1409,6 +1464,8 @@ def main(argv: list[str]) -> int:
                 try:
                     gaze_model.save(checked, calib_path)
                     model = checked
+                    corrector = gaze_model.Corrector(model) if click_learning else None
+                    recent = RecentFeatures()
                 except OSError as e:
                     result = {"calibrated": False, "why": f"couldn't save the calibration ({e})"}
                     lines = ["Calibration didn't work.", result["why"]]
@@ -1431,13 +1488,20 @@ def main(argv: list[str]) -> int:
                 emit({"t": now, "face": True})
                 last_face_msg = now
         else:
-            x, y = gaze_model.predict(model, feat[0])
+            vector = feat[0]
+            if corrector is not None:
+                recent.add(now, vector)
+                x, y = corrector.predict(vector)
+                radius_model = corrector.model
+            else:
+                x, y = gaze_model.predict(model, vector)
+                radius_model = model
             x = min(max(x, -0.05 * size[0]), 1.05 * size[0])
             y = min(max(y, -0.05 * size[1]), 1.05 * size[1])
             sx, sy = smooth(np.array([x, y]), now)
             emit({"t": round(now, 3), "x": int(min(max(sx, 0), size[0] - 1)),
                   "y": int(min(max(sy, 0), size[1] - 1)),
-                  "r": round(float(gaze_model.radius_px(model, feat[0])), 1)})
+                  "r": round(float(gaze_model.radius_px(radius_model, vector)), 1)})
         spare = period - (time.monotonic() - tick)
         if spare > 0:
             time.sleep(spare)

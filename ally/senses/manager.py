@@ -271,6 +271,7 @@ class Senses:
                 if e == "c":
                     self.hesitation.click(t, x, y)
                     sig = self.rage.click(t, x, y)
+                    self._forward_click(t, x, y)
                 else:
                     self.hesitation.move(t, x, y)
             elif e == "r":
@@ -280,6 +281,16 @@ class Senses:
                 sig = self.retype.key(t, e == "b")
         if sig is not None:
             self._signal(sig)
+
+    def _forward_click(self, t: float, x: int, y: int) -> None:
+        """The eye tracker learns from clicks. Nothing about the click is sent off this computer."""
+        gaze = getattr(self.agent, "gaze", None)
+        if gaze is None or not hasattr(gaze, "on_click"):
+            return
+        try:
+            gaze.on_click(t, x, y)
+        except Exception:
+            log.debug("couldn't forward a click to the eye tracker", exc_info=True)
 
     def tick(self, t: float | None = None) -> None:
         """Called about once a second (hesitation needs a clock, not just events)."""

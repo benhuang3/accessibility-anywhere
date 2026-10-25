@@ -111,7 +111,8 @@ class GazeManager:
                 self.error = "eye tracking and face sensing need: pip install mediapipe opencv-python"
             return
         signature = (int(self.cfg.get("camera", 0)), int(self.cfg.get("fps", 20)), self.wanted(),
-                     self.senses_wanted(), self._senses_fps(), str(self.cfg.get("features", "v1")))
+                     self.senses_wanted(), self._senses_fps(), str(self.cfg.get("features", "v1")),
+                     bool(self.cfg.get("click_learning", True)))
         if signature == self._signature and (self.running or self._gave_up):
             return
         self._signature, self._gave_up, self._crashes = signature, False, []
@@ -132,7 +133,8 @@ class GazeManager:
             args = {"model": str(self.model_path), "calibration": str(self.calibration_path),
                     "camera": int(self.cfg.get("camera", 0)), "fps": int(self.cfg.get("fps", 20)),
                     "gaze": self.wanted(), "signals": self.senses_wanted(), "signals_fps": self._senses_fps(),
-                    "features": self.cfg.get("features", "v1")}
+                    "features": self.cfg.get("features", "v1"),
+                    "click_learning": bool(self.cfg.get("click_learning", True))}
             try:
                 self.proc = subprocess.Popen(
                     [python_for_children(), "-m", "ally.gaze_helper", json.dumps(args)], cwd=str(CODE_ROOT),
@@ -241,6 +243,12 @@ class GazeManager:
     def _senses_fps(self) -> int:
         senses = getattr(self.agent, "senses", None)
         return int(senses.cfg.get("fps", 10)) if senses is not None else 10
+
+    def on_click(self, t: float, x: int, y: int) -> bool:
+        """Tell the camera helper about a mouse click so it can learn. The click stays on this computer."""
+        if not bool(self.cfg.get("click_learning", True)):
+            return False
+        return self.send(f"click {float(t):.3f} {int(x)} {int(y)}")
 
     def send(self, line: str) -> bool:
         """One command line to the camera helper ("calibrate", "hud on", "hud [...]", "hud off")."""
