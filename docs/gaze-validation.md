@@ -31,6 +31,9 @@ With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This tak
 
 If the tracker isn't set up, Ally can't see your face, your eyes don't stay on one spot, or the
 uncertainty is above `max_radius_px` (default 250), Ally uses the mouse pointer and says why.
+If that uncertainty stays high for about 10 seconds while your face is still visible, Ally says,
+once: "Your position changed. Say check my eye tracker to re-tune it." It waits 5 minutes before
+saying that again.
 
 Clicks can improve the estimate after setup (`click_learning`, on by default). The click is two
 numbers used on this computer. It is not saved as a picture and it is not sent anywhere. Set

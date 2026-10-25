@@ -12,7 +12,7 @@ from unittest import mock
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
 from ally.doctor import describe_calibration
-from ally.gaze import GazeManager, choice_index, ongoing_choice
+from ally.gaze import RETUNE_OFFER, GazeManager, choice_index, ongoing_choice
 from ally.gaze_helper import RecentFeatures, adopt_model, apply_click, classify_command, nearest_click_frame
 from ally.registry import ToolError
 from ally.senses.manager import Senses
@@ -114,6 +114,57 @@ class TargetTests(unittest.TestCase):
         gaze.override = False
         got = gaze.target()
         self.assertIn("off", got["why"])
+
+    def test_retune_offer_after_ten_seconds_then_waits(self):
+        self.assertEqual(RETUNE_OFFER, "Your position changed. Say check my eye tracker to re-tune it.")
+        gaze, agent = manager()
+        said, added = [], []
+        agent.events = types.SimpleNamespace(add=lambda kind, text: added.append((kind, text)))
+        agent.speaker = types.SimpleNamespace(say=lambda text: said.append(text))
+        now = {"t": 1_000.0}
+
+        def fake_time():
+            return now["t"]
+
+        def unsure():
+            gaze.face_at = now["t"]
+            gaze.points.clear()
+            _cluster(gaze, now["t"] - 1.0, 200, 180, radius=400)
+            return gaze.target()
+
+        with mock.patch("ally.gaze.time.time", fake_time):
+            got = unsure()
+            self.assertEqual(got["source"], "mouse")
+            self.assertIn("isn't sure", got["why"])
+            self.assertEqual(said, [])
+            now["t"] = 1_009.0
+            unsure()
+            self.assertEqual(said, [])
+            now["t"] = 1_010.0
+            unsure()
+            self.assertEqual(said, [RETUNE_OFFER])
+            self.assertEqual(added, [("gaze", RETUNE_OFFER)])
+            now["t"] = 1_010.0 + 299.0
+            unsure()
+            self.assertEqual(len(said), 1)
+            now["t"] = 1_010.0 + 300.0
+            unsure()
+            self.assertEqual(len(said), 2)
+            self.assertEqual(len(added), 2)
+
+            # A steady look, or a fallback that is not high uncertainty, starts the wait over.
+            gaze.points.clear()
+            _cluster(gaze, now["t"] - 1.0, 200, 180, radius=40)
+            self.assertEqual(gaze.target()["source"], "eyes")
+            now["t"] += 30.0
+            unsure()
+            self.assertEqual(len(said), 2)
+            gaze.face_at = 0
+            gaze.target()
+            now["t"] += 30.0
+            gaze.face_at = now["t"]
+            unsure()
+            self.assertEqual(len(said), 2)
 
 
 class ClickTests(unittest.TestCase):

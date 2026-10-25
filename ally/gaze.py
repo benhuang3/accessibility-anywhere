@@ -34,6 +34,10 @@ log = logging.getLogger("ally.gaze")
 
 # A fixation is a look that stays inside a box this size (width + height, pixels) for 0.2 s.
 FIXATION_RADIUS = 150
+# High uncertainty, with the face still in view, for this long: offer a re-tune, then stay quiet.
+UNSURE_OFFER_AFTER = 10.0
+RETUNE_OFFER_EVERY = 300.0
+RETUNE_OFFER = "Your position changed. Say check my eye tracker to re-tune it."
 
 FACE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/"
                   "float16/latest/face_landmarker.task")
@@ -131,6 +135,8 @@ class GazeManager:
         self._signature = None
         self._gave_up = False
         self.screen = (1920, 1080)
+        self._unsure_since: float | None = None
+        self._retune_offer_at = 0.0
 
     @property
     def cfg(self) -> dict:
@@ -420,6 +426,7 @@ class GazeManager:
         """
         why = self._eyes_blocked()
         if why:
+            self._note_uncertainty(False)
             return self._from_mouse(why)
         now = time.time()
         explicit = t0 is not None and t1 is not None
@@ -435,11 +442,14 @@ class GazeManager:
             if said and now - float(said[1]) < 20:
                 found = self._fixation(now - 1.5, now)
         if found is None:
+            self._note_uncertainty(False)
             return self._from_mouse("Your eyes didn't stay on one spot, so this is the mouse pointer.")
         point, radius = found
         limit = self._max_radius()
         if radius > limit:
+            self._note_uncertainty(True)
             return self._from_mouse("The eye tracker isn't sure enough, so this is the mouse pointer.")
+        self._note_uncertainty(False)
         x, y = int(round(point["x"])), int(round(point["y"]))
         region = gaze_model.region(x, y, self.screen)
         span = max(limit * 2.0, 1.0)
@@ -449,6 +459,36 @@ class GazeManager:
                            "radius_px": radius, "region": region}
         return {"x": x, "y": y, "radius_px": round(float(radius), 1), "confidence": confidence,
                 "region": region, "source": "eyes", "why": ""}
+
+    def _note_uncertainty(self, unsure: bool) -> None:
+        """Offer a re-tune when the eyes stay too unsure, with the face still visible, for ~10 s."""
+        now = time.time()
+        if not unsure:
+            self._unsure_since = None
+            return
+        if self._unsure_since is None:
+            self._unsure_since = now
+            return
+        if now - self._unsure_since < UNSURE_OFFER_AFTER:
+            return
+        if now - self._retune_offer_at < RETUNE_OFFER_EVERY:
+            return
+        self._retune_offer_at = now
+        self._offer_retune()
+
+    def _offer_retune(self) -> None:
+        events = getattr(self.agent, "events", None)
+        if events is not None:
+            try:
+                events.add("gaze", RETUNE_OFFER)
+            except Exception:
+                log.exception("couldn't record the eye-tracker re-tune offer")
+        speaker = getattr(self.agent, "speaker", None)
+        if speaker is not None:
+            try:
+                speaker.say(RETUNE_OFFER)
+            except Exception:
+                log.exception("couldn't say the eye-tracker re-tune offer")
 
     def _eyes_blocked(self) -> str | None:
         if not self.wanted():
