@@ -24,6 +24,23 @@ Built for Cal Hacks 13.0 by Ben H (brain and OS layer, integration), Hayden (sen
 
 Windows is the main platform. Linux (GNOME) keeps the core; the Mac version was removed.
 
+### How we use Cartesia
+
+Voice is Ally's main interface, and every word it says is **Cartesia Sonic** (`sonic-3.6`, then `sonic-3`):
+
+- **Speech shaped for older listeners**: offers are calm and a little slower, scam warnings calm (never alarmed) and
+  slower still with a pause before the question, apologies sympathetic; emotion, speed, volume and language are set
+  per sentence (`ally/speech.py`, `ally/voice_confirm.py`).
+- **Never silent**: Ally's own prompts are pre-rendered by Sonic and cached, a circuit breaker switches to the
+  computer's voice during an outage, and a model the account can't use is skipped.
+- **Listening with Ink**: spoken yes/no answers are transcribed with `ink-whisper` (about 700 ms from the end of
+  speech to the answer); a streaming Ink-2 turn-detection client is built and tested.
+- **Reading pages aloud**: long pages a part at a time ("keep reading"), and in 21 languages: "read this page
+  in Spanish" has Claude translate and Sonic speak it with `language: "es"`.
+
+119 unit tests, a 21-scenario end-to-end run and a 184-answer phrase set against a fake Cartesia server.
+Full write-up: **[docs/CARTESIA.md](docs/CARTESIA.md)**.
+
 ### How we use SpacetimeDB
 
 SpacetimeDB is the whole backend of **Ally Call**, the one-tap call to a trusted helper during a scam. One TypeScript
@@ -77,7 +94,7 @@ from the same tools. Clicks, reset and anything that sends data are never guesse
 | Make a page easier | "simple mode", "this site is too busy", "simple mode off" |
 | Bigger or smaller | "make the text bigger", "smaller", "bigger buttons", "zoom in" (only "zoom" zooms) |
 | Clear the clutter | "hide the pop-ups", "declutter", "simplify the menu", "check the page" |
-| Read | "read this page", "read the selection", "reader mode", "stop" |
+| Read | "read this page", "keep reading", "read this page in Spanish", "read the selection", "reader mode", "stop" |
 | Pictures | "zoom in on the picture of the bridge", "describe the picture", "next picture", "close the picture" |
 | Click | "show numbers", "click 7", "click sign in", "press continue" |
 | Find things | "where do I click to sign in", "where is the search box", "highlight the menu", "stop highlighting" |
@@ -366,7 +383,7 @@ python run.py agent        run without auto-restart (development)
 | `ally/senses/` | Struggle signals (face, mouse, keyboard) |
 | `ally/proactive.py`, `ally/voice_bus.py`, `ally/overlay/` | Offers, spoken offers, the bear overlay |
 | `ally/risk/` | Scam protection, Ally Call wiring, remote touch |
-| `ally/speech.py`, `ally/voice*.py`, `ally/listener.py` | Speech, yes/no answers, hands-free listening |
+| `ally/speech.py`, `ally/voice*.py`, `ally/listener.py` | Speech (Cartesia Sonic), yes/no answers (Ink), hands-free listening (`docs/CARTESIA.md`) |
 | `ally/server.py`, `ally/bridge.py`, `dashboard/` | Dashboard, API, extension link |
 | `extension/` | Chrome extension: `background.js` (actions), `steps/` (service-worker side), `page/` (page side) |
 | `spacecall/` | Ally Call: SvelteKit app + SpacetimeDB TypeScript module (`docs/SPACETIMEDB.md`) |
