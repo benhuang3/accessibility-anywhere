@@ -119,10 +119,14 @@ class BenchTests(unittest.TestCase):
             rec.write_text("\n".join(map(json.dumps,[{"rec":"meta","alias":"P"},
               {"rec":"helper","t":1,"f":{"squint_l":.1,"squint_r":.1,"width":.3,"blink":0,"smile":0,"yaw":0,"pitch":0}},
               {"rec":"label","name":"reading","start":1,"end":1,"expect":"natural"}])) ,encoding="utf-8")
-            report([str(rec)],out)
+            rows = report([str(rec)],out)
             self.assertTrue((out/"report.md").exists())
             self.assertTrue((out/"report.csv").exists())
             self.assertEqual(sorted(p.name for p in td.iterdir()),["out","r.jsonl"])
+            lean_hybrid = [row for row in rows
+                           if row["kind"] == "lean" and row["method"] == "hybrid"]
+            self.assertTrue(lean_hybrid)
+            self.assertTrue(all(row["squint_off"] == "" for row in lean_hybrid))
 
     def test_tuning_requires_three_people(self):
         with tempfile.TemporaryDirectory() as td:

@@ -321,7 +321,7 @@ def evaluate(record, kind="squint", tuning=None):
                 "duration": max(0.0, segment["end"] - segment["start"]),
                 "latency": round(hits[0].ts - segment["start"], 3) if positive and hits else "",
                 "squint_off": (int(not model.get("enabled"))
-                               if method in ("personal", "hybrid") else ""),
+                               if kind == "squint" and method in ("personal", "hybrid") else ""),
                 **_person_groups(record["meta"]),
             }
             rows.append(row)
@@ -536,9 +536,16 @@ def report(paths, out, london=None):
         md.append("| n/a | n/a | 0 | n/a | n/a |")
     raw_count = sum(bool(item["raw"]) for _path, record in recordings for item in record["frames"])
     people = sorted({record["meta"].get("alias", path.stem) for path, record in recordings})
+    model_rows = [row for row in rows
+                  if row["kind"] == "squint" and row["method"] == "personal"
+                  and row.get("squint_off") != ""]
+    model_people = {row["person"] for row in model_rows}
+    enabled_people = {row["person"] for row in model_rows if row["squint_off"] == 0}
     md.extend(["", "## Data and recommendation", "",
                f"Recordings: {len(recordings)} files; {len(people)} aliases; "
                f"{raw_count} raw landmark frames.",
+               f"Personal model fit for {len(model_people)} people; enabled for "
+               f"{len(enabled_people)}.",
                "Personal and hybrid methods need labelled calibration and deliberate squint samples.",
                "London stills test smile leakage only; they contain no labelled squints.",
                "Keep v1 as the default until raw labelled volunteer recordings support a comparison.", ""])
