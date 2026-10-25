@@ -61,7 +61,8 @@ def describe_calibration(model, camera, features="v1", now=None) -> tuple[str, s
     """
     from .gaze_helper import kept_model, result_grade
 
-    features = features if features in ("v1", "v2") else "v1"
+    known = ("v1", "v2", "v3", "v4", "v5")
+    features = features if features in known else "v1"
     if not model:
         return "warn", f'not calibrated yet: say "Ally, calibrate my eyes" (features {features})'
     if kept_model(model, camera) is None:
@@ -82,10 +83,26 @@ def describe_calibration(model, camera, features="v1", now=None) -> tuple[str, s
     else:
         check = "no held-out check saved"
         status = "ok"
-    feat = model.get("features") if model.get("features") in ("v1", "v2") else features
+    feat = model.get("features") if model.get("features") in known else features
     cam = model.get("camera")
     cam_bit = f"camera {cam}" if cam is not None else f"camera {camera}"
     return status, f"{lead}; {check}; features {feat}; {cam_bit}"
+
+
+def describe_gaze_cnn(state_dir) -> tuple[str, str, str]:
+    """Whether the v5 model file is present and onnxruntime imports. Does not open the camera."""
+    from .gaze_helper import cnn_readiness
+
+    ready = cnn_readiness(state_dir)
+    if ready["file"] and ready["onnxruntime"]:
+        return "ok", "Gaze model", "mobileone_s0_gaze.onnx is present, and onnxruntime imports"
+    missing = []
+    if not ready["file"]:
+        missing.append("mobileone_s0_gaze.onnx is missing")
+    if not ready["onnxruntime"]:
+        missing.append("onnxruntime is not installed")
+    return "warn", "Gaze model", (
+        "; ".join(missing) + ". Fix: python scripts/get_gaze_models.py, pip install onnxruntime")
 
 
 def voice_checks(cfg: dict, online: bool = True) -> list[tuple[str, str, str]]:
@@ -223,17 +240,19 @@ def run_checks(home=None, online: bool = True) -> list[tuple[str, str, str]]:
     gaze_cfg = cm.data["gaze"]
     if not gaze_cfg.get("enabled"):
         out.append(("ok", "Eye tracking", "off (gaze.enabled = false)"))
-    elif not has_gaze_packages():
-        out.append(("warn", "Eye tracking", "pip install mediapipe opencv-python"))
     else:
-        from . import gaze_model
+        if not has_gaze_packages():
+            out.append(("warn", "Eye tracking", "pip install mediapipe opencv-python"))
+        else:
+            from . import gaze_model
 
-        loaded = gaze_model.load(paths.state_dir / "gaze_calibration.json")
-        status, detail = describe_calibration(loaded, int(gaze_cfg.get("camera", 0)),
-                                              str(gaze_cfg.get("features", "v1")))
-        if loaded is None and not (paths.state_dir / "models" / "face_landmarker.task").exists():
-            detail += "; the face model (3.7 MB) downloads on first start"
-        out.append((status, "Eye tracking", detail))
+            loaded = gaze_model.load(paths.state_dir / "gaze_calibration.json")
+            status, detail = describe_calibration(loaded, int(gaze_cfg.get("camera", 0)),
+                                                  str(gaze_cfg.get("features", "v5")))
+            if loaded is None and not (paths.state_dir / "models" / "face_landmarker.task").exists():
+                detail += "; the face model (3.7 MB) downloads on first start"
+            out.append((status, "Eye tracking", detail))
+        out.append(describe_gaze_cnn(paths.state_dir))
     s = cm.data["senses"]
     if not s.get("vision"):
         out.append(("ok", "Face sensing", "off (senses.vision = false)"))
