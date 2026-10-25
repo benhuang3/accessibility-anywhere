@@ -47,6 +47,66 @@ def _set_dpi_aware() -> None:
             pass
 
 
+_SWP_NOSIZE, _SWP_NOMOVE, _SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+_HWND_TOPMOST = -1
+_GWL_EXSTYLE, _WS_EX_NOACTIVATE, _WS_EX_TOPMOST = -20, 0x08000000, 0x00000008
+
+
+def _hwnd(win) -> int:
+    return int(win.wm_frame(), 16)
+
+
+def _no_activate(win) -> None:
+    """Windows: showing or clicking this window must not pull focus away from the browser."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        hwnd = _hwnd(win)
+        style = user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+        user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, style | _WS_EX_NOACTIVATE | _WS_EX_TOPMOST)
+    except Exception:
+        pass
+
+
+def _show_without_focus(win) -> None:
+    """Tk's deiconify activates the window. Show it, then hand focus straight back to whatever had it."""
+    previous = 0
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            previous = ctypes.windll.user32.GetForegroundWindow()
+        except Exception:
+            previous = 0
+    _no_activate(win)
+    win.deiconify()
+    if previous:
+        try:
+            import ctypes
+
+            win.update_idletasks()
+            if ctypes.windll.user32.GetForegroundWindow() != previous:
+                ctypes.windll.user32.SetForegroundWindow(previous)
+        except Exception:
+            pass
+
+
+def _raise_without_focus(win) -> bool:
+    """Put the window back on top without activating it. False when not on Windows."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.user32.SetWindowPos(_hwnd(win), _HWND_TOPMOST, 0, 0, 0, 0,
+                                                      _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOACTIVATE))
+    except Exception:
+        return False
+
+
 class Overlay:
     def __init__(self, on_action: Callable[[str], None] | None = None):
         self.on_action = on_action
@@ -160,8 +220,8 @@ class Overlay:
             if win is None:
                 continue
             try:
-                win.attributes("-topmost", True)
-                win.lift()
+                if not _raise_without_focus(win):
+                    win.attributes("-topmost", True)
             except Exception:
                 pass
 
@@ -336,20 +396,11 @@ class Overlay:
         else:
             self._offer_x = x
         if is_new:
-            win.deiconify()
-        if first_btn is not None:
-            if offer is None:
-                if is_new:
-                    win.focus_force()
-                first_btn.focus_set()
-            elif self._focused_offer != offer.id:
-                win.focus_force()
-                first_btn.focus_set()
-                self._focused_offer = offer.id
-            elif had_focus:
-                # Rebuilding replaces the focused button, but must not steal
-                # focus back from another application for the same decision.
-                first_btn.focus_set()
+            _show_without_focus(win)
+        # Never take keyboard focus from the app the person is using: on Windows that feels like being
+        # alt-tabbed out. The panel is answered by click or by voice; Enter/Esc work once they click it.
+        if first_btn is not None and had_focus:
+            first_btn.focus_set()
         return win
 
     def _px(self, n: float) -> int:
@@ -389,7 +440,8 @@ class Overlay:
             return
         try:
             self._place(self._offer_win, self._offer_x, self._card_bottom + 12)
-            self._offer_win.lift()
+            if not _raise_without_focus(self._offer_win):
+                self._offer_win.lift()
         except Exception:
             pass
 
