@@ -51,7 +51,7 @@ SPEC = {
               "language": str, "beep": bool, "always_listen": bool, "wake_words": list, "follow_up_seconds": NUM,
               "whisper_model": str},
     "gaze": {"enabled": bool, "camera": int, "fps": int, "pan_speed": NUM, "show_dot": bool,
-             "features": ("v1", "v2", "v3", "v4"), "calibration_poses": int,
+             "features": ("v1", "v2", "v3", "v4", "v5"), "calibration_poses": int,
              "click_learning": bool, "max_radius_px": NUM, "answer_offers": bool},
     "senses": {"vision": bool, "input": bool, "fps": int, "calibrate_seconds": NUM, "solo": list,
                "window_seconds": NUM, "cooldown_seconds": NUM, "min_confidence": NUM, "decline_seconds": NUM,

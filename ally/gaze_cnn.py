@@ -279,18 +279,7 @@ def project(features, gaze_yaw: float, gaze_pitch: float, screen, screen_mm):
     gaze_yaw and gaze_pitch are radians in v4's signed convention (head angle plus
     eye angle). tx, ty, tz are centimetres; the camera sits at the top centre.
     """
-    sx, sy, _shy, _shp, stx, sty = gm._V4_SIGNS
-    _yaw, _pitch, tx, ty, tz = (float(x) for x in features[4:9])
-    if abs(tz) < gm._V4_MIN_DISTANCE_CM:
-        return None
-    if abs(gaze_yaw) >= 1.4 or abs(gaze_pitch) >= 1.4:
-        return None
-    kx, ky = gm._px_per_cm(screen, screen_mm)
-    distance = abs(tz)
-    return (
-        float(screen[0] / 2 + sx * (stx * tx + distance * math.tan(gaze_yaw)) * kx),
-        float(sy * (sty * ty + distance * math.tan(gaze_pitch)) * ky),
-    )
+    return gm.project_gaze(features, gaze_yaw, gaze_pitch, screen, screen_mm)
 
 
 def needed_combined(features, target, screen, screen_mm):
@@ -357,42 +346,21 @@ def predict_cnn(model, features, yaw_deg, pitch_deg):
 
 def hybrid_terms(features, yaw_deg, pitch_deg) -> np.ndarray:
     """v4's eye terms, then the model's yaw and pitch in radians, then the constant."""
-    eye = gm._v4_eye_terms(features)
-    angles = np.array([math.radians(float(yaw_deg)), math.radians(float(pitch_deg))], dtype=float)
-    return np.concatenate([eye[:-1], angles, eye[-1:]])
+    return gm.hybrid_terms(features, yaw_deg, pitch_deg)
 
 
 def fit_hybrid(samples, screen, screen_mm, lam: float = 1e-3) -> dict | None:
     """One regression from eye terms plus model angles onto the needed eye angle.
 
     Same ridge as v4. samples are (features, target_xy, yaw_deg, pitch_deg).
+    The live tracker fits this as feature set v5; this is the same function.
     """
-    rows, needed = [], []
-    for feat, target, yaw, pitch in samples:
-        eye = gm._v4_needed(feat, target, screen, screen_mm)
-        if eye is None:
-            continue
-        rows.append(hybrid_terms(feat, yaw, pitch))
-        needed.append(eye)
-    if len(rows) < 8:
-        return None
-    design = np.asarray(rows, dtype=float)
-    target = np.asarray(needed, dtype=float)
-    coef = np.linalg.solve(design.T @ design + lam * np.eye(design.shape[1]), design.T @ target)
-    return {
-        "coef": coef.tolist(),
-        "screen": [int(screen[0]), int(screen[1])],
-        "screen_mm": [float(screen_mm[0]), float(screen_mm[1])],
-    }
+    return gm.fit_hybrid(samples, screen, screen_mm, lam)
 
 
 def predict_hybrid(model, features, yaw_deg, pitch_deg):
     """Screen point: predicted eye angle added to the head, then v4's projection."""
-    eye = hybrid_terms(features, yaw_deg, pitch_deg) @ np.asarray(model["coef"], dtype=float)
-    _sx, _sy, shy, shp, _stx, _sty = gm._V4_SIGNS
-    yaw, pitch = float(features[4]), float(features[5])
-    point = project(features, shy * yaw + float(eye[0]), shp * pitch + float(eye[1]),
-                    model["screen"], model["screen_mm"])
+    point = gm.hybrid_point(model, features, yaw_deg, pitch_deg)
     if point is None:
         return None
     return clamp_point(point, model["screen"])

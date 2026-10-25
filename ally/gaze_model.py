@@ -96,13 +96,44 @@ def features(landmarks, blendshapes: dict | None, matrix, width: int, height: in
     p = _frame_parts(landmarks, blendshapes, matrix, width, height)
     return None if p is None else (p[0], p[3])
 
-def features_for_model(model, landmarks, blendshapes, matrix, width, height):
-    """Return the selected model's feature vector and eye openness, or None for bad landmarks."""
+def _cnn_pair(cnn):
+    """Two degrees from a (yaw, pitch) pair, or (nan, nan) when the CNN did not answer."""
+    missing = (float('nan'), float('nan'))
+    if cnn is None:
+        return missing
+    try:
+        yaw, pitch = cnn[0], cnn[1]
+    except (TypeError, IndexError):
+        return missing
+    out = []
+    for value in (yaw, pitch):
+        if value is None:
+            out.append(float('nan'))
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            out.append(float('nan'))
+            continue
+        out.append(number)
+    return (out[0], out[1]) if len(out) == 2 else missing
+
+
+def features_for_model(model, landmarks, blendshapes, matrix, width, height, cnn=None):
+    """Return the selected model's feature vector and eye openness, or None for bad landmarks.
+
+    v5 is the v4 vector plus the CNN yaw and pitch in degrees. Other feature sets ignore `cnn`.
+    Missing angles are NaN, and predict then uses the v4 model stored beside the v5 fit.
+    """
     p = _frame_parts(landmarks, blendshapes, matrix, width, height, model.get('screen_mm', (344.0, 193.0)))
     if p is None:
         return None
     fs = model.get('features', 'v1')
-    return (p[2] if fs == 'v3' else p[1] if fs == 'v2' else p[0], p[3])
+    base = p[2] if fs == 'v3' else p[1] if fs == 'v2' else p[0]
+    if fs == 'v5':
+        yaw, pitch = _cnn_pair(cnn)
+        base = list(base) + [yaw, pitch]
+    return (base, p[3])
 
 def expand(f, feature_set='v1'):
     """Expand raw features with the polynomial and interaction terms used by regression."""
@@ -131,13 +162,15 @@ def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET, openness_cutoff=None,
         sample_weights=None, screen_mm=None):
     """Fit a model from (feature vector, target point) samples across at least six dots.
 
-    screen_mm: the screen's physical size in millimetres (v4 uses it; default this laptop's).
+    screen_mm: the screen's physical size in millimetres (v4 and v5 use it; default this laptop's).
     """
-    if feature_set not in ('v1', 'v2', 'v3', 'v4'):
-        raise ValueError('feature_set must be v1, v2, v3 or v4')
+    if feature_set not in ('v1', 'v2', 'v3', 'v4', 'v5'):
+        raise ValueError('feature_set must be v1, v2, v3, v4 or v5')
     targets = sorted({tuple(t) for _f, t in samples})
     if len(targets) < 6:
         raise ValueError(f'saw your eyes at only {len(targets)} of the dots')
+    if feature_set == 'v5':
+        return _fit_v5(samples, screen, screen_mm, openness_cutoff, sample_weights)
     if feature_set == 'v4':
         return _fit_v4(samples, screen, screen_mm, openness_cutoff, sample_weights)
     raw = expand([f for f, _ in samples], feature_set)
@@ -215,18 +248,11 @@ def _v4_needed(f, target, screen, screen_mm):
 
 def _v4_point(model, f):
     """Raw screen point for one feature vector, or None when the head pose isn't usable."""
-    sx, sy, shy, shp, stx, sty = _V4_SIGNS
-    yaw, pitch, tx, ty, tz = (float(x) for x in f[4:9])
-    if abs(tz) < _V4_MIN_DISTANCE_CM:
-        return None
+    _sx, _sy, shy, shp, _stx, _sty = _V4_SIGNS
+    yaw, pitch = float(f[4]), float(f[5])
     eye_yaw, eye_pitch = _v4_eye_terms(f) @ np.asarray(model['coef'], dtype=float)
-    a, b = shy * yaw + eye_yaw, shp * pitch + eye_pitch
-    if abs(a) >= 1.4 or abs(b) >= 1.4:  # nearly parallel to the screen: no sensible point
-        return None
     screen, screen_mm = model['screen'], model.get('screen_mm') or DEFAULT_SCREEN_MM
-    kx, ky = _px_per_cm(screen, screen_mm)
-    d = abs(tz)
-    return (screen[0] / 2 + sx * (stx * tx + d * math.tan(a)) * kx, sy * (sty * ty + d * math.tan(b)) * ky)
+    return project_gaze(f, shy * yaw + eye_yaw, shp * pitch + eye_pitch, screen, screen_mm)
 
 
 def _v4_coef(rows, screen, screen_mm, lam=1e-3):
@@ -264,13 +290,162 @@ def _fit_v4(samples, screen, screen_mm, openness_cutoff, sample_weights):
                   'fallback': fallback, 'mean': None, 'std': None})
     return model
 
+
+# ---------------------------------------------------------------- v5: v4 eyes plus a CNN's angles
+# v5 is the v4 feature vector, then the CNN yaw and pitch in degrees (11 numbers). The fit is the
+# hybrid regression: v4's eye terms and those two angles, onto the eye angle the head would need.
+# A v4 model is stored beside it, the way v4 stores a v1 model, and a frame with no CNN angles
+# (missing, or NaN) predicts with that. The live tracker uses mobileone_s0.
+CNN_MODEL = 'mobileone_s0'
+
+
+def _finite_angle(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def _v5_angles(f):
+    """CNN yaw and pitch in degrees from a v5 vector, or None when either is missing."""
+    try:
+        if len(f) < 11:
+            return None
+        yaw, pitch = f[9], f[10]
+    except TypeError:
+        return None
+    yaw, pitch = _finite_angle(yaw), _finite_angle(pitch)
+    if yaw is None or pitch is None:
+        return None
+    return yaw, pitch
+
+
+def _v4_of(f) -> list[float]:
+    """The v4 vector at the front of a v5 vector (the CNN degrees sit after it)."""
+    return [float(v) for v in list(f)[:9]]
+
+
+def project_gaze(features, gaze_yaw: float, gaze_pitch: float, screen, screen_mm):
+    """Screen point for a combined gaze angle, using v4's head-to-screen geometry.
+
+    gaze_yaw and gaze_pitch are radians in v4's signed convention (head angle plus
+    eye angle). None when the head is too close or the ray misses the screen.
+    """
+    sx, sy, _shy, _shp, stx, sty = _V4_SIGNS
+    _yaw, _pitch, tx, ty, tz = (float(x) for x in features[4:9])
+    if abs(tz) < _V4_MIN_DISTANCE_CM:
+        return None
+    if abs(gaze_yaw) >= 1.4 or abs(gaze_pitch) >= 1.4:
+        return None
+    kx, ky = _px_per_cm(screen, screen_mm)
+    distance = abs(tz)
+    return (
+        float(screen[0] / 2 + sx * (stx * tx + distance * math.tan(gaze_yaw)) * kx),
+        float(sy * (sty * ty + distance * math.tan(gaze_pitch)) * ky),
+    )
+
+
+def hybrid_terms(features, yaw_deg, pitch_deg) -> np.ndarray:
+    """v4's eye terms, then the model's yaw and pitch in radians, then the constant."""
+    eye = _v4_eye_terms(features)
+    angles = np.array([math.radians(float(yaw_deg)), math.radians(float(pitch_deg))], dtype=float)
+    return np.concatenate([eye[:-1], angles, eye[-1:]])
+
+
+def fit_hybrid(samples, screen, screen_mm, lam: float = 1e-3) -> dict | None:
+    """One regression from eye terms plus model angles onto the needed eye angle.
+
+    Same ridge as v4. samples are (features, target_xy, yaw_deg, pitch_deg), and features
+    are the v4 vector. Returns None when fewer than 8 frames have a usable head pose.
+    """
+    screen_mm = tuple(float(v) for v in (screen_mm or DEFAULT_SCREEN_MM))
+    rows, needed = [], []
+    for feat, target, yaw, pitch in samples:
+        eye = _v4_needed(feat, target, screen, screen_mm)
+        if eye is None:
+            continue
+        rows.append(hybrid_terms(feat, yaw, pitch))
+        needed.append(eye)
+    if len(rows) < 8:
+        return None
+    design = np.asarray(rows, dtype=float)
+    target_angles = np.asarray(needed, dtype=float)
+    coef = np.linalg.solve(design.T @ design + lam * np.eye(design.shape[1]), design.T @ target_angles)
+    return {
+        'coef': coef.tolist(),
+        'screen': [int(screen[0]), int(screen[1])],
+        'screen_mm': [float(screen_mm[0]), float(screen_mm[1])],
+    }
+
+
+def hybrid_point(model, features, yaw_deg, pitch_deg):
+    """Raw screen point from the hybrid eye angle, or None. No clamp and no offset."""
+    eye = hybrid_terms(features, yaw_deg, pitch_deg) @ np.asarray(model['coef'], dtype=float)
+    _sx, _sy, shy, shp, _stx, _sty = _V4_SIGNS
+    yaw, pitch = float(features[4]), float(features[5])
+    screen = model['screen']
+    screen_mm = model.get('screen_mm') or DEFAULT_SCREEN_MM
+    return project_gaze(features, shy * yaw + float(eye[0]), shp * pitch + float(eye[1]), screen, screen_mm)
+
+
+def _fit_v5(samples, screen, screen_mm, openness_cutoff, sample_weights):
+    """Hybrid fit. The v4 model fitted on the same dots is the fallback for frames with no CNN angles."""
+    screen_mm = tuple(float(v) for v in (screen_mm or DEFAULT_SCREEN_MM))
+    plain = [(_v4_of(f), t) for f, t in samples]
+    fallback = fit(plain, screen, 'v4', openness_cutoff, sample_weights, screen_mm=screen_mm)
+    angled = []
+    for feat, target in samples:
+        pair = _v5_angles(feat)
+        if pair is None:
+            continue
+        angled.append((_v4_of(feat), target, pair[0], pair[1]))
+    fitted = fit_hybrid(angled, screen, screen_mm)
+    if fitted is None:  # no usable CNN angles: the v4 model still tracks
+        return fallback
+    targets = sorted({tuple(row[1]) for row in angled})
+    errs = []
+    for g in targets:
+        part = fit_hybrid([row for row in angled if tuple(row[1]) != g], screen, screen_mm)
+        if part is None:
+            continue
+        pts = []
+        for feat, target, yaw, pitch in angled:
+            if tuple(target) != g:
+                continue
+            point = hybrid_point(part, feat, yaw, pitch)
+            if point is not None:
+                pts.append(point)
+        if pts:
+            errs.append(float(np.hypot(*(np.median(np.asarray(pts), axis=0) - np.asarray(g, float)))))
+    model = dict(fallback)
+    model.update({'features': 'v5', 'coef': fitted['coef'], 'screen_mm': list(screen_mm),
+                  'error_px': round(float(np.median(errs))) if errs else fallback['error_px'],
+                  'fallback': fallback, 'cnn_model': CNN_MODEL, 'mean': None, 'std': None})
+    return model
+
+
 def predict(model: dict, f, clamp: bool = True) -> tuple[float, float]:
     """Predict a screen point, clamped to a 10% margin beyond its edges.
 
     clamp=False gives the raw estimate: retune and Corrector measure drift from it, because after a
     head move the estimate can sit far off screen and clamping would hide most of the shift.
     """
-    if model.get('features') == 'v4':
+    if model.get('features') == 'v5':
+        pair = _v5_angles(f)
+        try:
+            base = _v4_of(f) if len(f) >= 9 else f
+        except TypeError:
+            base = f
+        point = hybrid_point(model, base, pair[0], pair[1]) if pair is not None else None
+        if point is None:  # no CNN angles, or the head pose cannot be projected: the v4 model fitted alongside
+            point = predict(model['fallback'], base, clamp=False)
+        p = np.asarray(point, dtype=float)
+    elif model.get('features') == 'v4':
         point = _v4_point(model, f)
         if point is None:  # no usable head pose in this frame: the v1 model fitted alongside
             point = predict(model['fallback'], f, clamp=False)
