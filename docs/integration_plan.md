@@ -140,6 +140,30 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 03:01 PT — Hayden (via Claude Code) — branch `hayden/face-setup`, commit `6cc3023`
+
+**Added: a one-time face setup and a face profile, optionally saved in SpacetimeDB.** 973 tests pass.
+- **Face setup (about 90 s):** "set up my face" or "calibrate my eyes" runs one flow:
+  1. a face scan with a ring that fills as you turn your head (it also checks light, distance and glare);
+  2. the 9 gaze dots;
+  3. sit back, then lean in, which also sets the lean range;
+  4. reading at the middle, top and bottom, a smile and squints, which set the senses baseline and
+     the personal squint model;
+  5. 5 check dots.
+  The old calibrate tool is an alias, and quick calibrate is unchanged.
+- **Face profile (`ally/face_profile.py`, `ally/profile_store.py`):**
+  - Numbers only (model coefficients and baseline statistics), never images.
+  - Always saved in `state/face_profile.json`, and restored at startup when nothing local exists.
+  - `[profile] sync = spacetimedb` (off by default) also saves it to the `ally-call` database.
+  - `python run.py profile show|delete`.
+- **Ganesh:** `spacecall/server/src/profile.ts` adds a private `face_profile` table, the
+  `save_face_profile` and `delete_face_profile` reducers, and an owner-only `own_face_profile` view.
+  None of your call tables change. To deploy, from `spacecall/`: `npm test`, `npm run check:server`,
+  then `spacetime publish ally-call --server maincloud --module-path server`. Do **not** use
+  `--delete-data`.
+- **Others:** this branch also contains `main`, `hayden/senses-v2`, `hayden/voice-calibration`
+  (the Cartesia WAV fix) and `risk-branch`.
+
 ### Oct 25, 02:10 PT — Hayden (via Claude Code) — branch `hayden/senses-v2`, merges `908ad74`, `26775c9`
 
 **Added (opt-in, defaults unchanged, live behavior unchanged):** senses round 2. 899 tests pass.
