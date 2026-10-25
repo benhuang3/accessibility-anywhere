@@ -29,13 +29,17 @@ def _summarize(points, screen):
             'region_hits': hits, 'region_total': len(points)}
 
 
-def _grouped_samples(targets, feats, phase, min_openness=0.12):
+def _grouped_samples(targets, feats, phase, min_openness=0.12,
+                     calibration_pose=None, feature_set='v1', reject_head_motion=False):
     groups = {}
     for target in targets:
         if target.get('phase') != phase:
             continue
         items = [(f, (target['x'], target['y']), op) for t, f, op in feats
                  if target['start'] <= t <= target['end']]
+        if (reject_head_motion and calibration_pose is not None
+                and gm.target_head_moved([item[0] for item in items], calibration_pose, feature_set)):
+            continue
         clean = gm.clean_samples(items, min_openness=min_openness, preserve_openness=True)
         if clean:
             groups.setdefault(tuple((target['x'], target['y'])), []).extend(clean)
@@ -60,11 +64,27 @@ def evaluate(path):
                            for target in targets if target.get('phase') == 'calibration'
                            for t, f, op in feats if target['start'] <= t <= target['end']]
         cutoff = gm.openness_cutoff(raw_calibration)
-        calibration = _grouped_samples(targets, feats, 'calibration', cutoff)
-        train = [item for group in calibration.values() for item in group]
-        if len(calibration) < 6:
+        pose_start = 10 if fs == 'v2' else 4
+        pose_size = 6 if fs == 'v2' else 5
+        calibration_frames = [f for t, f, _ in feats
+                              if any(target.get('phase') == 'calibration'
+                                     and target['start'] <= t <= target['end'] for target in targets)]
+        calibration_pose = np.median([f[pose_start:pose_start + pose_size]
+                                      for f in calibration_frames], axis=0).tolist()
+        train = []
+        train_weights = []
+        for target in targets:
+            if target.get('phase') != 'calibration':
+                continue
+            items = [(f, (target['x'], target['y']), op) for t, f, op in feats
+                     if target['start'] <= t <= target['end']]
+            moved = gm.target_head_moved([item[0] for item in items], calibration_pose, fs)
+            clean = gm.clean_samples(items, min_openness=cutoff, preserve_openness=True)
+            train.extend((f, point) for f, point, _ in clean)
+            train_weights.extend([0.9 if moved else 1.0] * len(clean))
+        if len({tuple(point) for _, point in train}) < 6:
             continue
-        model = gm.fit([(f, target) for f, target, _ in train], screen, fs, cutoff)
+        model = gm.fit(train, screen, fs, cutoff, train_weights)
         corrector = gm.Corrector(model)
         for click in sorted((r for r in rows if r.get('rec') == 'click'), key=lambda c: c['t']):
             nearest = _frame_before_click(feats, click['t'])

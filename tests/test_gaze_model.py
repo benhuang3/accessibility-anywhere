@@ -1,4 +1,5 @@
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -129,6 +130,17 @@ class GazeModelTests(unittest.TestCase):
         self.assertTrue(gm.is_blink({'openness_cutoff': cutoff}, 0.10))
         self.assertFalse(gm.is_blink({'openness_cutoff': cutoff}, 0.20))
         self.assertTrue(gm.is_blink({}, 0.11))
+
+    def test_target_head_movement_checks_pose_and_within_target_spread(self):
+        typical = [0.0, 0.0, 0, 0, 1]
+        steady = [[0, 0, 0, 0, 0.01, -0.01, 0, 0, 1] for _ in range(10)]
+        self.assertFalse(gm.target_head_moved(steady, typical))
+        shifted = [[0, 0, 0, 0, 0.07, 0, 0, 0, 1] for _ in range(10)]
+        self.assertTrue(gm.target_head_moved(shifted, typical))
+        moving = [row[:] for row in steady]
+        for row in moving[-4:]:
+            row[4] = math.radians(5)
+        self.assertTrue(gm.target_head_moved(moving, typical))
 
     def test_corrector_filter(self):
         samples = []

@@ -80,12 +80,16 @@ def expand(f, feature_set='v1'):
     head = f[:, 10:16]
     return np.column_stack([f, h1 * head[:, 0], v1 * head[:, 1], h2 * head[:, 0], v2 * head[:, 1], h1 * v1, h2 * v2])
 
-def _ridge(x: np.ndarray, y: np.ndarray, lam: float) -> np.ndarray:
+def _ridge(x: np.ndarray, y: np.ndarray, lam: float, weights=None) -> np.ndarray:
     """Solve ridge regression without shrinking the intercept column."""
     penalty = np.diag([0.0] + [1.0] * (x.shape[1] - 1))
+    if weights is not None:
+        weighted = np.asarray(weights, dtype=float)[:, None]
+        return np.linalg.solve(x.T @ (weighted * x) + lam * penalty, x.T @ (weighted * y))
     return np.linalg.solve(x.T @ x + lam * penalty, x.T @ y)
 
-def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET, openness_cutoff=None):
+def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET, openness_cutoff=None,
+        sample_weights=None):
     """Fit a model from (feature vector, target point) samples across at least six dots."""
     if feature_set not in ('v1', 'v2'):
         raise ValueError('feature_set must be v1 or v2')
@@ -98,16 +102,19 @@ def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET, openness_cutoff=None):
     std[std < 1e-09] = 1
     x = np.column_stack([np.ones(len(raw)), (raw - mean) / std])
     groups = np.array([targets.index(tuple(t)) for _, t in samples])
+    weights = np.ones(len(samples)) if sample_weights is None else np.asarray(sample_weights, dtype=float)
+    if weights.shape != (len(samples),) or np.any(weights <= 0):
+        raise ValueError('sample_weights must contain one positive weight per sample')
 
     def err(lam):
         es = []
         for g in range(len(targets)):
             tr, te = (groups != g, groups == g)
-            pred = np.median(x[te] @ _ridge(x[tr], y[tr], lam), axis=0)
+            pred = np.median(x[te] @ _ridge(x[tr], y[tr], lam, weights[tr]), axis=0)
             es.append(float(np.hypot(*pred - y[te][0])))
         return float(np.median(es))
     lam, e = min(((l, err(l)) for l in (0.1, 1.0, 10.0, 100.0)), key=lambda z: z[1])
-    coef = _ridge(x, y, lam)
+    coef = _ridge(x, y, lam, weights)
     pose_start = 10 if feature_set == 'v2' else 4
     pose_size = 6 if feature_set == 'v2' else 5
     poses = np.asarray([f[pose_start:pose_start + pose_size] for f, _ in samples], dtype=float)
@@ -167,6 +174,22 @@ def openness_cutoff(samples, fraction=0.5):
 def is_blink(model, openness):
     """Return whether openness is below this person's calibrated blink cutoff."""
     return float(openness) < float(model.get('openness_cutoff') or 0.12)
+
+def target_head_moved(frames, calibration_pose, feature_set=DEFAULT_FEATURE_SET,
+                     threshold_degrees=3.0):
+    """Flag a target if yaw/pitch shifts from session pose or varies during the target."""
+    pose_start = 10 if feature_set == 'v2' else 4
+    poses = np.asarray([np.asarray(frame, dtype=float)[pose_start:pose_start + 2]
+                        for frame in frames], dtype=float)
+    typical = np.asarray(calibration_pose, dtype=float)[:2]
+    if poses.size == 0 or typical.shape != (2,):
+        return False
+    threshold = math.radians(threshold_degrees)
+    target_pose = np.median(poses, axis=0)
+    if np.any(np.abs(target_pose - typical) > threshold):
+        return True
+    spread = np.percentile(poses, 90, axis=0) - np.percentile(poses, 10, axis=0)
+    return bool(np.any(spread > threshold))
 
 def validate(model, samples):
     """Return median held-out pixel error, 3x3 region hits, and per-target predictions."""
