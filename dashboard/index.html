@@ -28,7 +28,24 @@
         </div>
         <p id="ask-hint" class="hint">Type or speak a request. Replies are read aloud.</p>
       </form>
-      <div id="reply" class="reply" aria-live="polite"></div>
+      <div class="agent">
+        <!-- Placeholder mascot. Swap for final art later; the #mouth/#eyes ids drive the talking animation. -->
+        <div class="mascot" id="mascot" aria-hidden="true" title="Ally">
+          <svg viewBox="0 0 96 112" width="76" height="88" role="img">
+            <line class="m-stroke" x1="48" y1="6" x2="48" y2="18"/>
+            <circle class="m-accent" cx="48" cy="6" r="5"/>
+            <rect class="m-face" x="10" y="18" width="76" height="76" rx="22"/>
+            <circle class="m-eye" id="eyeL" cx="36" cy="48" r="6"/>
+            <circle class="m-eye" id="eyeR" cx="60" cy="48" r="6"/>
+            <circle class="m-cheek" cx="28" cy="64" r="5"/>
+            <circle class="m-cheek" cx="68" cy="64" r="5"/>
+            <rect class="m-mouth" id="mouth" x="36" y="66" width="24" height="10" rx="5"/>
+          </svg>
+        </div>
+        <div class="bubble">
+          <p id="reply" class="reply" aria-live="polite">Hi, I'm Ally. Tell me what you need, or press a button below.</p>
+        </div>
+      </div>
     </section>
 
     <section aria-labelledby="quick-title" class="card">

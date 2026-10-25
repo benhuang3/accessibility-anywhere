@@ -438,13 +438,13 @@ class PanelRenderingTests(unittest.TestCase):
                 win = ov._card_win
                 bindings = {call.args[0]: call.args[1] for call in win.bind.call_args_list}
                 labels = {call.kwargs["text"]: call.kwargs for call in ov._tk.Label.call_args_list}
-                self.assertEqual(labels["Ally safety check"]["fg"], "#6B4E16")
+                self.assertEqual(labels["Ally safety check"]["fg"], "#9A4B00")  # Clarity risk amber
                 self.assertEqual(labels["Warning."]["font"], ("Segoe UI", -32, "bold"))
                 self.assertEqual(labels["Be careful."]["font"], ("Segoe UI", -26, "normal"))
                 self.assertGreater(labels[offer.prompt]["wraplength"], 0)
                 buttons = ov._tk.Button.call_args_list[-2:]
                 self.assertEqual([c.kwargs["text"] for c in buttons], ["Yes, close it", "No, keep it"])
-                self.assertEqual(buttons[0].kwargs["bg"], "#7A4100")
+                self.assertEqual(buttons[0].kwargs["bg"], "#0B57D0")  # Clarity accent (primary)
                 self.assertEqual(buttons[1].kwargs["bg"], "#FFFFFF")
                 edges = [c for c in ov._tk.Frame.call_args_list if c.kwargs.get("width") == 260]
                 self.assertTrue(edges)

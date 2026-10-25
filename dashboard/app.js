@@ -32,10 +32,31 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+// ---- mascot talking state: on while the agent speaks, pulsed when a reply lands ----
+let speaking = false;
+let replyPulse = false;
+let pulseTimer = null;
+
+function refreshTalking() {
+  const m = $("mascot");
+  if (m) m.classList.toggle("talking", speaking || replyPulse);
+}
+
+function pulseTalking(ms = 2500) {
+  replyPulse = true;
+  refreshTalking();
+  clearTimeout(pulseTimer);
+  pulseTimer = setTimeout(() => {
+    replyPulse = false;
+    refreshTalking();
+  }, ms);
+}
+
 function showReply(text, kind = "") {
   const box = $("reply");
   box.textContent = text || "";
   box.className = "reply " + kind;
+  if (kind !== "busy" && (text || "").trim()) pulseTalking();
 }
 
 // ---------------------------------------------------------------- ask
@@ -155,6 +176,8 @@ async function pollStatus() {
   ];
   if (s.config.error) items.push(chip("Settings", "error, see below", "bad"));
   $("chips").replaceChildren(...items);
+  speaking = !!s.speech.speaking;
+  refreshTalking();
   $("version").textContent = `${s.name} ${s.version} on ${s.platform} · up ${Math.round(s.uptime / 60)} min`;
 
   const list = s.hotkeys.keys.map((k) => el("li", {}, el("kbd", { text: k.keys }), " " + k.action.replaceAll("_", " ")));

@@ -6,10 +6,15 @@ regression from those features to screen pixels and checks accuracy by holding o
 from __future__ import annotations
 import json
 import math
+import statistics
 import time
 from collections import deque
 from pathlib import Path
-import numpy as np
+
+try:
+    import numpy as np
+except ImportError:  # Ally starts without numpy; only the eye tracker's math needs it
+    np = None
 
 # MediaPipe Face Landmarker (478 points): corners, lids and iris centers of each eye.
 RIGHT_EYE = {'outer': 33, 'inner': 133, 'top': 159, 'bottom': 145, 'iris': 468}
@@ -662,10 +667,12 @@ def fixation(points, t0, t1, radius_px):
             best = {'start_index': start, 'end_index': end, 'duration': duration}
     if best is None:
         return None
-    window = np.asarray([(p[1], p[2]) for p in pts[best['start_index']:best['end_index'] + 1]])
-    center = window.mean(axis=0)
-    spread = float(np.max(np.linalg.norm(window - center, axis=1)))
-    return {'x': float(np.median(window[:, 0])), 'y': float(np.median(window[:, 1])), 'start': pts[best['start_index']][0], 'end': pts[best['end_index']][0], 'samples': len(window), 'spread_px': spread}
+    # Plain Python: the agent calls this, and the agent runs without numpy.
+    window = [(p[1], p[2]) for p in pts[best['start_index']:best['end_index'] + 1]]
+    cx = sum(x for x, _ in window) / len(window)
+    cy = sum(y for _, y in window) / len(window)
+    spread = max(math.hypot(x - cx, y - cy) for x, y in window)
+    return {'x': float(statistics.median(x for x, _ in window)), 'y': float(statistics.median(y for _, y in window)), 'start': pts[best['start_index']][0], 'end': pts[best['end_index']][0], 'samples': len(window), 'spread_px': float(spread)}
 
 class Corrector:
     """Correct consistent head-movement drift from recent mouse clicks."""

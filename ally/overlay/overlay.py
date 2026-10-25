@@ -37,7 +37,7 @@ FONT_FAMILY = "Segoe UI"
 BODY_PX = 26
 TITLE_PX = 32
 BUTTON_PX = 24
-PRIMARY_BG = "#7A4100"
+PRIMARY_BG = "#0B57D0"  # Clarity accent: electric blue primary button
 
 
 def _set_dpi_aware() -> None:
@@ -363,7 +363,7 @@ class Overlay:
         bg = RISK_BG if risk else INFO_BG
         win.configure(bg=RISK_BORDER if risk else INFO_FG)
         surface = tk.Frame(win, bg=bg)
-        surface.pack(fill="both", expand=True, padx=2, pady=2)
+        surface.pack(fill="both", expand=True, padx=3, pady=3)  # Clarity: a crisp, visible edge
         if risk:
             tk.Frame(surface, bg=RISK_BORDER, width=self._px(10)).pack(side="left", fill="y")
         px = self._px
@@ -380,7 +380,7 @@ class Overlay:
 
         if card is not None:
             if risk:
-                label("Ally safety check", 18, "#6B4E16", pady=(0, px(12)))
+                label("Ally safety check", 18, RISK_BORDER, pady=(0, px(12)))
             title, body = split_title(card.text)
             label(title, TITLE_PX, weight="bold")
             if body:

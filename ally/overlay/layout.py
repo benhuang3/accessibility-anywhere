@@ -12,12 +12,13 @@ CARD_MAX_WIDTH = 900
 CARD_WIDTH_FRAC = 0.8
 HIGHLIGHT_BORDER = 6
 
+# Clarity theme: near-black ink on white, electric-blue accent, amber reserved for risk.
 INFO_BG = "#FFFFFF"
-INFO_FG = "#1A1A1A"
-RISK_BG = "#FFF8E6"
-RISK_FG = "#1A1A1A"
-RISK_BORDER = "#B26A00"
-HIGHLIGHT_COLOR = "#B26A00"
+INFO_FG = "#0A0C10"
+RISK_BG = "#FFF4DF"
+RISK_FG = "#0A0C10"
+RISK_BORDER = "#9A4B00"
+HIGHLIGHT_COLOR = "#0B57D0"
 MERGE_SECONDS = 1.5
 
 
