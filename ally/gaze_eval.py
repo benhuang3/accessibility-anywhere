@@ -46,6 +46,46 @@ def _grouped_samples(targets, feats, phase, min_openness=0.12,
     return groups
 
 
+def _frame_metrics(targets, feats, model, phase):
+    """Per-frame error, held-target motion/spread, and settling for each filter."""
+    one, smooth = gm.OneEuro(), gm.GazeSmoother()
+    filtered = {}
+    for t, features, openness in sorted(feats, key=lambda item: item[0]):
+        raw = np.asarray(gm.predict(model, features), float)
+        radius = gm.radius_px(model, features)
+        filtered[t] = {'raw': raw, 'one_euro': one(raw, t),
+                       'smoother': smooth.update(raw, t, radius)}
+    result = {}
+    for method in ('raw', 'one_euro', 'smoother'):
+        errors, movements, spreads, settles = [], [], [], []
+        for target in sorted((r for r in targets if r.get('phase') == phase), key=lambda r: r['start']):
+            series = [(t, filtered[t][method]) for t, _, _ in feats
+                      if target['start'] <= t <= target['end'] and t in filtered]
+            if not series:
+                continue
+            points = np.asarray([p for _, p in series])
+            truth = np.asarray([target['x'], target['y']], float)
+            errors.extend(np.linalg.norm(points - truth, axis=1).tolist())
+            if len(points) > 1:
+                movements.extend(np.linalg.norm(np.diff(points, axis=0), axis=1).tolist())
+            center = np.median(points, axis=0)
+            spreads.extend(np.linalg.norm(points - center, axis=1).tolist())
+            good = np.linalg.norm(points - center, axis=1) <= 150
+            settled = next((i for i, okay in enumerate(good) if okay and np.all(good[i:])), None)
+            if settled is not None:
+                settles.append(max(0.0, series[settled][0] - target['start']) * 1000)
+        def med90(values):
+            return (float(np.median(values)), float(np.percentile(values, 90))) if values else (None, None)
+        e50, e90 = med90(errors)
+        j50, j90 = med90(movements)
+        s50, s90 = med90(spreads)
+        result.update({f'{method}_error_median_px': e50, f'{method}_error_p90_px': e90,
+                       f'{method}_jitter_median_px': j50, f'{method}_jitter_p90_px': j90,
+                       f'{method}_spread_median_px': s50, f'{method}_settle_median_ms': float(np.median(settles)) if settles else None,
+                       f'{method}_settle_p90_ms': float(np.percentile(settles, 90)) if settles else None})
+    return result
+
+
 def evaluate(path):
     """Evaluate validation, drift, leave-one-target-out retuning, and click correction."""
     rows = [json.loads(s) for s in Path(path).read_text(encoding='utf-8').splitlines() if s.strip()]
@@ -123,7 +163,8 @@ def evaluate(path):
         clicked = summaries['drift_click_corrected']
         for phase in ('validation', 'drift'):
             summary = summaries[phase]
-            results.append({'file': str(path), 'features': fs, 'phase': phase, **summary,
+            frame_stats = _frame_metrics(targets, feats, model, phase)
+            results.append({'file': str(path), 'features': fs, 'phase': phase, **summary, **frame_stats,
                             'drift_without_retune_error_px': summaries['drift']['error_px'] if phase == 'drift' else None,
                             'retuned_error_px': retuned['error_px'] if phase == 'drift' else None,
                             'retuned_region_hits': retuned['region_hits'] if phase == 'drift' else None,
@@ -148,7 +189,9 @@ def report(paths, out=None):
         p = Path(raw)
         files.extend(sorted(p.rglob('*.jsonl')) if p.is_dir() else [p])
     rows = [r for p in files for r in evaluate(p)]
-    headers = ['file', 'features', 'phase', 'error_px', 'region_hits', 'region_total',
+    metric_headers = [f'{method}_{metric}' for method in ('raw', 'one_euro', 'smoother')
+                      for metric in ('error_median_px', 'error_p90_px', 'jitter_median_px', 'jitter_p90_px', 'spread_median_px', 'settle_median_ms', 'settle_p90_ms')]
+    headers = ['file', 'features', 'phase', 'error_px', 'region_hits', 'region_total', *metric_headers,
                'drift_without_retune_error_px',
                'retuned_error_px', 'retuned_region_hits', 'retuned_region_total',
                'click_error_px', 'click_region_hits', 'click_region_total']

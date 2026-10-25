@@ -348,6 +348,11 @@ class GazeModelTests(unittest.TestCase):
             validation = [row for row in rows if row['phase'] == 'validation']
             self.assertEqual({row['features'] for row in validation}, {'v1', 'v2', 'v3', 'v4'})
             self.assertTrue(all(row['error_px'] < 50 for row in validation), validation)
+            for row in validation:
+                for method in ('raw', 'one_euro', 'smoother'):
+                    self.assertIn(f'{method}_error_median_px', row)
+                    self.assertIn(f'{method}_jitter_p90_px', row)
+                    self.assertIn(f'{method}_settle_median_ms', row)
             gaze_eval.report([p], Path(td) / 'gaze_eval.csv')
             self.assertTrue((Path(td) / 'gaze_eval.csv').is_file())
 if __name__ == '__main__':
