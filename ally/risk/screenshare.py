@@ -7,17 +7,15 @@ import threading
 import time
 import urllib.error
 import urllib.parse
-from collections import deque
 
 
 class ScreenShare:
-    INTERVAL = 0.25
+    MAX_FPS = 15
+    INTERVAL = 1 / MAX_FPS
+    SENDERS = 3
     MAX_SECONDS = 30 * 60
     TARGET_BYTES = 150_000
-    KEYFRAME_SECONDS = 5
-    CHANGE_THRESHOLD = 1.5
-    # Reserve 150 KB/s for each camera within the 1.2 MB/s call budget.
-    SCREEN_BYTES_PER_SECOND = 900_000
+    RECOVERY_SECONDS = 5
 
     def __init__(self, db_url, db_name, room_id, capture):
         self._url = urllib.parse.urlsplit(db_url.rstrip("/"))
@@ -26,7 +24,8 @@ class ScreenShare:
         self._capture = capture
         self._stop = threading.Event()
         self._thread = None
-        self._connection = None
+        # Each sender owns one keep-alive connection; HTTPConnection is not thread safe.
+        self._transport = threading.local()
         self._condition = threading.Condition()
         self._enabled = False
         self._capture_epoch = 0
@@ -34,11 +33,19 @@ class ScreenShare:
         self._quality = 60
         self._width = 1280
         self._interval = self.INTERVAL
-        self._last_fingerprint = None
-        self._last_sent = float("-inf")
-        self._traffic = deque()
+        self._reduced_until = 0
         self._seq = 0
+        self._pending = set()
+        self._opened = False
         self._deadline = float("inf")
+
+    @staticmethod
+    def capture_screen(fallback):
+        try:
+            from PIL import ImageGrab
+            return ImageGrab.grab(all_screens=False)
+        except Exception:
+            return fallback()
 
     def start(self):
         try:
@@ -57,7 +64,8 @@ class ScreenShare:
             self._condition.notify_all()
 
     def _close(self):
-        connection, self._connection = self._connection, None
+        connection = getattr(self._transport, "connection", None)
+        self._transport.connection = None
         if connection is not None:
             try:
                 connection.close()
@@ -73,12 +81,13 @@ class ScreenShare:
             try:
                 if self._stop.is_set() or time.monotonic() >= self._deadline:
                     raise OSError("Screen sharing stopped")
-                if self._connection is None:
+                if getattr(self._transport, "connection", None) is None:
                     if self._url.scheme != "https":
                         raise ValueError("HTTPS required")
-                    self._connection = http.client.HTTPSConnection(self._url.hostname, self._url.port, timeout=5)
-                self._connection.request("POST", self._url.path + path, body=body, headers=headers)
-                response = self._connection.getresponse()
+                    self._transport.connection = http.client.HTTPSConnection(self._url.hostname, self._url.port,
+                                                                            timeout=5)
+                self._transport.connection.request("POST", self._url.path + path, body=body, headers=headers)
+                response = self._transport.connection.getresponse()
                 data = response.read(65_536)
                 status = response.status
                 if len(data) == 65_536:
@@ -100,21 +109,26 @@ class ScreenShare:
         raw = self._capture()
         if isinstance(raw, tuple):
             raw = raw[0]
-        with Image.open(io.BytesIO(raw)) as source:
-            image = source.convert("RGB")
-        fingerprint = image.resize((64, 36), Image.Resampling.BILINEAR).convert("L").tobytes()
-        scale = min(1.0, self._width / image.width, 65535 / image.height)
+        if isinstance(raw, Image.Image):
+            image = raw if raw.mode == "RGB" else raw.convert("RGB")
+        else:
+            with Image.open(io.BytesIO(raw)) as source:
+                image = source.convert("RGB")
+        with self._condition:
+            if time.monotonic() >= self._reduced_until:
+                self._quality, self._width = 60, 1280
+            quality, width = self._quality, self._width
+        scale = min(1.0, width / image.width, 65535 / image.height)
         if scale < 1:
-            image = image.resize((max(1, int(image.width * scale)), max(1, int(image.height * scale))),
-                                 Image.Resampling.LANCZOS)
+            image.thumbnail((width, max(1, int(image.height * scale))), Image.Resampling.BILINEAR)
         for _ in range(8):
             out = io.BytesIO()
-            image.save(out, "JPEG", quality=self._quality, optimize=True)
+            image.save(out, "JPEG", quality=quality)
             jpeg = out.getvalue()
             if len(jpeg) <= self.TARGET_BYTES:
-                return jpeg, image.width, image.height, fingerprint
+                return jpeg, image.width, image.height
             image = image.resize((max(1, image.width * 3 // 4), max(1, image.height * 3 // 4)),
-                                 Image.Resampling.LANCZOS)
+                                 Image.Resampling.BILINEAR)
         return None
 
     @staticmethod
@@ -151,10 +165,11 @@ class ScreenShare:
                 with self._condition:
                     if (self._enabled and epoch == self._capture_epoch and not self._stop.is_set()
                             and time.monotonic() < deadline):
-                        # A single replaceable slot, never a queue of old screenshots.
-                        self._waiting = frame
+                        # Busy senders drop this capture; otherwise replace the latest slot.
+                        self._waiting = frame if len(self._pending) < self.SENDERS else None
                         self._condition.notify_all()
-                self._stop.wait(min(max(0, self._interval - (time.monotonic() - started)),
+                interval = max(1 / self.MAX_FPS, self._interval)
+                self._stop.wait(min(max(0, interval - (time.monotonic() - started)),
                                     max(0, deadline - time.monotonic())))
         except Exception:
             pass
@@ -162,79 +177,100 @@ class ScreenShare:
             self.stop()
 
     def _step_down(self):
-        if self._quality > 45:
-            self._quality = 45
-        elif self._width > 960:
-            self._width = 960
-        else:
-            self._interval = min(1.0, self._interval * 1.5)
+        with self._condition:
+            self._quality, self._width = 45, 960
+            self._reduced_until = time.monotonic() + self.RECOVERY_SECONDS
 
-    def _send_frame(self, frame, token):
-        jpeg, width, height, fingerprint = frame
+    def _send_frame(self, frame, token, epoch=None):
+        jpeg, width, height = frame
         now = time.monotonic()
-        if self._last_fingerprint is not None and now - self._last_sent < self.KEYFRAME_SECONDS:
-            difference = sum(abs(a - b) for a, b in zip(fingerprint, self._last_fingerprint)) / len(fingerprint)
-            if difference < self.CHANGE_THRESHOLD:
+        with self._condition:
+            if (self._stop.is_set() or now >= self._deadline
+                    or (epoch is not None and (epoch != self._capture_epoch or not self._enabled))):
                 return False
-        args = [self._room, self._seq, list(jpeg), width, height]
-        self._post(f"/v1/database/{self._db}/call/send_screen_frame", args, token)
-        finished = time.monotonic()
-        self._seq = (self._seq + 1) % (2 ** 32)
-        # Only an acknowledged send updates change detection and the keyframe clock.
-        self._last_fingerprint, self._last_sent = fingerprint, finished
-        self._traffic.append((finished, len(json.dumps(args).encode())))
-        while self._traffic and self._traffic[0][0] <= finished - 10:
-            self._traffic.popleft()
-        if finished - now > 0.4 or sum(size for _, size in self._traffic) / 10 > self.SCREEN_BYTES_PER_SECOND:
+            if len(self._pending) >= self.SENDERS:
+                return False
+            seq = self._seq
+            args = [self._room, seq, list(jpeg), width, height]
+            self._seq += 1
+            self._pending.add(seq)
+        try:
+            self._post(f"/v1/database/{self._db}/call/send_screen_frame", args, token)
+            if time.monotonic() - now > 1:
+                self._step_down()
+            return True
+        except urllib.error.HTTPError as error:
+            error.close()
+            self.stop()
+            return False
+        except Exception:
             self._step_down()
-        return True
+            return False
+        finally:
+            with self._condition:
+                self._pending.discard(seq)
+
+    def _ready(self, token, began, deadline):
+        while not self._stop.is_set() and time.monotonic() < deadline:
+            try:
+                self._post(f"/v1/database/{self._db}/call/screen_share_ready", [self._room], token)
+                self._opened = True
+                self._set_enabled(True)
+                return True
+            except urllib.error.HTTPError as error:
+                self._set_enabled(False)
+                state = self._rejection(error)
+                if state != "waiting" or self._opened or time.monotonic() - began >= 30:
+                    self.stop()
+                    return False
+                self._stop.wait(min(1.0, max(0, deadline - time.monotonic())))
+        return False
+
+    def _consume(self, token, deadline):
+        try:
+            while not self._stop.is_set() and time.monotonic() < deadline:
+                with self._condition:
+                    self._condition.wait_for(lambda: self._waiting is not None or self._stop.is_set(),
+                                             timeout=min(0.25, max(0, deadline - time.monotonic())))
+                    frame, self._waiting = self._waiting, None
+                    epoch = self._capture_epoch
+                    if (frame is None or not self._enabled or self._stop.is_set()
+                            or time.monotonic() >= deadline):
+                        continue
+                self._send_frame(frame, token, epoch)
+        except Exception:
+            pass
+        finally:
+            self.stop()
+            self._close()
 
     def _run(self):
-        producer = None
+        workers = []
         # Fail closed and never log exception strings: they may contain capabilities.
         try:
             began = time.monotonic()
             deadline = began + self.MAX_SECONDS
             self._deadline = deadline
             token = json.loads(self._post("/v1/identity", []))["token"]
-            opened = False
-            while not self._stop.is_set() and time.monotonic() < deadline:
-                try:
-                    self._post(f"/v1/database/{self._db}/call/screen_share_ready", [self._room], token)
-                    opened = True
-                except urllib.error.HTTPError as error:
-                    self._set_enabled(False)
-                    state = self._rejection(error)
-                    if state == "ended" or (state == "waiting" and (opened or time.monotonic() - began >= 30)):
-                        return
-                    self._stop.wait(min(1.0, max(0, deadline - time.monotonic())))
-                    continue
-                if self._stop.is_set() or time.monotonic() >= deadline:
-                    return
-                self._set_enabled(True)
-                if producer is None:
-                    producer = threading.Thread(target=self._produce, args=(deadline,),
-                                                name="risk-screen-capture", daemon=True)
-                    producer.start()
-                with self._condition:
-                    self._condition.wait_for(lambda: self._waiting is not None or self._stop.is_set(),
-                                             timeout=min(0.25, max(0, deadline - time.monotonic())))
-                    frame, self._waiting = self._waiting, None
-                if frame is None or self._stop.is_set() or time.monotonic() >= deadline:
-                    continue
-                try:
-                    self._send_frame(frame, token)
-                except urllib.error.HTTPError as error:
-                    self._set_enabled(False)
-                    if self._rejection(error) != "paused":
-                        return
+            if not self._ready(token, began, deadline) or self._stop.is_set():
+                return
+            producer = threading.Thread(target=self._produce, args=(deadline,),
+                                        name="risk-screen-capture", daemon=True)
+            workers.append(producer)
+            producer.start()
+            for index in range(self.SENDERS - 1):
+                sender = threading.Thread(target=self._consume, args=(token, deadline),
+                                          name=f"risk-screen-send-{index}", daemon=True)
+                workers.append(sender)
+                sender.start()
+            self._consume(token, deadline)
         except Exception:
             pass
         finally:
             self.stop()
             self._close()
-            if producer is not None:
+            for worker in workers:
                 try:
-                    producer.join(timeout=0.5)
+                    worker.join(timeout=0.5)
                 except Exception:
                     pass

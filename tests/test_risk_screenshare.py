@@ -2,6 +2,7 @@ import http.client
 import io
 import json
 import random
+import sys
 import threading
 import unittest
 import urllib.error
@@ -49,10 +50,44 @@ def rejection(message):
 
 
 def frame(value=0):
-    return b"\xff\xd8\xff\xd9", 1280, 720, bytes([value]) * (64 * 36)
+    return b"\xff\xd8\xff\xd9", 1280 + value, 720
 
 
 class TransportTests(unittest.TestCase):
+    def test_two_sender_threads_reuse_separate_keepalive_connections(self):
+        share = ScreenShare("https://db.example", "db", ROOM, Mock())
+        barrier = threading.Barrier(2)
+        connections, failures = [], []
+
+        def connection(*args, **kwargs):
+            result = Mock()
+            result.getresponse.return_value = SimpleNamespace(status=200, read=Mock(return_value=b"{}"))
+            connections.append(result)
+            return result
+
+        def send():
+            try:
+                for _ in range(3):
+                    barrier.wait(timeout=2)
+                    share._post("/frames", [], TOKEN)
+            except Exception as error:
+                failures.append(error)
+            finally:
+                share._close()
+
+        with patch("ally.risk.screenshare.http.client.HTTPSConnection", side_effect=connection):
+            workers = [threading.Thread(target=send) for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(3)
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual(failures, [])
+        self.assertEqual(len(connections), 2)
+        for connection in connections:
+            self.assertEqual(connection.request.call_count, 3)
+            connection.close.assert_called_once()
+
     def test_one_persistent_connection_for_identity_and_n_frames(self):
         share = ScreenShare("https://db.example/prefix/", "call database", ROOM, Mock())
         connection = Mock()
@@ -122,148 +157,149 @@ class SenderTests(unittest.TestCase):
     def share(self):
         return ScreenShare("https://db.example", "call database", ROOM, Mock())
 
-    def test_unchanged_frames_skip_and_keyframes_every_five_seconds(self):
+    def test_every_unchanged_frame_is_sent_without_a_bandwidth_budget(self):
         share = self.share()
-        clock = Clock()
-        times = []
-        with patch.object(share, "_post", side_effect=lambda *args: times.append(clock.now)), \
-                patch("ally.risk.screenshare.time.monotonic", lambda: clock.now):
-            for quarter in range(41):
-                clock.now = quarter / 4
-                share._send_frame(frame(), TOKEN)
-        self.assertEqual(times, [0, 5, 10])
-        self.assertEqual(share._seq, 3)
-
-    def test_change_detection_compares_last_sent_not_last_captured(self):
-        share = self.share()
-        with patch.object(share, "_post") as post, patch("ally.risk.screenshare.time.monotonic", return_value=0):
-            self.assertTrue(share._send_frame(frame(0), TOKEN))
-            self.assertFalse(share._send_frame(frame(1), TOKEN))
-            self.assertTrue(share._send_frame(frame(2), TOKEN))
-        self.assertEqual(post.call_count, 2)
-        self.assertEqual(share._last_fingerprint, frame(2)[3])
-
-    def test_failed_send_does_not_advance_fingerprint_or_keyframe_clock(self):
-        share = self.share()
-        with patch.object(share, "_post", side_effect=rejection("Screen sharing paused")):
-            with self.assertRaises(urllib.error.HTTPError) as caught:
-                share._send_frame(frame(), TOKEN)
-            caught.exception.close()
-        self.assertIsNone(share._last_fingerprint)
-        self.assertEqual(share._last_sent, float("-inf"))
-        self.assertEqual(share._seq, 0)
-
-    def test_slow_posts_reduce_quality_then_width_before_fps(self):
-        share = self.share()
-        clock = Clock()
-
-        def slow(*args):
-            clock.now += 0.401
-
-        with patch.object(share, "_post", slow), patch("ally.risk.screenshare.time.monotonic", lambda: clock.now):
-            share._send_frame(frame(0), TOKEN)
-            self.assertEqual((share._quality, share._width, share._interval), (45, 1280, 0.25))
-            share._send_frame(frame(10), TOKEN)
-            self.assertEqual((share._quality, share._width, share._interval), (45, 960, 0.25))
-            share._send_frame(frame(20), TOKEN)
-            self.assertGreater(share._interval, 0.25)
-
-    def test_ten_second_budget_counts_json_bytes_and_reserves_camera_bandwidth(self):
-        share = self.share()
-        clock = Clock()
         large = b"\xff" * 150_000
-        with patch.object(share, "_post"), patch("ally.risk.screenshare.time.monotonic", lambda: clock.now):
-            for index in range(13):
-                clock.now = index / 4
-                share._send_frame((large, 1280, 720, frame(index * 2)[3]), TOKEN)
-            self.assertEqual(share._quality, 45)
-            clock.now = 14
-            share._send_frame(frame(100), TOKEN)
-        self.assertEqual(len(share._traffic), 1)
+        with patch.object(share, "_post") as post, \
+                patch("ally.risk.screenshare.time.monotonic", return_value=0):
+            for _ in range(30):
+                self.assertTrue(share._send_frame((large, 1280, 720), TOKEN))
+        self.assertEqual(post.call_count, 30)
+        self.assertEqual([call.args[1][1] for call in post.call_args_list], list(range(30)))
+        self.assertEqual((share._quality, share._width), (60, 1280))
 
-    def test_pipeline_overlaps_capture_with_post_and_keeps_only_latest_waiting_frame(self):
+    def test_slow_posts_reduce_quality_and_width_without_reducing_fps(self):
+        for duration in (0.085, 1, 1.001):
+            with self.subTest(duration=duration):
+                share, clock = self.share(), Clock()
+                def post(*args):
+                    clock.now += duration
+                with patch.object(share, "_post", post), \
+                        patch("ally.risk.screenshare.time.monotonic", lambda: clock.now):
+                    share._send_frame(frame(), TOKEN)
+                expected = (45, 960) if duration > 1 else (60, 1280)
+                self.assertEqual((share._quality, share._width), expected)
+                self.assertEqual(share._interval, 1 / 15)
+
+    def test_failed_posts_step_down_and_continue_with_fresh_sequence(self):
         share = self.share()
-        share._interval = 0.002
-        fourth = threading.Event()
-        captured, sent, waiting = [], [], []
+        with patch.object(share, "_post", side_effect=[OSError(TOKEN + ROOM), b""]) as post, \
+                self.assertNoLogs("ally", level="DEBUG"):
+            self.assertFalse(share._send_frame(frame(), TOKEN))
+            self.assertEqual((share._quality, share._width), (45, 960))
+            self.assertTrue(share._send_frame(frame(), TOKEN))
+        self.assertEqual([call.args[1][1] for call in post.call_args_list], [0, 1])
+        self.assertFalse(share._stop.is_set())
+        self.assertFalse(share._pending)
 
+    def test_capture_rate_is_capped_at_fifteen_fps_with_a_fake_clock(self):
+        for capture_seconds in (0, 0.02, 0.103):
+            with self.subTest(capture_seconds=capture_seconds):
+                share, clock, times = self.share(), Clock(), []
+                share._stop = clock
+                share._interval = 0
+                share._set_enabled(True)
+                def capture():
+                    times.append(clock.now)
+                    clock.now += capture_seconds
+                    if len(times) == 4:
+                        share.stop()
+                    return frame()
+                with patch.object(share, "_frame", capture), \
+                        patch("ally.risk.screenshare.time.monotonic", lambda: clock.now):
+                    share._produce(10)
+                interval = max(1 / 15, capture_seconds)
+                for index, actual in enumerate(times):
+                    self.assertAlmostEqual(actual, index * interval)
+
+    def test_three_persistent_connections_overlap_capture_and_drop_busy_frames(self):
+        share = self.share()
+        three_busy, captured_while_busy, release = (threading.Event() for _ in range(3))
+        lock = threading.Lock()
+        captured, sent, completed, connections, failures = [], [], [], [], []
+        active = peak = 0
         def capture():
-            value = len(captured) + 1
-            captured.append(value)
-            if value >= 4:
-                fourth.set()
-            return frame(value * 2)
-
-        def post(path, args, token=""):
-            if path.endswith("/identity"):
-                return json.dumps({"token": TOKEN}).encode()
-            if path.endswith("/send_screen_frame"):
-                sent.append(args[3])
-                if len(sent) == 1:
-                    self.assertTrue(fourth.wait(2), "capture must run while a post is blocked")
-                    with share._condition:
-                        waiting.append(share._waiting[3][0])
+            captured.append(len(captured) + 1)
+            if len(captured) >= 6 and three_busy.is_set():
+                captured_while_busy.set()
+            return frame(captured[-1])
+        class Connection:
+            def request(inner, method, path, body, headers):
+                nonlocal active, peak
+                inner.path = path
+                inner.args = json.loads(body)
+                if path.endswith("/send_screen_frame"):
+                    with lock:
+                        active += 1
+                        peak = max(peak, active)
+                        sent.append((inner.args[1], inner.args[3]))
+                        if active == 3:
+                            three_busy.set()
+            def getresponse(inner):
+                nonlocal active
+                if inner.path.endswith("/identity"):
+                    body = json.dumps({"token": TOKEN}).encode()
                 else:
-                    share.stop()
-            return b""
-
-        # Use width as an observable frame number without inspecting private JPEG data.
-        def numbered_capture():
-            jpeg, _, height, fingerprint = capture()
-            return jpeg, len(captured), height, fingerprint
-
-        with patch.object(share, "_frame", numbered_capture), patch.object(share, "_post", post):
-            share.start()
-            share._thread.join(3)
-        self.assertFalse(share._thread.is_alive())
-        self.assertGreaterEqual(len(captured), 4)
-        self.assertEqual(len(waiting), 1)
-        self.assertGreaterEqual(waiting[0], 8)
-        self.assertEqual(sent[0], 1)
-        self.assertGreaterEqual(sent[1], 4, "old queued frames must be replaced")
-        self.assertIsNone(share._waiting)
-
-    def test_paused_watcher_never_captures_and_resumes(self):
-        share = self.share()
-        clock = Clock()
-        share._stop = clock
-        reads = []
-
-        def post(path, args, token=""):
-            if path.endswith("/identity"):
-                return json.dumps({"token": TOKEN}).encode()
-            if path.endswith("/screen_share_ready"):
-                reads.append(clock.now)
-                if clock.now < 2:
-                    raise rejection("Screen sharing paused")
-            if path.endswith("/send_screen_frame"):
-                share.stop()
-            return b""
-
-        with patch.object(share, "_frame", return_value=frame()) as capture, \
-                patch.object(share, "_post", post), \
-                patch("ally.risk.screenshare.time.monotonic", lambda: clock.now):
-            # A controlled producer avoids advancing a fake clock in two threads.
-            def produce(deadline):
-                self.assertEqual(clock.now, 2)
+                    body = b""
+                if inner.path.endswith("/send_screen_frame"):
+                    if not release.wait(3):
+                        failures.append("senders were not released")
+                    with lock:
+                        active -= 1
+                        completed.append(inner.args[1])
+                        if len(completed) >= 6:
+                            share.stop()
+                return SimpleNamespace(status=200, read=lambda limit: body)
+            def close(inner):
+                pass
+        def connect(*args, **kwargs):
+            connection = Connection()
+            connections.append(connection)
+            return connection
+        try:
+            with patch.object(share, "_frame", capture), \
+                    patch("ally.risk.screenshare.http.client.HTTPSConnection", connect):
+                share.start()
+                self.assertTrue(three_busy.wait(2), "three HTTPS posts must overlap")
+                self.assertTrue(captured_while_busy.wait(2), "capture must continue during blocked posts")
                 with share._condition:
-                    share._waiting = capture()
-                    share._condition.notify_all()
-            with patch.object(share, "_produce", produce):
-                share._run()
-        self.assertEqual(reads[:3], [0, 1, 2])
-        capture.assert_called_once()
+                    self.assertIsNone(share._waiting, "busy senders must leave no queued frame")
+                    last_dropped = captured[-1]
+                release.set()
+                share._thread.join(3)
+        finally:
+            release.set()
+            share.stop()
+            if share._thread:
+                share._thread.join(2)
+        self.assertFalse(share._thread.is_alive())
+        self.assertFalse(failures)
+        self.assertEqual(peak, 3)
+        self.assertEqual(len(connections), 3)
+        self.assertGreaterEqual(len(sent), 6)
+        self.assertEqual(sorted(seq for seq, _ in sent), list(range(len(sent))))
+        self.assertTrue(all(width > 1280 + last_dropped for _, width in sent[3:]))
+        self.assertFalse(share._pending)
+
+    def test_rejection_stops_without_capture_or_resume(self):
+        for message in ("Screen sharing paused", "Call ended " + TOKEN + ROOM):
+            with self.subTest(message=message):
+                share = self.share()
+                with patch.object(share, "_post", side_effect=[
+                        json.dumps({"token": TOKEN}).encode(), rejection(message)]) as post, \
+                        patch.object(share, "_frame") as capture, self.assertNoLogs("ally", level="DEBUG"):
+                    share._run()
+                self.assertTrue(share._stop.is_set())
+                self.assertEqual(post.call_count, 2)
+                capture.assert_not_called()
 
     def test_missing_room_waits_thirty_seconds_before_any_capture(self):
-        share = self.share()
-        clock = Clock()
+        share, clock = self.share(), Clock()
         share._stop = clock
-
         def post(path, args, token=""):
             if path.endswith("/identity"):
                 return json.dumps({"token": TOKEN}).encode()
             raise rejection("This call is not available")
-
         with patch.object(share, "_post", post), patch.object(share, "_frame") as capture, \
                 patch("ally.risk.screenshare.time.monotonic", lambda: clock.now):
             share._run()
@@ -272,11 +308,9 @@ class SenderTests(unittest.TestCase):
 
     def test_stop_during_capture_sends_nothing(self):
         share = self.share()
-
         def capture():
             share.stop()
             return frame()
-
         with patch.object(share, "_frame", capture), patch.object(share, "_post", side_effect=[
                 json.dumps({"token": TOKEN}).encode(), b""]) as post:
             share.start()
@@ -284,34 +318,32 @@ class SenderTests(unittest.TestCase):
         self.assertFalse(share._thread.is_alive())
         self.assertEqual(post.call_count, 2)
 
-    def test_rejection_clears_pipeline_and_stops_sender_without_logging(self):
-        share = self.share()
-
-        def post(path, args, token=""):
-            if path.endswith("/identity"):
-                return json.dumps({"token": TOKEN}).encode()
-            if path.endswith("/send_screen_frame"):
-                raise rejection("Call ended " + TOKEN + ROOM)
-            return b""
-
-        with patch.object(share, "_frame", return_value=frame()), patch.object(share, "_post", post), \
-                self.assertNoLogs("ally", level="DEBUG"):
-            share.start()
-            share.start()
-            share._thread.join(2)
-        self.assertTrue(share._thread.daemon)
-        self.assertFalse(share._thread.is_alive())
-        self.assertTrue(share._stop.is_set())
-        self.assertIsNone(share._waiting)
+    def test_frame_rejection_stops_all_senders_without_logging(self):
+        for message in ("Screen sharing paused", "This call is not available", "Call ended " + TOKEN + ROOM):
+            with self.subTest(message=message):
+                share = self.share()
+                def post(path, args, token=""):
+                    if path.endswith("/identity"):
+                        return json.dumps({"token": TOKEN}).encode()
+                    if path.endswith("/send_screen_frame"):
+                        raise rejection(message)
+                    return b""
+                with patch.object(share, "_frame", return_value=frame()), patch.object(share, "_post", post), \
+                        self.assertNoLogs("ally", level="DEBUG"):
+                    share.start()
+                    share.start()
+                    share._thread.join(2)
+                self.assertTrue(share._thread.daemon)
+                self.assertFalse(share._thread.is_alive())
+                self.assertTrue(share._stop.is_set())
+                self.assertIsNone(share._waiting)
+                self.assertFalse(share._pending)
 
     def test_deadline_stops_capture_and_sender(self):
         share = self.share()
         share.MAX_SECONDS = 0.06
-        share._interval = 0.005
-
         def post(path, args, token=""):
             return json.dumps({"token": TOKEN}).encode() if path.endswith("/identity") else b""
-
         with patch.object(share, "_frame", return_value=frame()), patch.object(share, "_post", post):
             share.start()
             share._thread.join(2)
@@ -320,16 +352,13 @@ class SenderTests(unittest.TestCase):
         self.assertEqual(ScreenShare.MAX_SECONDS, 1800)
 
     def test_stop_interrupts_idle_capture_and_network_wait(self):
-        share = self.share()
-        sent = threading.Event()
-
+        share, sent = self.share(), threading.Event()
         def post(path, args, token=""):
             if path.endswith("/identity"):
                 return json.dumps({"token": TOKEN}).encode()
             if path.endswith("/send_screen_frame"):
                 sent.set()
             return b""
-
         with patch.object(share, "_frame", return_value=frame()), patch.object(share, "_post", post):
             share.start()
             self.assertTrue(sent.wait(2))
@@ -337,57 +366,16 @@ class SenderTests(unittest.TestCase):
             share._thread.join(1)
         self.assertFalse(share._thread.is_alive())
 
-    def test_send_rejection_pauses_capture_and_same_room_can_resume(self):
-        share = self.share()
-        share._interval = 0.005
-        paused, resume = threading.Event(), threading.Event()
-        sends = []
-
-        def post(path, args, token=""):
-            if path.endswith("/identity"):
-                return json.dumps({"token": TOKEN}).encode()
-            if path.endswith("/screen_share_ready") and sends and not resume.is_set():
-                paused.set()
-                raise rejection("Screen sharing paused")
-            if path.endswith("/send_screen_frame"):
-                sends.append(args[1])
-                if len(sends) == 1:
-                    raise rejection("Screen sharing paused")
+    def test_stopped_or_expired_sender_posts_no_more_frames(self):
+        for stopped in (True, False):
+            share = self.share()
+            if stopped:
                 share.stop()
-            return b""
-
-        with patch.object(share, "_frame", return_value=frame()) as capture, patch.object(share, "_post", post):
-            share.start()
-            self.assertTrue(paused.wait(2))
-            count = capture.call_count
-            self.assertIsNone(share._waiting)
-            self.assertFalse(share._enabled)
-            threading.Event().wait(0.03)
-            self.assertEqual(capture.call_count, count, "paused watcher must take no screenshots")
-            resume.set()
-            share._thread.join(2)
-        self.assertFalse(share._thread.is_alive())
-        self.assertEqual(sends, [0, 0], "a rejected frame must not advance sequence")
-
-    def test_capture_from_before_pause_is_discarded_even_if_resumed_during_encoding(self):
-        share = self.share()
-        share._set_enabled(True)
-        captured = threading.Event()
-
-        def capture():
-            share._set_enabled(False)
-            share._set_enabled(True)
-            return frame()
-
-        # End after this single iteration, observing the slot before stop clears it.
-        def wait(seconds):
-            self.assertIsNone(share._waiting)
-            captured.set()
-            share.stop()
-
-        with patch.object(share, "_frame", capture), patch.object(share._stop, "wait", wait):
-            share._produce(float("inf"))
-        self.assertTrue(captured.is_set())
+            else:
+                share._deadline = 0
+            with patch.object(share, "_post") as post:
+                self.assertFalse(share._send_frame(frame(), TOKEN))
+            post.assert_not_called()
 
     def test_capture_thread_start_failure_never_escapes_or_logs_private_details(self):
         share = self.share()
@@ -397,12 +385,10 @@ class SenderTests(unittest.TestCase):
             share._run()
         self.assertTrue(share._stop.is_set())
 
-    def test_capture_failure_stops_both_threads_quietly(self):
+    def test_capture_failure_stops_all_threads_quietly(self):
         share = self.share()
-
         def post(path, args, token=""):
             return json.dumps({"token": TOKEN}).encode() if path.endswith("/identity") else b""
-
         with patch.object(share, "_post", post), \
                 patch.object(share, "_frame", side_effect=RuntimeError(TOKEN + ROOM)), \
                 self.assertNoLogs("ally", level="DEBUG"):
@@ -412,8 +398,44 @@ class SenderTests(unittest.TestCase):
         self.assertTrue(share._stop.is_set())
 
 
+class CaptureTests(unittest.TestCase):
+    def test_fast_capture_returns_primary_screen_image_without_calling_fallback(self):
+        image = object()
+        grab = Mock(return_value=image)
+        fallback = Mock()
+        with patch.dict(sys.modules, {"PIL": SimpleNamespace(ImageGrab=SimpleNamespace(grab=grab))}):
+            self.assertIs(ScreenShare.capture_screen(fallback), image)
+        grab.assert_called_once_with(all_screens=False)
+        fallback.assert_not_called()
+
+    def test_fast_capture_falls_back_when_imagegrab_raises(self):
+        fallback = Mock(return_value=b"png")
+        grab = Mock(side_effect=OSError(TOKEN + ROOM))
+        with patch.dict(sys.modules, {"PIL": SimpleNamespace(ImageGrab=SimpleNamespace(grab=grab))}), \
+                self.assertNoLogs("ally", level="DEBUG"):
+            self.assertEqual(ScreenShare.capture_screen(fallback), b"png")
+        fallback.assert_called_once_with()
+
+    def test_fast_capture_falls_back_when_imagegrab_is_unavailable(self):
+        fallback = Mock(return_value=b"png")
+        with patch.dict(sys.modules, {"PIL": None}):
+            self.assertEqual(ScreenShare.capture_screen(fallback), b"png")
+        fallback.assert_called_once_with()
+
+
 @unittest.skipUnless(Image, "Pillow is optional; install it to verify screenshot encoding")
 class EncodingTests(unittest.TestCase):
+    def test_pil_capture_encodes_directly_without_png_decode(self):
+        image = Image.new("RGB", (1600, 900), "white")
+        capture = Mock(return_value=image)
+        share = ScreenShare("https://db.example", "db", ROOM, capture)
+        with patch.object(Image, "open", side_effect=AssertionError("PNG decode is unnecessary")):
+            jpeg, width, height = share._frame()
+        capture.assert_called_once_with()
+        self.assertEqual((width, height), (1280, 720))
+        with Image.open(io.BytesIO(jpeg)) as decoded:
+            self.assertEqual(decoded.size, (width, height))
+
     def png(self, noisy=False):
         size = (2400, 1500) if noisy else (1600, 900)
         image = (Image.frombytes("RGB", size, random.Random(12).randbytes(size[0] * size[1] * 3))
@@ -424,10 +446,8 @@ class EncodingTests(unittest.TestCase):
 
     def test_jpeg_dimensions_quality_and_thumbnail(self):
         share = ScreenShare("https://db.example", "db", ROOM, lambda: self.png())
-        jpeg, width, height, fingerprint = share._frame()
+        jpeg, width, height = share._frame()
         self.assertEqual((width, height), (1280, 720))
-        self.assertEqual(len(fingerprint), 64 * 36)
-        self.assertEqual(set(fingerprint), {255})
         with Image.open(io.BytesIO(jpeg)) as decoded:
             self.assertEqual(decoded.size, (width, height))
         share._step_down()
@@ -436,11 +456,31 @@ class EncodingTests(unittest.TestCase):
 
     def test_noisy_frames_stay_under_size_cap(self):
         share = ScreenShare("https://db.example", "db", ROOM, lambda: self.png(noisy=True))
-        jpeg, width, height, _ = share._frame()
+        jpeg, width, height = share._frame()
         self.assertLessEqual(len(jpeg), 150000)
         self.assertLessEqual(width, 1280)
         with Image.open(io.BytesIO(jpeg)) as decoded:
             self.assertEqual(decoded.size, (width, height))
+
+    def test_quality_and_width_recover_after_healthy_period(self):
+        share = ScreenShare("https://db.example", "db", ROOM,
+                            lambda: Image.new("RGB", (1600, 900), "white"))
+        clock = Clock()
+        qualities = []
+        save = Image.Image.save
+
+        def record_save(image, output, format, **options):
+            qualities.append(options["quality"])
+            return save(image, output, format, **options)
+
+        with patch("ally.risk.screenshare.time.monotonic", lambda: clock.now), \
+                patch.object(Image.Image, "save", record_save):
+            self.assertEqual(share._frame()[1:], (1280, 720))
+            share._step_down()
+            self.assertEqual(share._frame()[1:], (960, 540))
+            clock.now = share.RECOVERY_SECONDS
+            self.assertEqual(share._frame()[1:], (1280, 720))
+        self.assertEqual(qualities, [60, 45, 60])
 
 
 class WiringTests(unittest.TestCase):
@@ -490,7 +530,10 @@ class WiringTests(unittest.TestCase):
         with patch("ally.risk.wire._make_guardian", return_value=(None, None)), patch.object(RiskWire, "start"):
             wire = attach(agent)
         self.assertFalse(wire.screen_share)
-        self.assertEqual(wire.screen_capture(), b"png")
+        with patch.object(ScreenShare, "capture_screen", side_effect=lambda fallback: fallback()) as capture:
+            self.assertEqual(wire.screen_capture(), b"png")
+        capture.assert_called_once()
+        agent.platform.screenshot_png.assert_called_once()
         wire.stop()
 
     def test_sender_errors_and_thread_start_failure_never_escape_or_log_secrets(self):

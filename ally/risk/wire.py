@@ -737,7 +737,7 @@ def attach(agent) -> RiskWire:
                     guardian=guardian, screen_size=screen_size,
                     overlay_active=lambda: getattr(agent, "overlay", None) is not None,
                     contact=_make_contact(agent), notify=notify, say=say,
-                    screen_capture=lambda: agent.platform.screenshot_png(),
+                    screen_capture=lambda: ScreenShare.capture_screen(lambda: agent.platform.screenshot_png()),
                     screen_share=risk_config.get("screen_share", True) is True)
     if hasattr(bridge, "on_page"):
         bridge.on_page = wire.on_page
