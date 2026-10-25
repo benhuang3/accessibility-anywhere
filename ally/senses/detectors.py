@@ -346,7 +346,8 @@ class RelativeSquintDetector(_RawHeld):
         gate_ok = _pose_ok(sig, self.tune)
         gate_ok &= sig.get("eyeBlink", 0.0) < self.tune.blink_gate
         gate_ok &= sig.get("mouthSmile", 0.0) < self.tune.smile_gate
-        gate_ok &= abs(sig.get("eyeSquintLeft", value) - sig.get("eyeSquintRight", value)) < self.tune.wink_max
+        difference = abs(sig.get("eyeSquintLeft", value) - sig.get("eyeSquintRight", value))
+        gate_ok &= difference < self.tune.wink_max
         down_stats = stats.get("eyeLookDown", {})
         looking_down = sig.get("eyeLookDown", 0.0) > _median(
             stats, "eyeLookDown", 0.0
@@ -382,8 +383,9 @@ class GeometricSquintDetector(_RawHeld):
         expression = (sig.get("mouthSmile", 0.0) >= self.tune.smile_gate or
                       sig.get("cheekSquint", 0.0) > 0.5 or sig.get("jawOpen", 0.0) > 0.65)
         turned = not _pose_ok(sig, self.tune)
-        down = (sig.get("iris_vertical", 0.5) > 0.8 and
-                sig.get("upper_height", 0.0) < _median(stats, "upper_height", sig.get("upper_height", 0.0)) - 0.02)
+        upper = sig.get("upper_height", 0.0)
+        baseline_upper = _median(stats, "upper_height", upper)
+        down = sig.get("iris_vertical", 0.5) > 0.8 and upper < baseline_upper - 0.02
         valid = all(both_eyes) and not (blink or expression or turned or down)
         return self._held_signal(t, 1.0, valid, {"geometry": True})
 
@@ -412,14 +414,30 @@ def _au_vote(sig, stats):
     """Compare AU7 with the person's own baseline; smiles are explanatory votes."""
     au = sig.get("au")
     if isinstance(au, list) and len(au) > 4:
-        value = float(au[4])
+        au6 = float(au[3])
+        au7 = float(au[4])
+        au12 = float(au[6]) if len(au) > 6 else None
     elif isinstance(au, dict):
-        value = float(au.get("7", au.get("AU7", 0.0)))
+        au6 = float(au.get("6", au.get("AU6", 0.0)))
+        au7 = float(au.get("7", au.get("AU7", 0.0)))
+        au12 = float(au.get("12", au.get("AU12", 0.0)))
     else:
         return False
-    median = _median(stats, "au7", 0.0)
-    spread = max(_mad(stats, "au7", 0.02), PERSONAL_NOISE_FLOOR)
-    return value > median + 2.0 * spread
+    smile_median = _median(stats, "mouthSmile", 0.0)
+    smile_spread = max(_mad(stats, "mouthSmile", 0.02), PERSONAL_NOISE_FLOOR)
+    smile_explains = sig.get("mouthSmile", 0.0) > smile_median + 2.0 * smile_spread
+    au12_median = _median(stats, "au12", 0.0)
+    au12_spread = max(_mad(stats, "au12", 0.02), PERSONAL_NOISE_FLOOR)
+    au12_explains = au12 is not None and au12 > au12_median + 2.0 * au12_spread
+    if smile_explains or au12_explains:
+        return False
+    au7_vote = au7 > _median(stats, "au7", 0.0) + 2.0 * max(
+        _mad(stats, "au7", 0.02), PERSONAL_NOISE_FLOOR
+    )
+    au6_vote = au6 > _median(stats, "au6", 0.0) + 2.0 * max(
+        _mad(stats, "au6", 0.02), PERSONAL_NOISE_FLOOR
+    )
+    return au7_vote or au6_vote
 
 
 class PersonalSquintDetector(_RawHeld):
@@ -432,7 +450,7 @@ class PersonalSquintDetector(_RawHeld):
         self.model = {}
 
     @classmethod
-    def fit(cls, parts):
+    def fit(cls, parts, threshold_margin=0.25):
         """Fit a JSON-safe model from labelled calibration feature samples."""
         neutral = _part_samples(parts, "neutral")
         top = _part_samples(parts, "top")
@@ -463,11 +481,20 @@ class PersonalSquintDetector(_RawHeld):
         noise_score = max(_standard_deviation(neutral_scores), 0.1)
         sorted_context = sorted(context_scores)
         tail_index = min(len(sorted_context) - 1, int(len(sorted_context) * 0.995))
-        threshold = sorted_context[tail_index] + max(0.25, 0.5 * noise_score)
-        threshold = min(threshold, deliberate_score * 0.5)
+        context_tail = sorted_context[tail_index]
+        requested_threshold = context_tail + max(float(threshold_margin), 0.5 * noise_score)
+        threshold = min(requested_threshold, deliberate_score * 0.5)
+        threshold_possible = threshold > context_tail
+        enabled = d_prime >= 2.0 and deliberate_score > 0 and threshold_possible
+        if d_prime < 2.0:
+            why = "your deliberate squint was not distinct from normal variation"
+        elif not threshold_possible:
+            why = "normal reading and deliberate squint overlapped too much"
+        else:
+            why = ""
         model.update(
-            enabled=d_prime >= 2.0 and deliberate_score > 0,
-            why="" if d_prime >= 2.0 else "your deliberate squint was not distinct from normal variation",
+            enabled=enabled,
+            why=why,
             d_prime=d_prime,
             resting_mean=resting_mean,
             resting_sd=resting_sd,
@@ -487,8 +514,8 @@ class PersonalSquintDetector(_RawHeld):
         score = _personal_score(sig, model)
         gate_ok = _pose_ok(sig, self.tune)
         gate_ok &= sig.get("eyeBlink", sig.get("blink", 0.0)) < self.tune.blink_gate
-        gate_ok &= abs(sig.get("aperture_r", sig.get("aperture", 0.0)) -
-                       sig.get("aperture_l", sig.get("aperture", 0.0))) < 0.25
+        eye_scores = _personal_eye_scores(sig, model)
+        gate_ok &= min(eye_scores) > 0.1
         if sig.get("mouthSmile", 0.0) > 0.85:
             gate_ok = False
         self.weak_threshold = float(model["threshold"])
@@ -497,7 +524,7 @@ class PersonalSquintDetector(_RawHeld):
 
 
 class HybridPersonalSquintDetector(PersonalSquintDetector):
-    """Require a personal score plus either relative blendshape or AU7 evidence."""
+    """Require a personal score plus blendshape or AU evidence."""
 
     def __init__(self, tune):
         super().__init__(tune)
@@ -513,6 +540,8 @@ class HybridPersonalSquintDetector(PersonalSquintDetector):
             if sig.get("eyeSquint", 0.0) - median >= 0.08:
                 return signal
             return None
+        score = _personal_score(sig, stats["personal_model"])
+        far_past_threshold = score >= float(stats["personal_model"]["threshold"]) * 1.5
         signal = super().feed(sig, t, base)
         if signal is None:
             return None
@@ -522,7 +551,7 @@ class HybridPersonalSquintDetector(PersonalSquintDetector):
         relative_vote = (value - median) / spread >= 2.0
         if relative_vote or _au_vote(sig, stats):
             return signal
-        if self.points and self.points[-1][1] >= self.strong_threshold * 1.5:
+        if far_past_threshold:
             return signal
         return None
 
@@ -598,6 +627,36 @@ def _personal_score(sample, model):
     return max(0.0, aperture_drop + lower_rise)
 
 
+def _personal_eye_scores(sample, model):
+    """Return corrected squint evidence for each eye to reject one-eye closures."""
+    baseline = model.get("baseline", {})
+    if not all(f"aperture_{side}" in baseline for side in ("r", "l")):
+        score = _personal_score(sample, model)
+        return score, score
+    predictors = _predictors(sample, baseline)
+    corrections = model.get("coefficients", {})
+    scores = []
+    for side in ("r", "l"):
+        aperture_key = f"aperture_{side}"
+        lower_key = f"lower_raise_{side}"
+        aperture = sample.get(aperture_key, _median(baseline, aperture_key, 0.0))
+        lower_raise = sample.get(lower_key, _median(baseline, lower_key, 0.0))
+        for name, value in (("aperture", aperture), ("lower_raise", lower_raise)):
+            center = _median(baseline, f"{name}_{side}", _median(baseline, name, 0.0))
+            corrected = value
+            for factor, slope in corrections.get(name, {}).items():
+                corrected -= slope * predictors.get(factor, 0.0)
+            deviation = corrected - center
+            noise = max(_mad(baseline, f"{name}_{side}", _mad(baseline, name, 0.0)) * 1.4826,
+                        PERSONAL_NOISE_FLOOR)
+            if name == "aperture":
+                aperture_score = -deviation / noise
+            else:
+                lower_score = deviation / noise
+        scores.append(max(0.0, aperture_score + lower_score))
+    return scores[0], scores[1]
+
+
 def _standard_deviation(values):
     if len(values) < 2:
         return 0.0
@@ -610,6 +669,13 @@ class DistanceLeanDetector(LeanDetector):
         baseline_distance = _median(stats, "head_distance", 0.0)
         current_distance = sig.get("head_distance", 0.0)
         if baseline_distance <= 0 or current_distance <= 0:
+            if isinstance(base, dict):
+                baseline_width = _median(stats, "face_width", 0.0)
+                current_width = sig.get("face_width", sig.get("width", 0.0))
+                if baseline_width > 0 and current_width > 0:
+                    width_ratio = current_width / baseline_width
+                    return self._feed_ratio(sig, t, width_ratio)
+                return None
             return super().feed(sig, t, base)
         distance_ratio = baseline_distance / current_distance
         return self._feed_ratio(sig, t, distance_ratio)

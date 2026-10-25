@@ -166,7 +166,7 @@ class Senses:
 
     def calibrate(self, seconds: float | None = None) -> dict:
         """Collect labelled reading and expression samples for a personal baseline."""
-        requested = float(seconds or self.cfg.get("calibrate_seconds", 35))
+        requested = float(seconds or self.cfg.get("calibrate_seconds", 15))
         if not self.vision_wanted():
             self.set_vision(True)
         end = time.monotonic() + 20
@@ -178,6 +178,8 @@ class Senses:
                 raise ToolError(why)
             time.sleep(0.2)
         gaze = getattr(self.agent, "gaze", None)
+        if self.cfg.get("squint_method", "v1") not in ("personal", "hybrid"):
+            return self._calibrate_quick(requested, gaze)
         if seconds is not None and requested <= 5:
             return self._calibrate_quick(requested, gaze)
         phases = [
@@ -189,9 +191,6 @@ class Senses:
             ("rest", 2, "Relax your eyes for a moment.", "middle"),
             ("squint", 3, "Squint at the small text once more.", "middle"),
         ]
-        if requested != 35:
-            scale = requested / 36.0
-            phases = [(name, duration * scale, text, place) for name, duration, text, place in phases]
         with self.lock:
             self._calib_parts = {}
             self._calib_result = None
@@ -323,6 +322,11 @@ class Senses:
                                                      sig.get("w", 1), sig.get("h", 1))}
             except (IndexError, TypeError, ValueError):
                 pass
+        au = sig.get("au")
+        if isinstance(au, list) and len(au) > 6:
+            sig["au6"] = float(au[3])
+            sig["au7"] = float(au[4])
+            sig["au12"] = float(au[6])
         fired = []
         with self.lock:
             dt = t - self._face_t if self._face_t else 0.0
@@ -344,7 +348,9 @@ class Senses:
                     except ValueError:
                         del self._auto[: len(self._auto) // 2]  # keep trying with fresher frames
             else:
-                squint_signal = self.squint.feed(sig, t, self.baseline) if self.baseline.squint_reliable else None
+                method = self.cfg.get("squint_method", "v1")
+                reliable = self.baseline.squint_reliable or method != "v1"
+                squint_signal = self.squint.feed(sig, t, self.baseline) if reliable else None
                 for s in (squint_signal, self.lean.feed(sig, t, self.baseline)):
                     if s is not None:
                         fired.append(s)
