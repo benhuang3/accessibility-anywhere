@@ -5,7 +5,9 @@
 
 The camera helper and the mouse/keyboard helper run as child processes. This writes numbers only
 (face scores, clicks, labels, the settings in effect) to state/senses_runs/<run>/<alias>-<glasses>-<light>.jsonl.
-Frames are never stored. Stop Ally first (`python run.py stop`): only one program can use the camera.
+A recording also asks the camera helper for raw face numbers on each signals line: 478 landmarks,
+every blendshape, the 16-number face matrix (or null), and the frame width and height. Still no
+picture. Stop Ally first (`python run.py stop`): only one program can use the camera.
 
 Ctrl+C keeps whatever has already been written.
 """
@@ -39,7 +41,12 @@ TOKEN = re.compile(r"[A-Za-z0-9_-]{1,40}")
 # Anything that could carry a picture is dropped before a line is written.
 _IMAGE_KEYS = {"frame", "image", "jpeg", "jpg", "png", "video", "pixels", "data", "bmp", "raw", "png_b64"}
 _MAX_STR = 400
+_LM_COUNT = 478
+_MAT_COUNT = 16
+_MAX_BLENDSHAPES = 128  # the face landmarker reports 52; a longer map is not blendshapes
 _DROP = object()
+# The recorder asks for this many signals a second. Live senses keep their own fps and never set raw.
+RECORD_SIGNALS_FPS = 15
 
 # Ground truth for each acted part. "natural" is scored on its own. Gaps and calibration are not scored.
 _TASKS = (
@@ -118,13 +125,79 @@ def card_line(part: dict) -> str:
 
 
 def sanitize(obj: dict) -> dict | None:
-    """Keep short text and numbers. Drop picture keys, long strings, and long lists."""
+    """Keep short text and numbers. Drop picture keys, long strings, and long lists.
+
+    A raw signals line is the exception: 478 landmark triples, blendshape scores, and the 16
+    matrix numbers are kept. Those are coordinates and scores, not a picture.
+    """
     if not isinstance(obj, dict):
         return None
     cleaned = _clean(obj)
     if cleaned is _DROP or not isinstance(cleaned, dict):
         return None
     return cleaned
+
+
+def _number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return _DROP
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return _DROP
+    return value
+
+
+def _clean_landmarks(value):
+    """478 [x, y, z] rows. Any other shape is dropped, so a long list cannot smuggle a picture."""
+    if not isinstance(value, list) or len(value) != _LM_COUNT:
+        return _DROP
+    out = []
+    for point in value:
+        if not isinstance(point, list) or len(point) != 3:
+            return _DROP
+        row = []
+        for item in point:
+            number = _number(item)
+            if number is _DROP:
+                return _DROP
+            row.append(number)
+        out.append(row)
+    return out
+
+
+def _clean_blendshapes(value):
+    if not isinstance(value, dict) or len(value) > _MAX_BLENDSHAPES:
+        return _DROP
+    out = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or len(key) > 64 or key.lower() in _IMAGE_KEYS:
+            continue
+        number = _number(item)
+        if number is _DROP:
+            continue
+        out[key] = number
+    return out
+
+
+def _clean_matrix(value):
+    """16 numbers, or null. A 4x4 list is flattened. Anything else is dropped."""
+    if value is None:
+        return None
+    if isinstance(value, list) and value and isinstance(value[0], list):
+        flat = []
+        for row in value:
+            if not isinstance(row, list):
+                return _DROP
+            flat.extend(row)
+        value = flat
+    if not isinstance(value, list) or len(value) != _MAT_COUNT:
+        return _DROP
+    out = []
+    for item in value:
+        number = _number(item)
+        if number is _DROP:
+            return _DROP
+        out.append(number)
+    return out
 
 
 def _clean(value):
@@ -154,7 +227,14 @@ def _clean(value):
         for key, item in value.items():
             if not isinstance(key, str) or key.lower() in _IMAGE_KEYS:
                 continue
-            cleaned = _clean(item)
+            if key == "lm":
+                cleaned = _clean_landmarks(item)
+            elif key == "bs":
+                cleaned = _clean_blendshapes(item)
+            elif key == "mat":
+                cleaned = _clean_matrix(item)
+            else:
+                cleaned = _clean(item)
             if cleaned is _DROP:
                 continue
             out[key] = cleaned
@@ -162,9 +242,12 @@ def _clean(value):
     return _DROP
 
 
-def camera_command(model: Path, calibration: Path, camera: int, fps: int, signals_fps: int) -> list[str]:
+def camera_command(model: Path, calibration: Path, camera: int, fps: int, signals_fps: int,
+                   raw: bool = False) -> list[str]:
     args = {"model": str(model), "calibration": str(calibration), "camera": int(camera), "fps": int(fps),
             "gaze": False, "signals": True, "signals_fps": int(signals_fps)}
+    if raw:
+        args["raw"] = True
     return [python_for_children(), "-m", "ally.gaze_helper", json.dumps(args)]
 
 
@@ -389,10 +472,6 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
     path = _output_path(state_dir, run_id, person, glasses, light)
     calib_path = path.parent / "calibration.json"
     fps = 20
-    try:
-        signals_fps = int(senses_cfg.get("fps", 10))
-    except (TypeError, ValueError):
-        signals_fps = 10
     spawn = spawn or _default_spawn
     sleep = sleep or time.sleep
     now = now or time.time
@@ -403,7 +482,8 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
     procs = []
     threads = []
     try:
-        camera_proc = spawn("camera", camera_command(Path(model_path), calib_path, int(camera), fps, signals_fps))
+        camera_proc = spawn("camera", camera_command(
+            Path(model_path), calib_path, int(camera), fps, RECORD_SIGNALS_FPS, raw=True))
         procs.append(camera_proc)
         input_proc = spawn("input", input_command())
         procs.append(input_proc)

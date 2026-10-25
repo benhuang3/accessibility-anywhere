@@ -97,12 +97,32 @@ class _Clock:
         self.t += float(seconds)
 
 
+def _raw_landmarks(x=0.11, y=0.22, z=-0.03):
+    return [[x, y, z] for _ in range(478)]
+
+
+def _raw_line(face=None):
+    """A signals line plus picture keys the recorder must drop."""
+    return {
+        "t": 1.0,
+        "f": _face() if face is None else face,
+        "lm": _raw_landmarks(),
+        "bs": {"eyeSquintLeft": 0.25, "eyeBlinkLeft": 0.5, "jpeg": "hidden"},
+        "mat": [round(i / 10, 4) for i in range(16)],
+        "w": 640,
+        "h": 480,
+        "frame": [0] * 50,
+        "jpeg": "data:image/jpeg;base64," + ("A" * 800),
+        "raw": "data:image/png;base64," + ("B" * 40),
+        "pixels": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+        "extra": list(range(12)),
+    }
+
+
 def _lines():
-    junk = [0] * 50
-    face = _face()
     return [
         json.dumps({"ready": True, "calibrated": False, "screen": [1920, 1080]}),
-        json.dumps({"t": 1.0, "f": face, "frame": junk, "jpeg": "data:image/jpeg;base64," + ("A" * 800)}),
+        json.dumps(_raw_line()),
         json.dumps({"t": 2.0, "face": False}),
     ]
 
@@ -198,6 +218,15 @@ class RecordTests(unittest.TestCase):
         face = next(r for r in rows if r["rec"] == "helper" and "f" in r)
         self.assertEqual(set(face["f"]), {"squint_l", "squint_r", "smile", "blink", "yaw", "pitch", "width", "light"})
         self.assertTrue(all(isinstance(v, (int, float)) for v in face["f"].values()))
+        self.assertEqual(len(face["lm"]), 478)
+        self.assertEqual(face["lm"][0], [0.11, 0.22, -0.03])
+        self.assertTrue(all(len(point) == 3 and all(isinstance(n, (int, float)) for n in point) for point in face["lm"]))
+        self.assertEqual(face["bs"], {"eyeSquintLeft": 0.25, "eyeBlinkLeft": 0.5})
+        self.assertEqual(len(face["mat"]), 16)
+        self.assertTrue(all(isinstance(n, (int, float)) for n in face["mat"]))
+        self.assertEqual((face["w"], face["h"]), (640, 480))
+        for key in ("frame", "jpeg", "raw", "pixels", "extra"):
+            self.assertNotIn(key, face)
         unknown = next(r for r in rows if r["rec"] == "input" and r.get("e") == "r")
         self.assertIsNone(unknown["clickable"])
         kind, command = self.calls[0]
@@ -205,7 +234,28 @@ class RecordTests(unittest.TestCase):
         args = json.loads(command[-1])
         self.assertFalse(args["gaze"])
         self.assertTrue(args["signals"])
+        self.assertTrue(args["raw"])
+        self.assertEqual(args["signals_fps"], 15)
         self.assertIn("ally.gaze_helper", " ".join(command))
+
+    def test_raw_line_keeps_numbers_and_drops_pictures(self):
+        nested = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+        dirty = _raw_line()
+        dirty["mat"] = nested
+        dirty["note"] = "data:image/png;base64," + ("C" * 20)
+        clean = matrix.sanitize(dirty)
+        self.assertIsNotNone(clean)
+        self.assertEqual(len(clean["lm"]), 478)
+        self.assertEqual(clean["mat"], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+        self.assertNotIn("jpeg", clean["bs"])
+        for key in ("frame", "jpeg", "raw", "pixels", "extra", "note"):
+            self.assertNotIn(key, clean)
+        self.assertNotIn("base64", json.dumps(clean))
+        short = matrix.sanitize({"t": 1, "f": _face(), "lm": [[0.0, 0.0, 0.0]] * 10, "mat": [0, 1, 2]})
+        self.assertNotIn("lm", short)
+        self.assertNotIn("mat", short)
+        empty = matrix.sanitize({"lm": "not points", "bs": ["nope"], "mat": "nope"})
+        self.assertEqual(empty, {})
 
     def test_cards_are_sent_and_interrupt_keeps_the_file(self):
         seen = {}
