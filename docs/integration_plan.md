@@ -140,6 +140,18 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 01:05 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `599fca1`
+
+**Pushed to `benh/os-layer` (not yet on `main`).**
+- **The Mac version is removed** (decision: Windows only; Linux kept). `ally/platforms/macos.py` is gone;
+  `<mod>` is always Ctrl+Alt; `[commands]` shell steps take `{ windows = "...", linux = "..." }` and a
+  `mac` key is now a config error. **Everyone:** don't add Mac code; test on Windows.
+- **Simplified mode fix:** saying "simple mode off" while a page on the same site is loading no longer gets
+  undone by the delayed re-apply, and later pages get the chosen text size (not a default).
+- All 43 modules pass on Windows (browser end-to-end twice).
+- **Hayden:** nothing in your files changed. **Ganesh:** `demo/verify_demo.py` still lists a Mac Chrome path
+  (yours, left as is).
+
 ### Oct 25, 00:40 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `346c1dd`
 
 **Pushed to `benh/os-layer` (not yet on `main`).** Open issues 1 and 2 from the 23:45 entry are fixed:
