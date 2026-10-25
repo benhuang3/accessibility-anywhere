@@ -467,6 +467,106 @@ class DoctorTests(unittest.TestCase):
         status, detail = describe_calibration(poor, camera=0, features="v1", now=now)
         self.assertEqual(status, "warn")
         self.assertIn("400", detail)
+        status, detail = describe_calibration(
+            {"created": now - 30, "features": "v5", "camera": 0}, camera=0, features="v5", now=now)
+        self.assertIn("features v5", detail)
+
+    def test_gaze_model_file_and_onnxruntime(self):
+        from ally.doctor import describe_gaze_cnn
+        from ally.gaze_helper import cnn_readiness
+
+        state = Path(tempfile.mkdtemp())
+        status, name, detail = describe_gaze_cnn(state)
+        self.assertEqual((status, name), ("warn", "Gaze model"))
+        self.assertIn("mobileone_s0_gaze.onnx", detail)
+        self.assertIn("python scripts/get_gaze_models.py", detail)
+        self.assertIn("pip install onnxruntime", detail)
+        models = state / "models"
+        models.mkdir()
+        (models / "mobileone_s0_gaze.onnx").write_bytes(b"not-a-real-model")
+        status, _name, detail = describe_gaze_cnn(state)
+        ready = cnn_readiness(state)
+        self.assertTrue(ready["file"])
+        if ready["onnxruntime"]:
+            self.assertEqual(status, "ok")
+            self.assertIn("present", detail)
+            self.assertIn("onnxruntime imports", detail)
+        else:
+            self.assertEqual(status, "warn")
+            self.assertIn("pip install onnxruntime", detail)
+            self.assertNotIn("is missing", detail)
+
+
+class LiveCnnTests(unittest.TestCase):
+    def test_fake_cnn_calibrates_v5_and_a_missing_model_uses_v4(self):
+        import math
+
+        import numpy as np
+
+        from ally import gaze_model as gm
+        from ally.gaze_helper import (frame_features, mention_fallback, read_cnn_angles,
+                                      resolve_live_features)
+
+        class FakeCNN:
+            def __init__(self, yaw, pitch):
+                self.yaw, self.pitch = yaw, pitch
+                self.frame = None
+
+            def angles(self, frame, landmarks):
+                self.frame = frame
+                return self.yaw, self.pitch
+
+        screen, mm = (1920, 1080), gm.DEFAULT_SCREEN_MM
+        mat = np.eye(4)
+        mat[2, 3] = 55.0
+        coef = np.zeros((10, 2))
+        coef[0, 0], coef[7, 0], coef[9, 0] = 0.4, 0.3, 0.01
+        coef[1, 1], coef[8, 1], coef[9, 1] = -0.2, 0.35, -0.02
+        shy, shp = gm._V4_SIGNS[2], gm._V4_SIGNS[3]
+        rng = np.random.default_rng(2)
+        samples = []
+        while len(samples) < 30:
+            h, v = float(rng.uniform(-0.2, 0.2)), float(rng.uniform(-0.2, 0.2))
+            yaw_deg, pitch_deg = float(rng.uniform(-10, 10)), float(rng.uniform(-6, 6))
+            landmarks = np.zeros((478, 3))
+            for ids, side in ((gm.RIGHT_EYE, -1), (gm.LEFT_EYE, 1)):
+                landmarks[ids["inner"], :2] = [0.4, 0.5]
+                landmarks[ids["outer"], :2] = [0.6, 0.5]
+                landmarks[ids["top"], :2] = [0.5, 0.48]
+                landmarks[ids["bottom"], :2] = [0.5, 0.52]
+                landmarks[ids["iris"], :2] = [0.5 + (h if side < 0 else v) * 0.2, 0.5]
+            fake = FakeCNN(yaw_deg, pitch_deg)
+            frame = np.zeros((12, 16, 3), dtype=np.uint8)
+            angles = read_cnn_angles(fake, frame, landmarks)
+            self.assertEqual(angles, (yaw_deg, pitch_deg))
+            self.assertIs(fake.frame, frame)
+            feat = frame_features({"features": "v5", "screen_mm": mm}, landmarks, {}, mat, 640, 480, cnn=angles)
+            self.assertEqual(len(feat[0]), 11)
+            self.assertEqual(feat[0][9:], [yaw_deg, pitch_deg])
+            eye = gm.hybrid_terms(feat[0][:9], yaw_deg, pitch_deg) @ coef
+            point = gm.project_gaze(feat[0], float(eye[0] + shy * feat[0][4]),
+                                    float(eye[1] + shp * feat[0][5]), screen, mm)
+            if point is None or not (40 < point[0] < 1880 and 40 < point[1] < 1040):
+                continue
+            samples.append((feat[0], point))
+        model = gm.fit(samples, screen, "v5", screen_mm=mm)
+        self.assertEqual(model["features"], "v5")
+        self.assertEqual(model["cnn_model"], "mobileone_s0")
+        self.assertEqual(model["fallback"]["features"], "v4")
+        err = np.median([math.hypot(*(np.asarray(gm.predict(model, f)) - np.asarray(t))) for f, t in samples])
+        self.assertLess(float(err), 20)
+
+        state = Path(tempfile.mkdtemp())
+        feature_set, runner, note = resolve_live_features("v5", state)
+        self.assertEqual((feature_set, runner), ("v4", None))
+        self.assertIn("Using v4", note)
+        self.assertIn("python scripts/get_gaze_models.py", note)
+        result, lines = mention_fallback({"calibrated": True, "lines": ["Good."]}, ["Good."], note)
+        self.assertEqual(result["cnn_fallback"], note)
+        self.assertIn(note, lines)
+        self.assertIn(note, result["lines"])
+        plain, idle, quiet = resolve_live_features("v4", state)
+        self.assertEqual((plain, idle, quiet), ("v4", None, None))
 
 
 class UnknownElementTests(unittest.TestCase):
