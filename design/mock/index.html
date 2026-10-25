@@ -4,106 +4,179 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'">
-<title>Ally speech bubble states</title>
+<title>Ally companion</title>
 <link rel="stylesheet" href="../tokens/tokens.css">
 <link rel="stylesheet" href="mock.css">
 </head>
 <body>
-<header class="page-head">
-  <h1>Ally: speech bubble states</h1>
-  <p>Shown at real size. The bear docks bottom-right; the bubble grows to the left.</p>
+
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 8v4.5M12 16h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><path d="M7.2 3.5h-2A1.7 1.7 0 0 0 3.5 5.3C3.9 13.6 10.4 20.1 18.7 20.5a1.7 1.7 0 0 0 1.8-1.7v-2l-4-1.7-2 2a12 12 0 0 1-5.6-5.6l2-2-1.7-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-question" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9.6 9.4a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.7M12 17h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</svg>
+
+<header class="intro">
+  <p class="intro-kicker">Ally companion</p>
+  <h1>One calm voice for every moment</h1>
+  <p class="intro-lede">Ally's bear sits in the corner of the screen and speaks up only when it matters. The card is the bear's speech: one surface, one button style, and urgency carried by words and the bear's face rather than loud colour.</p>
 </header>
 
-<main class="grid">
-
-  <section class="cell" aria-labelledby="l-info">
-    <h2 class="label" id="l-info">Info &middot; happy &middot; auto-hides</h2>
-    <div class="dock">
-      <div class="bubble bubble-info" role="status">
-        <p class="body">Made the text bigger.</p>
-      </div>
-      <img class="bear" src="../bot/expr/happy.svg" alt="Ally smiling">
-    </div>
-  </section>
-
-  <section class="cell" aria-labelledby="l-caution">
-    <h2 class="label" id="l-caution">Caution &middot; concerned</h2>
-    <div class="dock">
-      <div class="bubble bubble-caution" role="alertdialog" aria-labelledby="c-h">
-        <p class="eyebrow">Ally &middot; Safety check</p>
-        <h3 class="headline" id="c-h">This site looks different from the one you usually use.</h3>
-        <p class="body">Want me to close this page?</p>
-        <div class="actions">
-          <button class="btn btn-primary" type="button">Yes, close it</button>
-          <button class="btn btn-secondary" type="button">Not now</button>
+<section class="hero" aria-label="Example: a fake virus warning">
+  <div class="scene">
+    <div class="window" aria-hidden="true">
+      <div class="window-bar"><span></span><span></span><span></span><div class="url">pc-alert-center.example/warning</div></div>
+      <div class="window-page">
+        <div class="fake-alert">
+          <div class="fake-line w60"></div>
+          <div class="fake-line w80"></div>
+          <div class="fake-line w40"></div>
+          <div class="fake-cta"></div>
         </div>
       </div>
-      <img class="bear" src="../bot/expr/concerned.svg" alt="Ally looking concerned">
     </div>
-  </section>
 
-  <section class="cell" aria-labelledby="l-high">
-    <h2 class="label" id="l-high">High &middot; worried &middot; scam pop-up</h2>
-    <div class="dock">
-      <div class="bubble bubble-high" role="alertdialog" aria-labelledby="h-h">
-        <p class="eyebrow">Ally &middot; Safety check</p>
-        <h3 class="headline" id="h-h">This message may not be real.</h3>
-        <p class="body">It asks you to call a number. Real Windows warnings never do.</p>
-        <div class="actions">
-          <button class="btn btn-primary" type="button">Yes, close it</button>
-          <button class="btn btn-secondary" type="button">Not now</button>
+    <div class="ally" data-tone="risk">
+      <article class="ally-card" role="alertdialog" aria-labelledby="hero-t" aria-describedby="hero-d">
+        <header class="ally-status"><svg class="ico"><use href="#i-shield"/></svg>Safety check</header>
+        <div class="ally-body">
+          <h2 class="ally-title" id="hero-t">This message may not be real.</h2>
+          <p class="ally-text" id="hero-d">It asks you to call a number. Real Windows warnings never do.</p>
+          <p class="ally-ask">Want me to close this page?</p>
+          <div class="ally-actions">
+            <button class="btn btn-primary" type="button">Yes, close it</button>
+            <button class="btn btn-quiet" type="button">Not now</button>
+          </div>
         </div>
-        <button class="btn btn-tertiary" type="button"><span aria-hidden="true">&#128222;</span> Call Priya</button>
-        <details class="why">
-          <summary>Why?</summary>
-          <p>Windows never shows a phone number in a warning. Scammers do.</p>
-        </details>
+        <footer class="ally-more">
+          <button class="link link-primary" type="button"><svg class="ico"><use href="#i-phone"/></svg>Call Priya</button>
+          <button class="link" type="button"><svg class="ico"><use href="#i-question"/></svg>Why?</button>
+        </footer>
+      </article>
+      <img class="ally-bear" src="../bot/expr/worried.svg" alt="">
+    </div>
+  </div>
+</section>
+
+<section class="states" aria-labelledby="states-h">
+  <h2 class="section-h" id="states-h">Every state uses the same card</h2>
+  <p class="section-sub">Only three things change with urgency: the status line, the bear's expression, and whether Ally waits for an answer.</p>
+
+  <div class="grid">
+
+    <figure class="stage">
+      <figcaption><strong>Done</strong> · happy · disappears after 4 s</figcaption>
+      <div class="ally ally-compact" data-tone="good">
+        <article class="ally-card" role="status">
+          <div class="ally-toast"><svg class="ico"><use href="#i-check"/></svg>I made the text bigger.</div>
+        </article>
+        <img class="ally-bear" src="../bot/expr/happy.svg" alt="">
       </div>
-      <img class="bear" src="../bot/expr/worried.svg" alt="Ally looking worried and caring">
-    </div>
-  </section>
+    </figure>
 
-  <section class="cell" aria-labelledby="l-pause">
-    <h2 class="label" id="l-pause">High with pause &middot; worried</h2>
-    <div class="dock">
-      <div class="bubble bubble-high" role="alertdialog" aria-labelledby="p-h">
-        <p class="eyebrow">Ally &middot; Safety check</p>
-        <h3 class="headline" id="p-h">Someone may be able to control this computer.</h3>
-        <p class="body">Want me to close AnyDesk?</p>
-        <div class="actions">
-          <button class="btn btn-primary" type="button">Yes, close it</button>
-          <button class="btn btn-secondary" type="button" disabled>Continue in 24</button>
-        </div>
-        <button class="btn btn-tertiary" type="button"><span aria-hidden="true">&#128222;</span> Call Priya</button>
+    <figure class="stage">
+      <figcaption><strong>Worth a look</strong> · concerned</figcaption>
+      <div class="ally" data-tone="caution">
+        <article class="ally-card" role="alertdialog" aria-labelledby="c-t">
+          <header class="ally-status"><svg class="ico"><use href="#i-eye"/></svg>Worth a look</header>
+          <div class="ally-body">
+            <h3 class="ally-title" id="c-t">This isn't the site you usually use.</h3>
+            <p class="ally-text">The address is paypa1.example, not paypal.com.</p>
+            <p class="ally-ask">Want me to close this page?</p>
+            <div class="ally-actions">
+              <button class="btn btn-primary" type="button">Yes, close it</button>
+              <button class="btn btn-quiet" type="button">Not now</button>
+            </div>
+          </div>
+        </article>
+        <img class="ally-bear" src="../bot/expr/concerned.svg" alt="">
       </div>
-      <img class="bear" src="../bot/expr/worried.svg" alt="Ally looking worried and caring">
-    </div>
-  </section>
+    </figure>
 
-  <section class="cell" aria-labelledby="l-confirm">
-    <h2 class="label" id="l-confirm">Confirm &middot; caution</h2>
-    <div class="dock">
-      <div class="bubble bubble-confirm" role="alertdialog" aria-labelledby="f-h">
-        <p class="eyebrow">Ally &middot; Just checking</p>
-        <h3 class="headline" id="f-h">Are you sure?</h3>
-        <p class="body">Scammers often say it's safe to continue.</p>
-        <div class="actions">
-          <button class="btn btn-primary" type="button">Close it</button>
-          <button class="btn btn-secondary" type="button">Keep it open</button>
-        </div>
+    <figure class="stage">
+      <figcaption><strong>Safety check, with a pause</strong> · worried · "continue" unlocks after 30 s</figcaption>
+      <div class="ally" data-tone="risk">
+        <article class="ally-card" role="alertdialog" aria-labelledby="p-t">
+          <header class="ally-status"><svg class="ico"><use href="#i-shield"/></svg>Safety check</header>
+          <div class="ally-body">
+            <h3 class="ally-title" id="p-t">Someone may be able to control this computer.</h3>
+            <p class="ally-text">AnyDesk is open while your bank is on screen.</p>
+            <p class="ally-ask">Want me to close AnyDesk?</p>
+            <div class="ally-actions">
+              <button class="btn btn-primary" type="button">Yes, close it</button>
+              <button class="btn btn-quiet" type="button" disabled><span class="countdown" aria-hidden="true"></span>Continue in 24s</button>
+            </div>
+          </div>
+          <footer class="ally-more">
+            <button class="link link-primary" type="button"><svg class="ico"><use href="#i-phone"/></svg>Call Priya</button>
+          </footer>
+        </article>
+        <img class="ally-bear" src="../bot/expr/worried.svg" alt="">
       </div>
-      <img class="bear" src="../bot/expr/concerned.svg" alt="Ally looking concerned">
-    </div>
-  </section>
+    </figure>
 
-  <section class="cell" aria-labelledby="l-listen">
-    <h2 class="label" id="l-listen">Listening</h2>
-    <div class="dock">
-      <div class="chip" role="status"><span class="dot" aria-hidden="true"></span>Listening&hellip; say yes or no</div>
-      <img class="bear" src="../bot/expr/listening.svg" alt="Ally listening">
-    </div>
-  </section>
+    <figure class="stage">
+      <figcaption><strong>Are you sure?</strong> · concerned · after "Not now" on a safety check</figcaption>
+      <div class="ally" data-tone="caution">
+        <article class="ally-card" role="alertdialog" aria-labelledby="f-t">
+          <div class="ally-body">
+            <h3 class="ally-title" id="f-t">Are you sure?</h3>
+            <p class="ally-text">Scammers often say it's safe to continue.</p>
+            <div class="ally-actions">
+              <button class="btn btn-primary" type="button">Close it</button>
+              <button class="btn btn-quiet" type="button">Keep it open</button>
+            </div>
+          </div>
+        </article>
+        <img class="ally-bear" src="../bot/expr/concerned.svg" alt="">
+      </div>
+    </figure>
 
-</main>
+    <figure class="stage">
+      <figcaption><strong>Why?</strong> · expanded explanation</figcaption>
+      <div class="ally" data-tone="risk">
+        <article class="ally-card" role="alertdialog" aria-labelledby="w-t">
+          <header class="ally-status"><svg class="ico"><use href="#i-shield"/></svg>Safety check</header>
+          <div class="ally-body">
+            <h3 class="ally-title" id="w-t">This message may not be real.</h3>
+            <div class="ally-why">
+              <p>The page fills the whole screen, says your computer is infected, and gives a phone number to call.</p>
+              <p>Microsoft never asks you to call from a web page. Your computer is most likely fine.</p>
+            </div>
+            <div class="ally-actions">
+              <button class="btn btn-primary" type="button">Yes, close it</button>
+              <button class="btn btn-quiet" type="button">Not now</button>
+            </div>
+          </div>
+        </article>
+        <img class="ally-bear" src="../bot/expr/talk-b.svg" alt="">
+      </div>
+    </figure>
+
+    <figure class="stage">
+      <figcaption><strong>Listening</strong> · after asking a question out loud</figcaption>
+      <div class="ally ally-compact" data-tone="info">
+        <article class="ally-card" role="status">
+          <div class="ally-toast"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Listening. Say “yes” or “no”.</div>
+        </article>
+        <img class="ally-bear" src="../bot/expr/listening.svg" alt="">
+      </div>
+    </figure>
+
+  </div>
+</section>
+
+<section class="specs" aria-labelledby="spec-h">
+  <h2 class="section-h" id="spec-h">The rules behind it</h2>
+  <dl class="rules">
+    <div><dt>One surface</dt><dd>White card, soft shadow, no outlines. The corner nearest the bear is tight, so the card reads as the bear's speech.</dd></div>
+    <div><dt>Urgency in words</dt><dd>A status line ("Safety check", "Worth a look") and the bear's face set the tone. Amber appears only in that line.</dd></div>
+    <div><dt>One button language</dt><dd>Teal for the safe choice, a quiet tinted button for the other. 64 px tall, 14 px corners, verbs on every button.</dd></div>
+    <div><dt>Extras stay quiet</dt><dd>Calling a helper and "Why?" live in a footer as text actions, so the main decision is never crowded.</dd></div>
+  </dl>
+</section>
+
 </body>
 </html>
