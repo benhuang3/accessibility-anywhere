@@ -1,4 +1,4 @@
-"""A soft circle on the spot the eye tracker is using.
+"""A thin ring around the spot the eye tracker is using, sized to how sure it is.
 
 The camera helper moves it on every gaze point, so it has no extra lag. The window is layered,
 always on top, and click-through: it never takes focus, never blocks a click, and has no taskbar
@@ -19,7 +19,14 @@ log = logging.getLogger("ally.gaze.dot")
 # Big enough to see, small enough that a wide uncertainty does not cover the screen.
 DOT_MIN_R = 16.0
 DOT_MAX_R = 96.0
-SHOWN_ALPHA = 0.45  # translucent while the tracker has a face and a calibration
+SHOWN_ALPHA = 0.9  # crisp while the tracker has a face and a calibration (the ring is thin)
+# The ring: a dark line on the edge of the estimate with a faint white edge, and a small centre dot.
+RING_HALF = 1.25  # half the dark line's width, pixels
+HALO = 1.0  # width of the white edge on each side, pixels
+HALO_ALPHA = 0.55
+LINE_ALPHA = 0.85
+CENTRE_R = 2.5
+RING_PAD = 4  # room for the line and its halo inside the bitmap
 FADE_OUT = 0.35  # seconds to disappear after the face or the calibration is gone
 
 # WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
@@ -201,34 +208,36 @@ class GazeDot:
         self.close()
 
 
-def _soft_circle(radius: float, alpha: float) -> tuple[int, bytes]:
-    """Premultiplied BGRA for a soft warm circle. Top row first."""
-    r = max(1, int(round(radius)))
+def _ring(radius: float, alpha: float) -> tuple[int, bytes]:
+    """Premultiplied BGRA: a thin dark ring on the edge of the estimate, a small centre dot, and a
+    faint white edge on both so they show on dark pages too. Inside the ring stays clear, so the
+    marker never hides what the person is looking at. Top row first."""
+    r = max(RING_PAD + 2, int(round(radius)))
     d = r * 2 + 1
-    peak = int(max(0, min(255, round(float(alpha) * 255))))
+    peak = max(0.0, min(1.0, float(alpha)))
     buf = bytearray(d * d * 4)
-    inner = r * 0.45
-    span = max(r - inner, 1e-6)
+    ring = r - RING_PAD  # the stroke's centre line, so the halo fits inside the bitmap
     for y in range(d):
         dy = y - r
         row = y * d
         for x in range(d):
             dist = math.hypot(x - r, dy)
-            if dist >= r or peak == 0:
+            off = abs(dist - ring)
+            # Coverage of each layer, anti-aliased over one pixel.
+            line = max(0.0, min(1.0, RING_HALF + 0.5 - off))
+            halo = max(0.0, min(1.0, RING_HALF + HALO + 0.5 - off))
+            core = max(0.0, min(1.0, CENTRE_R + 0.5 - dist))
+            core_halo = max(0.0, min(1.0, CENTRE_R + HALO + 0.5 - dist))
+            dark = max(line, core)
+            light = max(halo, core_halo) * HALO_ALPHA * (1.0 - dark)
+            a = (dark * LINE_ALPHA + light) * peak
+            if a <= 0.004:
                 continue
-            if dist <= inner:
-                a = peak
-            else:
-                a = int(peak * (1.0 - (dist - inner) / span))
-            if a <= 0:
-                continue
+            white = int(255 * light * peak)  # premultiplied: only the halo adds colour
             i = (row + x) * 4
-            buf[i] = (40 * a) // 255       # B
-            buf[i + 1] = (190 * a) // 255   # G
-            buf[i + 2] = (255 * a) // 255   # R  warm yellow
-            buf[i + 3] = a
+            buf[i] = buf[i + 1] = buf[i + 2] = min(255, white)
+            buf[i + 3] = min(255, int(round(255 * a)))
     return d, bytes(buf)
-
 
 class LayeredDot:
     """The real window. open() returns None when Win32 cannot make one."""
@@ -325,7 +334,7 @@ class LayeredDot:
         if spec is None:
             user32.ShowWindow(self.hwnd, 0)  # SW_HIDE
             return
-        d, pixels = _soft_circle(spec["radius"], spec["alpha"])
+        d, pixels = _ring(spec["radius"], spec["alpha"])
         self._ensure_bitmap(d)
         if not self._bits:
             return
