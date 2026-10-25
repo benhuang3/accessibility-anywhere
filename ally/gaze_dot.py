@@ -354,6 +354,7 @@ class _Animator:
                 elif drawn is None or _moved(drawn, shown):
                     window.draw(shown)
                     hidden, drawn = False, dict(shown)
+                window.pump()  # answer Windows, or after ~5 s it ghosts the window as a frozen black box
                 self.stop.wait(max(0.0, period - (time.monotonic() - now)))
         except Exception:
             log.debug("gaze dot animation failed", exc_info=True)
@@ -555,6 +556,23 @@ class LayeredDot:
                 pass
         self._bmp = self._mem = self._bits = None
         self._size = 0
+
+    def pump(self) -> None:
+        """Handle this thread's pending window messages (the window belongs to the animation thread)."""
+        import ctypes
+        from ctypes import wintypes
+
+        msg = wintypes.MSG()
+        user32 = self.user32
+        user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT,
+                                        wintypes.UINT, wintypes.UINT]
+        user32.PeekMessageW.restype = wintypes.BOOL
+        user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+        user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+        user32.DispatchMessageW.restype = ctypes.c_ssize_t
+        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):  # PM_REMOVE
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
 
     def close(self) -> None:
         self._drop_bitmap()
