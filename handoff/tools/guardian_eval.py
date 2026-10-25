@@ -10,6 +10,7 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from eval_cases import CASES, CASE_TAGS, HARD_GROUPS
 
 
@@ -72,15 +73,18 @@ def run(cases, out, rules_only=False):
                 real_review = guardian.review
 
                 def spy(ev, review=real_review, results=seen):
-                    verdict = review(ev)
-                    results.append(verdict)
-                    return verdict
+                    verdict = None
+                    try:
+                        verdict = review(ev)
+                        return verdict
+                    finally:
+                        results.append(verdict)
 
                 guardian.review = spy
                 agent = published(guardian)
                 verdict = seen[0] if seen else None
                 row.update(agent=bool(agent), agent_ok=bool(agent) == (kind == "scam"),
-                           verdict=getattr(verdict, "verdict", "(not asked)"),
+                           verdict=getattr(verdict, "verdict", "(model error)" if seen else "(not asked)"),
                            confidence=getattr(verdict, "confidence", None),
                            explanation=next((r.evidence for r in agent
                                              if r.source == "risk.guardian"), ""))
@@ -107,6 +111,7 @@ def summarize(rows, rules_only):
         return {"case_counts": {kind: sum(r["kind"] == kind for r in items)
                                 for kind in ("scam", "safe")},
                 "rendered": sum(r["render_error"] is None for r in items),
+                "model_errors": sum(r["verdict"] == "(model error)" for r in items),
                 "rules": metrics(items, "rules"),
                 "agent": None if rules_only else metrics(items, "agent")}
 
@@ -148,7 +153,7 @@ def print_report(rows, summary, spend):
         print(f"{row['id']:44} {row['kind']:6} {rules:12} {agent:14} {status}")
     counts = summary["case_counts"]
     print(f"\nCases: {len(rows)} ({counts['scam']} scam, {counts['safe']} safe); "
-          f"rendered: {summary['rendered']}/{len(rows)}")
+          f"rendered: {summary['rendered']}/{len(rows)}; model errors: {summary['model_errors']}")
     print("Precision = TP/(TP+FP); recall = TP/(TP+FN); false-alarm rate = FP/(FP+TN).")
     print("n/a means the denominator is zero. Render failures are excluded from metrics.")
     for group, mode, result in summary_rows(summary):
@@ -174,7 +179,7 @@ def markdown_report(rows, summary, spend, rules_only, only):
     lines = ["# Screen-risk evaluation", "",
              f"Mode: {'rules only' if rules_only else 'rules + AI'}. Prefix: {only or '(all)'}. "
              f"Cases: {len(rows)} ({counts['scam']} scam, {counts['safe']} safe). "
-             f"Rendered: {summary['rendered']}/{len(rows)}.", "",
+             f"Rendered: {summary['rendered']}/{len(rows)}. Model errors: {summary['model_errors']}.", "",
              "All pages are invented and rendered offline; these results are not a real-world accuracy estimate.", "",
              "| Case | Truth | Rules | Rules + AI | Model verdict | Tags |",
              "| --- | --- | --- | --- | --- | --- |"]
@@ -222,6 +227,10 @@ def main():
         parser.error(f"no cases match prefix {args.only!r}")
     sys.path.insert(0, str(args.repo.resolve()))
     args.outdir.mkdir(parents=True, exist_ok=True)
+    if not args.rules_only:
+        from ally.paths import Paths, load_env_file
+
+        load_env_file(Paths().env_file)
     rows, spend = run(cases, args.outdir, args.rules_only)
     summary = summarize(rows, args.rules_only)
     print_report(rows, summary, spend)
