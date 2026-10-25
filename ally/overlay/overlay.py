@@ -116,6 +116,8 @@ class Overlay:
             self._root = root
             self._hl_wins: list[Any] = []
             self._card_win = None
+            self._card_bottom = 0
+            self._offer_x = 0
             self._offer_win = None
             self._current_offer = None
             self._ready.set()
@@ -161,6 +163,14 @@ class Overlay:
             if offer is not None:
                 self._show_offer(offer)
             return
+
+    @staticmethod
+    def _place(win, x: int, y: int, w: int | None = None, h: int | None = None) -> None:
+        """Size and position a borderless window. Tk can drop the position of a window that is created
+        while another overlay window is up, so apply it, let Tk settle, and apply it again."""
+        win.geometry(f"{w}x{h}+{x}+{y}" if w is not None else f"+{x}+{y}")
+        win.update_idletasks()
+        win.geometry(f"+{x}+{y}")
 
     def _screen_size(self) -> tuple[int, int]:
         return self._root.winfo_screenwidth(), self._root.winfo_screenheight()
@@ -238,11 +248,23 @@ class Overlay:
         win.update_idletasks()
         h = win.winfo_reqheight()
         x, _, w = fit_card(sw, sh)
-        win.geometry(f"{w}x{h}+{x}+{y}")
+        self._place(win, x, y, w, h)
         self._card_win = win
+        self._card_bottom = y + h
+        self._park_offer_below_card()
         if first_btn is not None:
             first_btn.focus_set()
             win.focus_force()
+
+    def _park_offer_below_card(self) -> None:
+        """The offer can arrive before its card; keep the question visible under the warning."""
+        if self._offer_win is None or self._card_win is None:
+            return
+        try:
+            self._place(self._offer_win, self._offer_x, self._card_bottom + 12)
+            self._offer_win.lift()
+        except Exception:
+            pass
 
     def _card_action(self, label: str) -> None:
         if self.on_action is not None:
@@ -329,8 +351,9 @@ class Overlay:
         h = win.winfo_reqheight()
         x, y0, w = fit_card(sw, sh)
         if self._card_win is not None:
-            y0 = self._card_win.winfo_y() + self._card_win.winfo_height() + 12
-        win.geometry(f"{w}x{h}+{x}+{y0}")
+            y0 = self._card_bottom + 12
+        self._place(win, x, y0, w, h)
+        self._offer_x = x
         self._offer_win = win
         yes_btn.focus_set()
         win.focus_force()
