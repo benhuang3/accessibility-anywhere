@@ -3,7 +3,7 @@
     {"ready": true, "calibrated": false}         camera and face model work
     {"t": 1730000000.1, "x": 812, "y": 403, "r": 140}  where the user looks, and how unsure that frame is (pixels)
     {"t": ..., "face": true} / {"face": false}   face seen but not calibrated / no face (a few per second)
-    {"calibrated": true, "error_px": 140, "dots": 13, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
+    {"calibrated": true, "error_px": 140, "dots": 9, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
                                            calibration done ({"calibrated": false, "why": "..."} if not)
     {"t": ..., "f": {"squint_l": 0.21, ...}}     face numbers for struggle sensing (with "signals": true)
     {"camera_off": true}                         the camera-on window was clicked; the camera then closes
@@ -46,7 +46,7 @@ HUD_SCALE = 0.9
 HUD_THICK = 2
 HUD_STEP = 36
 HUD_FOOTER = "Nothing is saved."
-# 3x3 grid, inset from the edges, then the four midpoints between the center and the corners.
+# 3x3 grid, inset from the edges. The setup uses these 9 dots, center first.
 GRID_X = (0.08, 0.50, 0.92)
 GRID_Y = (0.10, 0.50, 0.90)
 READY_SECONDS = 3.0
@@ -62,8 +62,9 @@ HEAD_RETRY_LINE = "Keep your head still, look with your eyes only."
 SIT_BACK = "Sit back a little"
 LEAN_IN = "Lean in a little"
 POSE_NORMAL, POSE_BACK, POSE_CLOSE = "normal", "back", "close"
-MINUTE = "About a minute."
-MINUTE_HALF = "About a minute and a half."
+# 9 dots are about 30 seconds. With the two head-position rounds, the same recording is about 45.
+ABOUT_30 = "About 30 seconds."
+ABOUT_45 = "About 45 seconds."
 RESULT_SECONDS = 4.0
 MIN_OPEN = 0.12  # eye openness below this is a blink: skip the frame
 JUMP = 0.08  # change in iris position (eye widths) that means the eye jumped: skip that frame
@@ -144,10 +145,6 @@ def open_camera(index: int):
     return None
 
 
-def _mid(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
-    return (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
-
-
 def _third(pos: float) -> int:
     if pos < 1.0 / 3.0:
         return 0
@@ -162,14 +159,10 @@ def grid_points() -> list[tuple[float, float]]:
 
 
 def calibration_points() -> list[tuple[float, float]]:
-    """13 dots: the 3x3 grid, center first, then the four dots between the center and the corners."""
+    """9 dots: the 3x3 grid, center first. The corner midpoints are not part of the setup."""
     grid = grid_points()
     center = (GRID_X[1], GRID_Y[1])
-    corners = (
-        (GRID_X[0], GRID_Y[0]), (GRID_X[2], GRID_Y[0]),
-        (GRID_X[0], GRID_Y[2]), (GRID_X[2], GRID_Y[2]),
-    )
-    return [center] + [p for p in grid if p != center] + [_mid(c, center) for c in corners]
+    return [center] + [p for p in grid if p != center]
 
 
 def cell_index(nx: float, ny: float) -> int:
@@ -222,7 +215,7 @@ def _pose_summary(poses: list[tuple[float, float]]) -> tuple[float, tuple[float,
 
 
 def pose_count(value) -> int:
-    """3 runs the extra sit-back and lean-in rounds. 1 is the original 13 dots only."""
+    """3 runs the extra sit-back and lean-in rounds. 1 is the 9 grid dots only."""
     try:
         n = int(value)
     except (TypeError, ValueError):
@@ -231,8 +224,11 @@ def pose_count(value) -> int:
 
 
 def setup_duration(poses: int = 3) -> str:
-    """The time shown and spoken before the dots. The extra rounds add about half a minute."""
-    return MINUTE if pose_count(poses) <= 1 else MINUTE_HALF
+    """The time shown and spoken before the dots.
+
+    Nine grid dots take about 30 seconds. The two head-position rounds make it about 45.
+    """
+    return ABOUT_30 if pose_count(poses) <= 1 else ABOUT_45
 
 
 def intro_lines(instruction: str = "", poses: int = 3) -> list[str]:
@@ -691,7 +687,7 @@ class _Dot:
 
 
 class Setup:
-    """Readiness, 13 calibration dots, one retry, then 5 check dots. No camera and no window."""
+    """Readiness, 9 calibration dots, one retry, then 5 check dots. No camera and no window."""
 
     def __init__(self, screen: tuple[int, int], rng: random.Random | None = None,
                  ready_seconds: float = READY_SECONDS, min_good: int = MIN_GOOD, on_target=None,
@@ -1080,7 +1076,7 @@ class Setup:
 
 
 class Calibration:
-    """Full-screen setup: readiness, 13 dots, optional sit-back and lean-in rounds, then 5 check dots."""
+    """Full-screen setup: readiness, 9 dots, optional sit-back and lean-in rounds, then 5 check dots."""
 
     def __init__(self, size: tuple[int, int], on_target=None, rng: random.Random | None = None,
                  ready_seconds: float = READY_SECONDS, poses: int = 3):

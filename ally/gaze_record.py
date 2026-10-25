@@ -3,7 +3,7 @@
     python -m ally.gaze_record --person ALIAS --glasses yes|no --light bright|dim
     python -m ally.gaze_record --person ALIAS --glasses no --light bright --cnn mobileone_s0,resnet18
 
-The same setup as "Ally, set up my eyes" (readiness, 13 dots, then 5 sitting back and 5
+The same setup as "Ally, set up my eyes" (readiness, 9 dots, then 5 sitting back and 5
 leaning in when calibration_poses is 3, then 5 check dots), then about
 2 minutes of reading, then 5 check dots again (drift). Writes
 state/gaze_runs/<run>/<alias>-<glasses>-<light>.jsonl.
@@ -466,7 +466,7 @@ def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int]
         from ally import gaze_model
         from ally.gaze_helper import (NUM_FACES, Calibration, CameraIndicator, likely_cause, look,
                                       open_camera, pose_count, result_grade, result_lines, screen_mm as read_screen_mm,
-                                      validation_score)
+                                      setup_duration, validation_score)
     except Exception as e:
         print(f"Eye tracking needs mediapipe and opencv-python ({type(e).__name__}: {e})")
         return 3
@@ -492,10 +492,12 @@ def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int]
     print(f"Recording to {log.path}")
     if runners:
         print("Also running in memory: " + ", ".join(getattr(r, "name", "model") for r in runners))
+    takes = setup_duration(poses).rstrip(".").lower()
     if poses <= 1:
-        print("Look at each dot. Esc cancels. Ctrl+C keeps what was recorded.")
+        print(f"Look at each dot. This takes {takes}. Esc cancels. Ctrl+C keeps what was recorded.")
     else:
-        print("Look at each dot. Then sit back a little, and lean in a little. Esc cancels.")
+        print("Look at each dot. Then sit back a little, and lean in a little. "
+              f"This takes {takes}. Esc cancels.")
     indicator = CameraIndicator()
     indicator.open(cv2, screen)
     calib = Calibration(screen, on_target=lambda event: _on_target(log, event), poses=poses)

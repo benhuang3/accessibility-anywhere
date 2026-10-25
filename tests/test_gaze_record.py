@@ -15,7 +15,7 @@ from pathlib import Path
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
 from ally.gaze_helper import (CAL_COLLECT, CAL_SETTLE, CLOSER, CENTER_HEAD, EYES_ONLY, FARTHER,
-                              HEAD_MOVE_DEG, HEAD_RETRY_LINE, LEAN_IN, MINUTE, MINUTE_HALF, NEED_LIGHT,
+                              HEAD_MOVE_DEG, HEAD_RETRY_LINE, LEAN_IN, ABOUT_30, ABOUT_45, NEED_LIGHT,
                               NO_FACE, SIT_BACK, STEADY_SECONDS, TWO_FACES, VAL_COLLECT, Setup,
                               attach_screen_mm, calibration_points, cell_index, classify_command,
                               grid_points, intro_lines, kept_model, likely_cause, pose_count,
@@ -54,12 +54,14 @@ def _drive(setup: Setup, feat_fn, face: dict, until: set[str], t: float = 0.0, d
 
 
 class LayoutTests(unittest.TestCase):
-    def test_thirteen_dots_cover_the_grid(self):
+    def test_nine_grid_dots_cover_every_cell(self):
         dots = calibration_points()
-        self.assertEqual(len(dots), 13)
-        self.assertEqual(len(set(dots)), 13)
-        self.assertTrue(set(grid_points()).issubset(set(dots)))
-        self.assertEqual({cell_index(x, y) for x, y in grid_points()}, set(range(9)))
+        center = (0.50, 0.50)
+        self.assertEqual(len(dots), 9)
+        self.assertEqual(len(set(dots)), 9)
+        self.assertEqual(set(dots), set(grid_points()))
+        self.assertEqual(dots[0], center)
+        self.assertEqual({cell_index(x, y) for x, y in dots}, set(range(9)))
 
     def test_validation_dots_use_different_cells(self):
         calib = calibration_points()
@@ -147,7 +149,7 @@ class RetryTests(unittest.TestCase):
         _drive(setup, feat_fn, _face(), {"fit"})
         ids = [event["id"] for event in setup.events if event["phase"] == "calibration"]
         self.assertEqual(ids.count(weak), 2)
-        for dot_id in range(13):
+        for dot_id in range(9):
             if dot_id != weak:
                 self.assertEqual(ids.count(dot_id), 1)
         self.assertGreaterEqual(setup.targets[weak].good, 10)
@@ -249,17 +251,20 @@ class RetryTests(unittest.TestCase):
 
 
 class PoseRoundTests(unittest.TestCase):
-    def test_one_pose_is_the_old_thirteen_dots(self):
+    def test_one_pose_is_the_nine_grid_dots(self):
         self.assertEqual(pose_count(1), 1)
         self.assertEqual(pose_count(3), 3)
         self.assertEqual(pose_count("nope"), 3)
-        self.assertEqual(setup_duration(1), MINUTE)
-        self.assertEqual(setup_duration(3), MINUTE_HALF)
-        self.assertIn(MINUTE_HALF, intro_lines())
+        self.assertEqual(setup_duration(1), ABOUT_30)
+        self.assertEqual(setup_duration(3), ABOUT_45)
+        self.assertEqual(ABOUT_30, "About 30 seconds.")
+        self.assertEqual(ABOUT_45, "About 45 seconds.")
+        self.assertIn(ABOUT_45, intro_lines())
+        self.assertIn(ABOUT_30, intro_lines("", 1))
         setup = Setup((1920, 1080), rng=random.Random(5), ready_seconds=0, poses=1)
         _drive(setup, lambda _s: _feat(), _face(), {"fit"})
         calib = [event for event in setup.events if event["phase"] == "calibration"]
-        self.assertEqual(len(calib), 13)
+        self.assertEqual(len(calib), 9)
         self.assertTrue(all(event["pose"] == "normal" for event in calib))
         self.assertEqual(setup.announcements, [])
         self.assertEqual(classify_command("calibrate"), ("calibrate", None))
@@ -311,7 +316,8 @@ class PoseRoundTests(unittest.TestCase):
                     if event.get("phase") == "calibration" and event.get("pose") == pose]
 
         normal, back, close = ids("normal"), ids("back"), ids("close")
-        self.assertEqual(len(normal), 14)  # 13, plus one retry
+        self.assertEqual(len(set(normal)), 9)
+        self.assertEqual(len(normal), 10)  # 9, plus one retry
         self.assertEqual(normal.count(3), 2)
         self.assertEqual(normal.count(0), 1)
         self.assertEqual(len(back), 6)  # 5, plus the dot that returned to the first pose
@@ -333,7 +339,7 @@ class PoseRoundTests(unittest.TestCase):
         self.assertTrue(all("pose" not in event for event in checks))
         trained = {event["pose"] for event in setup.events if event["phase"] == "calibration"}
         self.assertIn("back", trained)
-        self.assertGreaterEqual(len(setup.usable()), 13 * 10)
+        self.assertGreaterEqual(len(setup.usable()), 9 * 10)
 
     def test_screen_mm_is_stored_on_the_model(self):
         stamped = attach_screen_mm({"dots": 13}, (345, 194))
