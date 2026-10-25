@@ -140,6 +140,15 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 08:10 PT — Ben H (via Claude Code) — `main`
+
+**Pushed to `main`:** `docs/SPACETIMEDB.md`, a full write-up of how Ally uses SpacetimeDB (Ally Call's module:
+schema, reducers, server-side privacy, data flows, tests, limits), plus a "How we use SpacetimeDB" section near the
+top of `README.md`. Submission cleanup: a stale Mac line in a tool description, an unused import, `.gitignore` for
+Claude Code's local worktrees. Checked: no secrets in the files or the git history (only fake test values).
+**Ganesh:** please confirm `cd spacecall && npm test` passes (79 TypeScript tests; the doc gives the count only).
+**Hayden:** `tests/test_senses_au.py` line 30 has a local Windows user path; swap it for a neutral one.
+
 ### Oct 25, 07:52 PT — Hayden (via Claude Code) — `main`, commit `5856a3e`
 
 **Changed `config.toml` (demo settings, for everyone):**
