@@ -850,7 +850,7 @@ def save_face_profile(agent) -> bool:
         meta = {"lean": stats["lean_ratio"]}
     try:
         profile = face_profile.build(gaze=gaze, senses=senses, au=None, meta=meta)
-        store_cls(agent.paths, agent.config).save(profile)
+        store_cls(agent.paths, getattr(agent.config, "data", agent.config)).save(profile)
     except Exception:
         log.exception("couldn't save the face profile")
         return False
@@ -870,7 +870,7 @@ def restore_face_profile(agent) -> bool:
         return False
     face_profile, store_cls = found
     try:
-        profile = store_cls(agent.paths, agent.config).load()
+        profile = store_cls(agent.paths, getattr(agent.config, "data", agent.config)).load()
     except Exception:
         log.exception("couldn't load the face profile")
         return False

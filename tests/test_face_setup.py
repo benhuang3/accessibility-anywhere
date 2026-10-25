@@ -245,6 +245,19 @@ class PhraseTests(unittest.TestCase):
         self.assertEqual(classify_command("check"), ("check", None))
 
 
+def _fake_profile_modules(face_mod, store_mod):
+    """Swap in fake profile modules. Once another test has imported the real ones, `from . import x`
+    finds them as attributes of the ally package, so both places are patched."""
+    import contextlib
+    import ally
+    stack = contextlib.ExitStack()
+    stack.enter_context(mock.patch.dict(sys.modules, {"ally.face_profile": face_mod,
+                                                      "ally.profile_store": store_mod}))
+    stack.enter_context(mock.patch.object(ally, "face_profile", face_mod, create=True))
+    stack.enter_context(mock.patch.object(ally, "profile_store", store_mod, create=True))
+    return stack
+
+
 class ProfileTests(unittest.TestCase):
     def test_startup_restores_a_profile_when_nothing_local_is_saved(self):
         agent = _agent()
@@ -268,12 +281,12 @@ class ProfileTests(unittest.TestCase):
         face_mod.apply = lambda agent, profile: applied.setdefault("applied", profile) or ["ok"]
         store_mod = types.ModuleType("ally.profile_store")
         store_mod.ProfileStore = Store
-        with mock.patch.dict(sys.modules, {"ally.face_profile": face_mod, "ally.profile_store": store_mod}):
+        with _fake_profile_modules(face_mod, store_mod):
             self.assertTrue(restore_face_profile(agent))
         self.assertEqual(said, [("Welcome back. I restored your face setup.", False)])
         self.assertEqual(applied["applied"], {"gaze": {"version": 1}})
         (agent.paths.state_dir / "gaze_calibration.json").write_text("{}", encoding="utf-8")
-        with mock.patch.dict(sys.modules, {"ally.face_profile": face_mod, "ally.profile_store": store_mod}):
+        with _fake_profile_modules(face_mod, store_mod):
             self.assertFalse(restore_face_profile(agent))
 
     def test_save_and_setup_still_work_when_the_profile_modules_are_missing(self):
@@ -351,3 +364,21 @@ class OfferTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealProfileSeamTests(unittest.TestCase):
+    """The setup and the startup restore use the real face_profile and profile_store modules."""
+
+    def test_a_saved_profile_is_restored_at_startup(self):
+        from ally import face_profile, profile_store
+        from ally.senses.detectors import Baseline
+        from ally.gaze import restore_face_profile
+        agent = _agent()
+        said = []
+        agent.speaker = types.SimpleNamespace(say=lambda text, interrupt=True: said.append(text))
+        senses = {"baseline": Baseline(0.3, 0.3).to_dict(), "personal": None}
+        profile = face_profile.build(senses=senses, meta={"camera": 0, "screen": [1920, 1080]})
+        profile_store.ProfileStore(agent.paths, agent.config.data).save(profile)
+        self.assertTrue(restore_face_profile(agent))
+        self.assertEqual(said, ["Welcome back. I restored your face setup."])
+
