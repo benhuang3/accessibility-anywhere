@@ -105,10 +105,72 @@ delegated at freeze.
 - **Tier B text replacement** waits on Ganesh's overlay.
 - **Windows text + magnify** waits on VM validation.
 
+## Voice layer v2: plan (Ben W, branch `benjamin-w/voice-integration`)
+
+**Goal:** voice works inside the proactive loop with no glue code needed from anyone else. The
+coordinator's `voice=` slot gets a real object that speaks offers, listens for the answer and
+resolves the `Offer`. Spoken risk warnings never ask a question Ally isn't listening for.
+
+**Problems found on `main` `6966696` (reason for this work):**
+1. `agent.py` passes `NullVoice` to the coordinator, so offers are spoken but never heard. Every
+   offer times out unless someone clicks.
+2. `VoiceConfirm.confirm_offer` resolves the `Offer` only for spoken answers. `run.py answer yes` and
+   `/api/voice/answer` answer the voice question but leave the `Offer` open.
+3. `offer_timeout_seconds = 8` starts before Ally finishes speaking. An older user gets about
+   5 s to answer and no time for the re-ask.
+4. Risk: `Coordinator.handle_risk` calls `voice.say(spoken)`, and `RiskWire` (on `risk-branch`) asks
+   its `Offer` on another thread. The question can cut the warning off, or come before it.
+5. Risk copy asks its own questions ("Did you start it yourself?"), but a yes on the `Offer`
+   *closes* the tool. A spoken question must always be the one whose "yes" does the action.
+
+**Workstreams (each helper agent in its own worktree, reviewed and merged by Ben W's lead agent):**
+
+| Stream | Branch | Owns | Delivers |
+|---|---|---|---|
+| A: bus voice | `agent/voice-bus` | new `ally/voice_bus.py`, voice wiring lines in `ally/agent.py`, `confirm_offer` and mode hook in `ally/voice_confirm.py` | `BusVoice`, the coordinator's voice plug-in (fixes 1–5) |
+| B: speech | `agent/voice-speech` | `ally/speech.py`, classifier/prompts/ask loop in `ally/voice_confirm.py`, `tests/fake_cartesia.py` | Cartesia API checked against current docs, gap-free read-aloud, "not now" / "stop asking" / "help" answers |
+| C: tests + setup | `agent/voice-tests` | `tests/e2e_voice.py`, `tests/fakes/`, `ally/doctor.py` voice part, new `ally/voice_setup.py` | Silent tests on Windows, `doctor` voice checks, `run.py voice-check` guided setup, then a full-agent e2e test |
+
+**Contract additions (for Ganesh's overlay and Ben H's dashboard):** bus topic `"voice"` with
+`{"state": "speaking" | "listening" | "idle", "text": caption, "offer_id": int | None, "kind": str, "ts": float}`.
+Show it as captions and a "Listening" light. Nothing else changes in `contracts.py`.
+
 ## Change log (everyone: add an entry here with every push)
 
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
+
+### Oct 24, 19:25 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, docs only
+
+**Changed:** this file only.
+- **Merged Ben W's log into mine:** his branch `benjamin-w/voice-integration` started this same
+  change-log section on its own, so the two would have conflicted. Both sections and all entries are
+  kept, newest first, so Ben H can merge either branch cleanly.
+
+**People in the recordings** (aliases differ between the two test tools):
+
+| Person | Senses sessions (`ally.senses.matrix`) | Gaze sessions (`ally.gaze_record`) |
+| --- | --- | --- |
+| Hayden | `hayden` ×2 | `hayden` ×2 |
+| New person | `p2` ×1 | `p3` ×1 |
+| Person who turned their head (no longer available) | none | `p2` ×1 |
+
+So "p2" means a different person in each tool. Senses has 2 people; gaze has 3. The recordings stay
+local in `state/`.
+
+**Conflict check before committing** (fetched at 19:20):
+- **Ganesh's `risk-branch`:** merges into `hayden/eye-tracker` with no conflicts.
+  - It touches the same `ally/agent.py`, `ally/config.py` and `ally/default_config.toml`, in
+    different places.
+  - **Design overlap still open:** its overlay's Yes/No bubble and the gaze Yes/No cards would both
+    appear for the same offer. Ganesh: pick one (turn off `[gaze] answer_offers`, or put the
+    overlay's Yes and No in the left and right screen halves and let the gaze answer them).
+- **Ben W's voice plan:**
+  - Changes the `Coordinator(..., voice=...)` call in `agent.py`. My `self.gaze.attach_bus(self.bus)`
+    sits on the next line, so that spot may need a hand merge.
+  - Behaviour: `BusVoice` and the gaze can both answer an offer, and the first answer wins.
+  - **Timing:** his point 3, that the offer timeout starts before speech ends, also cuts the time to
+    answer by looking; the cards use the same timeout.
 
 ### Oct 24, 19:20 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `0f78362`
 
@@ -132,6 +194,15 @@ tests changed. 410 tests pass.
 - **Click correction:** p3's real clicks alone brought their drift from 773 px down to 349 px.
 
 **For others:** nothing to change.
+
+### Oct 24, 19:10 PT — Ben W (via Claude Code) — branch `benjamin-w/voice-integration`, plan only
+
+**Changed:** this file only (the "Voice layer v2: plan" section above). No code yet.
+**For everyone:** voice will plug into `Coordinator(voice=...)` as `BusVoice`. Keep calling
+`voice.say(text)` and `voice.ask(offer)` as today; nothing else to change on your side.
+**For Ganesh:** `RiskWire` keeps asking through `Coordinator.ask`. Voice will speak the warning
+statement first, then ask *your `Offer.prompt`* as the question (the copy's own questions are
+dropped from the spoken statement so a "yes" can only mean the action the `Offer` performs).
 
 ### Oct 24, 19:05 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `4d3f365`
 
