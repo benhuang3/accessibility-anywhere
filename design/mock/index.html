@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'">
+<title>Ally speech bubble states</title>
+<link rel="stylesheet" href="../tokens/tokens.css">
+<link rel="stylesheet" href="mock.css">
+</head>
+<body>
+<header class="page-head">
+  <h1>Ally: speech bubble states</h1>
+  <p>Shown at real size. The bear docks bottom-right; the bubble grows to the left.</p>
+</header>
+
+<main class="grid">
+
+  <section class="cell" aria-labelledby="l-info">
+    <h2 class="label" id="l-info">Info &middot; happy &middot; auto-hides</h2>
+    <div class="dock">
+      <div class="bubble bubble-info" role="status">
+        <p class="body">Made the text bigger.</p>
+      </div>
+      <img class="bear" src="../bot/expr/happy.svg" alt="Ally smiling">
+    </div>
+  </section>
+
+  <section class="cell" aria-labelledby="l-caution">
+    <h2 class="label" id="l-caution">Caution &middot; concerned</h2>
+    <div class="dock">
+      <div class="bubble bubble-caution" role="alertdialog" aria-labelledby="c-h">
+        <p class="eyebrow">Ally &middot; Safety check</p>
+        <h3 class="headline" id="c-h">This site looks different from the one you usually use.</h3>
+        <p class="body">Want me to close this page?</p>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">Yes, close it</button>
+          <button class="btn btn-secondary" type="button">Not now</button>
+        </div>
+      </div>
+      <img class="bear" src="../bot/expr/concerned.svg" alt="Ally looking concerned">
+    </div>
+  </section>
+
+  <section class="cell" aria-labelledby="l-high">
+    <h2 class="label" id="l-high">High &middot; worried &middot; scam pop-up</h2>
+    <div class="dock">
+      <div class="bubble bubble-high" role="alertdialog" aria-labelledby="h-h">
+        <p class="eyebrow">Ally &middot; Safety check</p>
+        <h3 class="headline" id="h-h">This message may not be real.</h3>
+        <p class="body">It asks you to call a number. Real Windows warnings never do.</p>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">Yes, close it</button>
+          <button class="btn btn-secondary" type="button">Not now</button>
+        </div>
+        <button class="btn btn-tertiary" type="button"><span aria-hidden="true">&#128222;</span> Call Priya</button>
+        <details class="why">
+          <summary>Why?</summary>
+          <p>Windows never shows a phone number in a warning. Scammers do.</p>
+        </details>
+      </div>
+      <img class="bear" src="../bot/expr/worried.svg" alt="Ally looking worried and caring">
+    </div>
+  </section>
+
+  <section class="cell" aria-labelledby="l-pause">
+    <h2 class="label" id="l-pause">High with pause &middot; worried</h2>
+    <div class="dock">
+      <div class="bubble bubble-high" role="alertdialog" aria-labelledby="p-h">
+        <p class="eyebrow">Ally &middot; Safety check</p>
+        <h3 class="headline" id="p-h">Someone may be able to control this computer.</h3>
+        <p class="body">Want me to close AnyDesk?</p>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">Yes, close it</button>
+          <button class="btn btn-secondary" type="button" disabled>Continue in 24</button>
+        </div>
+        <button class="btn btn-tertiary" type="button"><span aria-hidden="true">&#128222;</span> Call Priya</button>
+      </div>
+      <img class="bear" src="../bot/expr/worried.svg" alt="Ally looking worried and caring">
+    </div>
+  </section>
+
+  <section class="cell" aria-labelledby="l-confirm">
+    <h2 class="label" id="l-confirm">Confirm &middot; caution</h2>
+    <div class="dock">
+      <div class="bubble bubble-confirm" role="alertdialog" aria-labelledby="f-h">
+        <p class="eyebrow">Ally &middot; Just checking</p>
+        <h3 class="headline" id="f-h">Are you sure?</h3>
+        <p class="body">Scammers often say it's safe to continue.</p>
+        <div class="actions">
+          <button class="btn btn-primary" type="button">Close it</button>
+          <button class="btn btn-secondary" type="button">Keep it open</button>
+        </div>
+      </div>
+      <img class="bear" src="../bot/expr/concerned.svg" alt="Ally looking concerned">
+    </div>
+  </section>
+
+  <section class="cell" aria-labelledby="l-listen">
+    <h2 class="label" id="l-listen">Listening</h2>
+    <div class="dock">
+      <div class="chip" role="status"><span class="dot" aria-hidden="true"></span>Listening&hellip; say yes or no</div>
+      <img class="bear" src="../bot/expr/listening.svg" alt="Ally listening">
+    </div>
+  </section>
+
+</main>
+</body>
+</html>

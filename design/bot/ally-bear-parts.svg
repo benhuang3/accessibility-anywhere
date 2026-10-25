@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" width="400" height="480" role="img" aria-label="Ally, a polar bear with a teal scarf">
+<g stroke="#9fbfcc" stroke-width="3" stroke-linejoin="round">
+<g id="shadow">
+<ellipse cx="100" cy="229" rx="62" ry="6" fill="#e9dccb" stroke="none"/>
+</g>
+<g id="arms">
+<ellipse cx="44" cy="150" rx="15" ry="30" transform="rotate(14 44 150)" fill="#fff"/>
+<ellipse cx="156" cy="150" rx="15" ry="30" transform="rotate(-14 156 150)" fill="#fff"/>
+</g>
+<g id="body">
+<ellipse cx="100" cy="162" rx="50" ry="54" fill="#fff"/>
+<ellipse cx="100" cy="180" rx="30" ry="28" fill="#eef4f7" stroke="none"/>
+</g>
+<g id="feet">
+<ellipse cx="74" cy="214" rx="24" ry="13" fill="#fff"/>
+<ellipse cx="126" cy="214" rx="24" ry="13" fill="#fff"/>
+<ellipse cx="74" cy="217" rx="10" ry="5" fill="#e3edf2" stroke="none"/>
+<ellipse cx="126" cy="217" rx="10" ry="5" fill="#e3edf2" stroke="none"/>
+</g>
+<g id="headGroup">
+<g id="ears">
+<circle cx="54" cy="44" r="17" fill="#fff"/>
+<circle cx="146" cy="44" r="17" fill="#fff"/>
+<circle cx="54" cy="44" r="9" fill="#dce8ee" stroke="none"/>
+<circle cx="146" cy="44" r="9" fill="#dce8ee" stroke="none"/>
+</g>
+<g id="head">
+<ellipse cx="100" cy="84" rx="58" ry="50" fill="#fff"/>
+</g>
+<g id="cheeks">
+<ellipse cx="64" cy="103" rx="9" ry="5.5" fill="#f5cfcf" stroke="none"/>
+<ellipse cx="136" cy="103" rx="9" ry="5.5" fill="#f5cfcf" stroke="none"/>
+</g>
+<g id="eyeL">
+<ellipse cx="78" cy="89" rx="5.5" ry="6.5" fill="#2e2523" stroke="none"/>
+<circle cx="80" cy="86.5" r="1.8" fill="#fff" stroke="none"/>
+</g>
+<g id="eyeR">
+<ellipse cx="122" cy="89" rx="5.5" ry="6.5" fill="#2e2523" stroke="none"/>
+<circle cx="124" cy="86.5" r="1.8" fill="#fff" stroke="none"/>
+</g>
+<g id="brows">
+
+</g>
+<g id="muzzle">
+<ellipse cx="100" cy="107" rx="19" ry="14" fill="#f4ede2" stroke="none"/>
+</g>
+<g id="nose">
+<path d="M93 100 q7 -4 14 0 q-2 6 -7 7 q-5 -1 -7 -7z" fill="#4a3530" stroke="none"/>
+</g>
+<g id="mouth">
+<path d="M100 107 v3 M93 110 q3.5 4 7 0 q3.5 4 7 0" fill="none" stroke="#4a3530" stroke-width="2" stroke-linecap="round"/>
+</g>
+</g>
+<g id="scarf">
+<rect x="114" y="136" width="20" height="40" rx="7" transform="rotate(-5 124 156)" fill="#2c7d8f" stroke="none"/>
+<rect x="56" y="126" width="88" height="18" rx="9" fill="#2c7d8f" stroke="none"/>
+<path d="M118 161 h12 M118 167 h12" stroke="#1f5f6d" stroke-width="2" stroke-linecap="round"/>
+</g>
+</g>
+</svg>
