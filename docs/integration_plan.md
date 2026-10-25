@@ -105,10 +105,49 @@ delegated at freeze.
 - **Tier B text replacement** waits on Ganesh's overlay.
 - **Windows text + magnify** waits on VM validation.
 
+## Voice layer v2: plan (Ben W, branch `benjamin-w/voice-integration`)
+
+**Goal:** voice works inside the proactive loop with no glue code needed from anyone else. The
+coordinator's `voice=` slot gets a real object that speaks offers, listens for the answer and
+resolves the `Offer`. Spoken risk warnings never ask a question Ally isn't listening for.
+
+**Problems found on `main` `6966696` (reason for this work):**
+1. `agent.py` passes `NullVoice` to the coordinator, so offers are spoken but never heard. Every
+   offer times out unless someone clicks.
+2. `VoiceConfirm.confirm_offer` resolves the `Offer` only for spoken answers. `run.py answer yes` and
+   `/api/voice/answer` answer the voice question but leave the `Offer` open.
+3. `offer_timeout_seconds = 8` starts before Ally finishes speaking. An older user gets about
+   5 s to answer and no time for the re-ask.
+4. Risk: `Coordinator.handle_risk` calls `voice.say(spoken)`, and `RiskWire` (on `risk-branch`) asks
+   its `Offer` on another thread. The question can cut the warning off, or come before it.
+5. Risk copy asks its own questions ("Did you start it yourself?"), but a yes on the `Offer`
+   *closes* the tool. A spoken question must always be the one whose "yes" does the action.
+
+**Workstreams (each helper agent in its own worktree, reviewed and merged by Ben W's lead agent):**
+
+| Stream | Branch | Owns | Delivers |
+|---|---|---|---|
+| A: bus voice | `agent/voice-bus` | new `ally/voice_bus.py`, voice wiring lines in `ally/agent.py`, `confirm_offer` and mode hook in `ally/voice_confirm.py` | `BusVoice`, the coordinator's voice plug-in (fixes 1–5) |
+| B: speech | `agent/voice-speech` | `ally/speech.py`, classifier/prompts/ask loop in `ally/voice_confirm.py`, `tests/fake_cartesia.py` | Cartesia API checked against current docs, gap-free read-aloud, "not now" / "stop asking" / "help" answers |
+| C: tests + setup | `agent/voice-tests` | `tests/e2e_voice.py`, `tests/fakes/`, `ally/doctor.py` voice part, new `ally/voice_setup.py` | Silent tests on Windows, `doctor` voice checks, `run.py voice-check` guided setup, then a full-agent e2e test |
+
+**Contract additions (for Ganesh's overlay and Ben H's dashboard):** bus topic `"voice"` with
+`{"state": "speaking" | "listening" | "idle", "text": caption, "offer_id": int | None, "kind": str, "ts": float}`.
+Show it as captions and a "Listening" light. Nothing else changes in `contracts.py`.
+
 ## Change log (everyone: add an entry here with every push)
 
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
+
+### Oct 24, 19:10 PT — Ben W (via Claude Code) — branch `benjamin-w/voice-integration`, plan only
+
+**Changed:** this file only (the "Voice layer v2: plan" section above). No code yet.
+**For everyone:** voice will plug into `Coordinator(voice=...)` as `BusVoice`. Keep calling
+`voice.say(text)` and `voice.ask(offer)` as today; nothing else to change on your side.
+**For Ganesh:** `RiskWire` keeps asking through `Coordinator.ask`. Voice will speak the warning
+statement first, then ask *your `Offer.prompt`* as the question (the copy's own questions are
+dropped from the spoken statement so a "yes" can only mean the action the `Offer` performs).
 
 ### Oct 24, 18:35 PT — Hayden (via Claude Code) — branch `hayden/bus-fixes`, commit `58b388b`
 
