@@ -140,6 +140,22 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 03:22 PT — Hayden (via Claude Code) — `main`, merged `hayden/face-setup` (merge `e363c0f`)
+
+**Merged into `main`:** 1022 tests pass.
+- **Cartesia WAV fix:** without it, on Windows with a Cartesia key, voice is silent and commands
+  are ignored.
+- **Voice:** "Ally" is said as AL-eye, and the calibration voice is fixed.
+- **Face setup:** one ~90 s setup, plus a face profile with optional SpacetimeDB sync (off by
+  default).
+- **Senses v2:** opt-in, and the defaults are unchanged.
+- **Ganesh's `risk-branch`:** up to `hayden/face-setup`.
+
+**Everyone:** pull `main`.
+- **Ben:** `uiux` (Clarity theme and mascot) is not merged. When you merge it,
+  `test_risk_cooldown` expects the old button color `#7A4100`; the theme uses `#0B57D0`.
+- **Ganesh:** deploy `spacecall/server/src/profile.ts` (steps in the face-setup entry below).
+
 ### Oct 25, 03:30 PT — Ben H (via Claude Code) — branch `benh/os-layer` -> `main`, commits `348d419`, `1f9d611`
 
 **Pushed to `main`.** New for the OS team's list: (5) enlarge images, (9) click by voice, (10) describe images.
