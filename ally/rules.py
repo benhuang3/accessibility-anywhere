@@ -154,6 +154,11 @@ RULES = [
     Rule("read_selection", [("read_selection", {})],
          full=r"read (the |my )?(selection|selected( text)?|highlighted( text)?|this text)( to me| aloud| out loud)?",
          loose=r"\bread\b.*\b(selection|selected|highlighted)\b"),
+    # Before read_page, whose loose pattern would take any "read".
+    Rule("keep_reading", [("keep_reading", {})],
+         full=r"(?:keep|continue|go on|carry on) reading|read (?:more|on|some more|the next (?:part|bit|section|page))|"
+              r"(?:and )?then what|continue|what happens next",
+         loose=r"\b(?:keep|continue|carry on) reading\b|\bread (?:more|on)\b"),
     Rule("read_page", [("read_page", {})],
          full=r"read( (this|the|this web|the web))?( page| article| website| it| this)?( to me| aloud| out loud)?",
          loose=r"\bread\b"),
@@ -261,6 +266,8 @@ EXAMPLES = {
                      "shrink this text a little", "make these words smaller"],
     "read_selection": ["read the highlighted words to me", "read my selected text aloud",
                        "say the words i highlighted", "read just the selection", "read what i selected"],
+    "keep_reading": ["keep reading", "continue reading", "read more", "go on reading please", "read the next part",
+                     "carry on reading", "read some more"],
     "read_page": ["read this to me", "read it out loud", "read me this article", "say what's written on this page",
                   "read the whole page aloud", "can you read this page for me"],
     "describe": ["describe my screen", "tell me what's on the screen", "what is on my screen",
@@ -477,6 +484,21 @@ def _pointing(t: str) -> Match | None:
     return None
 
 
+# "Read this page in Spanish": Claude translates, Cartesia speaks it in that language (ally/tools/browser_tools.py).
+_LANGS = (r"english|spanish|french|german|italian|portuguese|chinese|mandarin|japanese|korean|hindi|russian|polish|"
+          r"dutch|swedish|turkish|tagalog|filipino|vietnamese|arabic|greek|hebrew|ukrainian")
+READ_IN = re.compile(rf"(?:read|say|tell me)(?: (?:this|it|the page|this page|the article|this article|the story|that))?"
+                     rf"(?: to me| aloud| out loud)? in (?P<lang>{_LANGS})(?: please| for me)?|"
+                     rf"(?:translate|turn) (?:this|it|the page|this page)(?: in)?to (?P<lang2>{_LANGS})(?: and read it(?: to me)?)?")
+
+
+def _read_in(t: str) -> Match | None:
+    m = READ_IN.fullmatch(t)
+    if not m:
+        return None
+    return Match("read_page", [("read_page", {"language": (m.group("lang") or m.group("lang2")).strip()})])
+
+
 def _clicks(t: str, strict: bool) -> Match | None:
     for name, pattern in CLICK_RULES:
         if pattern.fullmatch(t):
@@ -509,7 +531,7 @@ def match(text: str, strict: bool = True) -> Match | None:
     t = normalize(text)
     if not t:
         return None
-    pic = _picture(t, strict) or _tabs(t) or _pointing(t) or _clicks(t, strict)
+    pic = _read_in(t) or _picture(t, strict) or _tabs(t) or _pointing(t) or _clicks(t, strict)
     if pic:
         return pic
     m = LEVEL.search(t)
@@ -537,7 +559,7 @@ _CLOSEST_NAMES = {
     "stop", "show_dot", "hide_dot", "follow_slower", "follow_faster", "look_magnify", "where_looking",
     "follow_eyes", "follow_mouse", "eyes_off", "eyes_on", "simple_off", "simple_on", "buttons", "clutter_off",
     "clutter", "menus_off", "menus", "check_layout", "zoom_in", "zoom_out", "text_bigger", "text_smaller",
-    "read_selection", "read_page", "contrast", "dark", "spacing", "dyslexia", "reader", "reader_off", "invert",
+    "read_selection", "read_page", "keep_reading", "contrast", "dark", "spacing", "dyslexia", "reader", "reader_off", "invert",
     "grayscale", "colors_normal", "magnifier_off", "magnifier", "scroll_down", "scroll_up", "back", "reload",
     "forward", "help",
 }
@@ -594,6 +616,6 @@ HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the sele
              "what am I looking at, check my eye tracker, set up my face, set up my eyes, "
              "follow my eyes slower, follow my eyes faster, scroll with my eyes, show where I am looking, hide the eye dot, "
              "invert colors, scroll down, go back, simple mode, bigger buttons, hide pop-ups, simplify the menu, "
-             "check the page, zoom in on the picture, describe the picture, show numbers, click 3, click sign in, "
+             "check the page, zoom in on the picture, describe the picture, read this page in Spanish, keep reading, show numbers, click 3, click sign in, "
              "where do I click to sign in, highlight the menu, go to the other tab, next tab, list my tabs, "
              "reload, or ask anything when you're online.")

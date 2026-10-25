@@ -54,8 +54,9 @@ class Context:
     def agent(self):
         return self._agent
 
-    def say(self, text: str, wait: bool = False) -> bool:
-        return self._agent.speaker.say(text, wait=wait)
+    def say(self, text: str, wait: bool = False, style: dict | None = None) -> bool:
+        """style: emotion, speed, volume, cache, language (see ally/speech.py)."""
+        return self._agent.speaker.say(text, wait=wait, style=style)
 
     def stop_speaking(self) -> None:
         self._agent.speaker.stop()

@@ -277,8 +277,11 @@ class PromptCache:
         self._lock = threading.Lock()
 
     @staticmethod
-    def key(text: str, voice: str, model: str, speed: float, emotion: str, volume: float) -> str:
-        raw = json.dumps([text, voice, model, round(speed, 3), emotion, round(volume, 3)], ensure_ascii=False)
+    def key(text: str, voice: str, model: str, speed: float, emotion: str, volume: float, language: str = "en") -> str:
+        parts = [text, voice, model, round(speed, 3), emotion, round(volume, 3)]
+        if language and language != "en":  # English keys stay as they were, so existing cached prompts still match
+            parts.append(language)
+        raw = json.dumps(parts, ensure_ascii=False)
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
     def get(self, key: str) -> bytes | None:
@@ -465,12 +468,13 @@ class Speaker:
         style = style or {}
         text = pronounce(text)
         speed, emotion, volume = self._style_values(cfg, style)
+        language = str(style.get("language") or cfg.get("language", "en"))  # e.g. "read this page in Spanish"
         voice = cfg.get("cartesia_voice_id", "")  # the configured value keys the cache (works offline)
         cacheable = bool(style.get("cache")) and bool(cfg.get("cache_prompts", True))
         models = self.models(cfg)
         if cacheable:
             for m in models:
-                hit = self.cache.get(PromptCache.key(text, voice, m, speed, emotion, volume))
+                hit = self.cache.get(PromptCache.key(text, voice, m, speed, emotion, volume, language))
                 if hit:
                     return hit, "cartesia-cache"
         if time.monotonic() < self._down_until:
@@ -483,11 +487,13 @@ class Speaker:
         err: ToolError | None = None
         for m in models:
             try:
-                audio = cartesia_tts(text, voice_id, m, speed=speed, language=cfg.get("language", "en"),
+                audio = cartesia_tts(text, voice_id, m, speed=speed, language=language,
                                      emotion=emotion, volume=volume,
                                      timeout=float(cfg.get("cartesia_timeout_seconds", 4)))
             except CartesiaError as e:
                 err = e
+                if e.bad_request and language != str(cfg.get("language", "en")):
+                    raise  # a language this voice or model can't speak: the OS voice says this one; models are fine
                 if e.bad_request and "voice" not in str(e).lower():
                     self._bad_models.add(m)  # e.g. sonic-3.6 not available on this account: skip it from now on
                     log.warning("Cartesia model %s failed (%s); trying the next one", m, e)
@@ -497,7 +503,7 @@ class Speaker:
             self._down_until, self.down_reason = 0.0, ""
             self.model_in_use = m
             if cacheable:
-                self.cache.put(PromptCache.key(text, voice, m, speed, emotion, volume), audio)
+                self.cache.put(PromptCache.key(text, voice, m, speed, emotion, volume, language), audio)
             return audio, "cartesia"
         raise err or CartesiaError("No Cartesia model is configured.", status=400)
 
