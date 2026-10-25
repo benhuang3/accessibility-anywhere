@@ -39,7 +39,7 @@ FIX_ENUMS = {
 }
 VALUE_RE = re.compile(r"^[a-z0-9.%#(),\s-]{1,40}$", re.I)
 BAD_SELECTOR = re.compile(r"[{};@<>\\]|ally-", re.I)
-TEXT_LEVELS = (1.0, 1.15, 1.25, 1.5, 1.75, 2.0, 2.5)  # text scales the fixer may pick (1.0 = the page's own size)
+TEXT_LEVELS = (1.0, 1.15, 1.3, 1.5, 1.75, 2.0, 2.5)  # text scales the fixer may pick (1.0 = the page's own size)
 
 REVIEW_PROMPT = """You check, and if needed fix, a web page that an accessibility helper changed for an older adult with
 poor eyesight. Image 1 is the page BEFORE the change. Image 2 is the page NOW.

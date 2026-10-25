@@ -63,7 +63,7 @@ def ctx_with(ext, script, ai_check=True):
 
 
 FIX_ACTIONS = [{"type": "css", "selector": "header", "property": "position", "value": "static"},
-               {"type": "text_size", "level": 1.25},
+               {"type": "text_size", "level": 1.3},
                {"type": "css", "selector": "body", "property": "background", "value": "url(x)"}]
 BAD = {"worse": ["the menu bar covers the heading"], "actions": FIX_ACTIONS, "why": "unstick the header"}
 GOOD = {"worse": [], "actions": []}
@@ -87,7 +87,7 @@ class ReviewLoopTests(unittest.TestCase):
         self.assertTrue(report["review"]["ok"])
         self.assertEqual(report["review"]["fixes"], 1)
         self.assertEqual(ext.fix_rules, [{"selector": "header", "property": "position", "value": "static"}])
-        self.assertEqual(ext.text_scale, 1.25)  # the background:url() rule was refused, the rest applied
+        self.assertEqual(ext.text_scale, 1.3)  # the background:url() rule was refused, the rest applied
         self.assertIn("ally_fix", ext.layers)
         self.assertIn("fixed it", core.summary(report))
 

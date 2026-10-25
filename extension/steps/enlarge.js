@@ -53,6 +53,7 @@ const FIELDS = [
 const BUTTONS_CSS = `
 ${prefixed(BUTTONS_PAUSE, [...BUTTON_LIKE, ...FIELDS])} {
   min-height: 44px !important;
+  height: auto !important; /* a fixed site height would cut off the bigger label */
 }
 ${prefixed(BUTTONS_PAUSE, BUTTON_LIKE)} {
   padding-block: max(0.5em, 6px) !important;
@@ -117,7 +118,7 @@ async function auditAtZooms(tab, args = {}) {
 STEPS.text = {
   // opts.scale: how much bigger (1.25 = a quarter bigger); goalPx: the size small body text should reach.
   async on(tabId, opts = {}) {
-    const scale = Math.min(3, Math.max(1, Number(opts.scale) || 1.25));
+    const scale = Math.min(3, Math.max(1, Number(opts.scale) || 1.3));
     const r = await inPage(tabId, "text.apply", { scale, goalPx: Number(opts.goalPx) || 20, maxPx: Number(opts.maxPx) || 72 });
     await layerOn(tabId, "ally_text", textCss(r.sizes));
     await layerOn(tabId, "ally_fit", FIT_CSS);
@@ -139,10 +140,10 @@ STEPS.text = {
   },
 };
 
-// Each label a little bigger than itself: 1.2x and at least 2px more (12px -> 14px, 16px -> 19px), never past 28px.
+// Each label clearly bigger than itself: 1.3x and at least 3px more (12px -> 16px, 16px -> 21px), never past 32px.
 // Text the text step enlarges (data-ally-text) keeps that bigger size, whichever step ran first.
 function labelSize(px) {
-  return Math.max(px, Math.min(Math.max(Math.round(px * 1.2), px + 2), Math.max(px, 28)));
+  return Math.max(px, Math.min(Math.max(Math.ceil(px * 1.3 - 0.01), px + 3), Math.max(px, 32))); // up, so >= 30%
 }
 
 function buttonLabelCss(sizes) {
@@ -151,10 +152,23 @@ function buttonLabelCss(sizes) {
     .join("\n");
 }
 
+// Each button at least 15% wider and taller than itself (about 32% more area), and at least 44px tall.
+const BOX_GROWTH = 1.15;
+
+function buttonBoxCss(boxes) {
+  return (boxes || []).map((wh) => {
+    const [w, h] = wh.split("x").map(Number);
+    // The repeated attribute outranks the general "min-height: 44px" rule above (its :not() lists add specificity).
+    const sel = `[data-ally-buttons-box="${wh}"][data-ally-buttons-box][data-ally-buttons]`;
+    return `${BUTTONS_PAUSE} ${sel} { min-width: ${Math.round(w * BOX_GROWTH)}px !important; ` +
+      `min-height: ${Math.max(44, Math.round(h * BOX_GROWTH))}px !important; }`;
+  }).join("\n");
+}
+
 STEPS.buttons = {
   async on(tabId) {
     const r = await inPage(tabId, "enlarge.markButtons", { selector: BUTTON_LIKE.join(", ") });
-    await layerOn(tabId, "ally_buttons", `${BUTTONS_CSS}\n${buttonLabelCss(r.sizes)}`);
+    await layerOn(tabId, "ally_buttons", `${BUTTONS_CSS}\n${buttonLabelCss(r.sizes)}\n${buttonBoxCss(r.boxes)}`);
     return { said: "made buttons and boxes bigger", marked: r.marked };
   },
   async off(tabId) {

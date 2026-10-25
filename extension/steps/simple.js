@@ -202,7 +202,7 @@ async function simpleReapply(tabId, steps, { fresh = false, remembered = true, s
   if (steps.includes("menus")) await simpleCallStep("menus", "on", tabId, { mode: "strip" });
   if (steps.includes("buttons")) await simpleCallStep("buttons", "on", tabId);
   const prev = (await simpleTab(tabId)) || {};
-  const textScale = Number(scale) > 1 ? Number(scale) : prev.scale || 1.25;
+  const textScale = Number(scale) > 1 ? Number(scale) : prev.scale || 1.3;
   if (steps.includes("text")) await simpleCallStep("text", "on", tabId, { scale: textScale });
   await setSimpleTab(tabId, { origin: simpleOrigin(await simpleTabUrl(tabId)), steps, zoomBefore: prev.zoomBefore,
     scale: textScale, at: Date.now() });

@@ -147,17 +147,19 @@ def next_step(current: float, max_zoom: float) -> float:
     return current
 
 
-TEXT_SCALES = (1.15, 1.25, 1.5, 1.75, 2.0, 2.5)
+TEXT_SCALES = (1.15, 1.3, 1.5, 1.75, 2.0, 2.5)
+MIN_TEXT_SCALE = 1.3  # "bigger" is at least 30% bigger; 1.15 is only a fallback when 1.3 breaks the page
 
 
 def predict_scale(metrics: dict, current: float, goal_px: float, max_scale: float) -> dict:
     """The smallest text scale (bigger fonts, not zoom) at which the page's text reaches the goal, from one
     measurement of its own sizes. Returns {scale, met}; a scale of 1.0 means the text is already big enough."""
     sizes = metrics.get("textSizes") or ([[metrics["textPx"], 1.0]] if metrics.get("textPx") else [])
-    if not sizes or share_below(sizes, goal_px, 1.0) <= SMALL_TEXT_SHARE:
-        return {"scale": max(current, 1.0), "met": True}
+    floor = max(current, MIN_TEXT_SCALE)  # even text that's big enough gets a clear step bigger
+    if not sizes or share_below(sizes, goal_px, floor) <= SMALL_TEXT_SHARE:
+        return {"scale": min(floor, max_scale) if floor > current + 0.01 else current, "met": True}
     for s in TEXT_SCALES:
-        if s <= current + 0.01 or s > max_scale + 1e-6:
+        if s < floor - 0.01 or s <= current + 0.01 or s > max_scale + 1e-6:
             continue
         if share_below(sizes, goal_px, s) <= SMALL_TEXT_SHARE:
             return {"scale": s, "met": True}
@@ -168,7 +170,7 @@ def predict_scale(metrics: dict, current: float, goal_px: float, max_scale: floa
 def next_scale(current: float, max_scale: float, up: bool = True) -> float:
     """One text-scale step up (or down; 1.0 = the page's own size)."""
     if up:
-        bigger = [s for s in TEXT_SCALES if s > current + 0.01 and s <= max_scale + 1e-6]
+        bigger = [s for s in TEXT_SCALES if s > current + 0.01 and s >= MIN_TEXT_SCALE - 0.01 and s <= max_scale + 1e-6]
         return bigger[0] if bigger else current
     smaller = [s for s in TEXT_SCALES if s < current - 0.01]
     return smaller[-1] if smaller else 1.0

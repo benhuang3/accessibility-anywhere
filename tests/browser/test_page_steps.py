@@ -278,11 +278,11 @@ class StepAloneTests(PageCase):
         (save_px, save_w, save_h), (don_px, don_w, don_h) = page.evaluate(probe)
         ally.action("stepOn", {"step": "buttons", "opts": {}})
         (save_px2, save_w2, save_h2), (don_px2, don_w2, don_h2) = page.evaluate(probe)
-        self.assertGreaterEqual(save_px2, save_px + 2)            # label a little bigger
-        self.assertLessEqual(save_px2, max(save_px * 1.2, save_px + 2) + 0.5)
-        self.assertGreater(save_h2, save_h)                         # bigger button
-        self.assertGreaterEqual(don_px2, don_px + 2)                # link styled as a button: bigger label
-        self.assertGreater(don_w2 * don_h2, don_w * don_h)          # and a bigger box
+        self.assertGreaterEqual(save_px2, save_px * 1.3 - 0.5)    # label at least 30% bigger
+        self.assertGreaterEqual(save_px2, save_px + 3)
+        self.assertGreaterEqual(save_w2 * save_h2, 1.3 * save_w * save_h)  # and the button itself
+        self.assertGreaterEqual(don_px2, don_px * 1.3 - 0.5)      # link styled as a button: bigger label
+        self.assertGreaterEqual(don_w2 * don_h2, 1.3 * don_w * don_h)      # and a bigger box
         ally.action("stepOff", {"step": "buttons", "opts": {}})
         self.assertAlmostEqual(page.evaluate(probe)[0][0], save_px, delta=0.5)
 
