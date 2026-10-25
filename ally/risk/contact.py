@@ -18,10 +18,12 @@ _WHAT = {
 }
 
 
-def message_for(kind: str) -> str:
+def message_for(kind: str, *, call_available: bool = False) -> str:
     what = _WHAT.get(kind, "a page that looks like a scam")
+    next_step = ("If they tap Call, you'll get a second alert with a link to join." if call_available else
+                 "Please contact them now.")
     return (f"Ally safety alert: {what}. Ally asked them to stop and wait. "
-            "Please contact them now.")
+            f"{next_step}")
 
 
 # Video-call links Ally may open on the person's screen: a standing room the helper created in advance.

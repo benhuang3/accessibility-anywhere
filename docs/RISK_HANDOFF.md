@@ -143,7 +143,7 @@ there is no contact button. The defaults above come from `ally/default_config.to
 
 Set `[risk] auto_alert = true` to push the trusted contact immediately on high warnings, at most once per five minutes across all
 warning kinds (attempts count, including failed sends). It defaults to false. Delivery runs in a daemon worker and never delays the
-warning. The push has the same fixed text and optional Join link as Call/Tell. Its `risk_contact` event includes `auto: true`.
+warning. **Auto-alert correction (2026-10-25), superseding the older behavior described below:** Spacecall and Meet auto-alerts send plain safety pushes without join links or opening any call (`auto: true`, `call_opened: false`); only tapping Call opens the elder page and sends a separate helper join push, creating the Spacecall room on the first tap and reusing it for that incident.
 After a successful auto-alert, Call only opens the room; without a call link there is no extra Tell button. A failed auto-alert can
 be retried manually. Clicking Call while delivery is pending opens the room immediately and waits for that delivery before deciding
 whether to retry the push.

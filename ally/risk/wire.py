@@ -353,9 +353,8 @@ class RiskWire:
         verb = "Call" if self._call_url() else "Tell"
         offer.extra_action = (f"{verb} {self.contact[0]}", lambda: self._tell(risk, alert))
 
-    def _send_contact(self, risk, call_url) -> bool:
+    def _send_contact(self, message, call_url="") -> bool:
         try:
-            message = contact.message_for(risk.kind) + (" Tap to join the video call." if call_url else "")
             send = self.contact[1]
             return bool(send(message, call_url) if call_url else send(message))
         except Exception:
@@ -370,19 +369,19 @@ class RiskWire:
             if self._last_auto_alert is not None and now - self._last_auto_alert < 300:
                 return None
             self._last_auto_alert = now
-        alert = {"sent": False, "done": threading.Event(), "offer": None, "call_urls": self._call_urls(risk)}
+        alert = {"sent": False, "done": threading.Event(), "offer": None, "call_urls": None,
+                 "call_sent": False}
 
         def send():
             try:
-                elder_url, helper_url = alert["call_urls"]
-                opened = self._open_call(elder_url) if self._spacecall_url() else False
-                ok = self._send_contact(risk, helper_url)
+                message = contact.message_for(risk.kind, call_available=bool(self._call_url()))
+                ok = self._send_contact(message)
                 with self._lock:
                     alert["sent"] = ok
                     alert["done"].set()
                     if alert["offer"] is not None:
                         self._contact_action(alert["offer"], risk, alert)
-                self._publish_contact(risk, ok, opened, auto=True)
+                self._publish_contact(risk, ok, False, auto=True)
             finally:
                 alert["done"].set()
 
@@ -397,12 +396,24 @@ class RiskWire:
         """Runs in a worker when the person taps 'Call/Tell <name>'. Returns the line shown in the panel.
         With a call link: open the video call here and send the helper a push whose button joins it."""
         name = self.contact[0]
-        call_url, helper_url = alert["call_urls"] if alert is not None else self._call_urls(risk)
+        if alert is not None:
+            with self._lock:
+                if alert["call_urls"] is None:
+                    alert["call_urls"] = self._call_urls(risk)
+                call_url, helper_url = alert["call_urls"]
+        else:
+            call_url, helper_url = self._call_urls(risk)
         opened = self._open_call(call_url)
         if alert is not None:
             alert["done"].wait()  # the call opens immediately; only delivery waits for the pending push
-        already_sent = alert is not None and alert["sent"]
-        ok = already_sent or self._send_contact(risk, helper_url)
+        already_sent = alert is not None and alert["call_sent" if call_url else "sent"]
+        message = contact.message_for(risk.kind)
+        if helper_url:
+            message = ("They're calling you through Ally. Tap to join." if alert is not None else
+                       message + " Tap to join the video call.")
+        ok = already_sent or self._send_contact(message, helper_url)
+        if alert is not None and call_url:
+            alert["call_sent"] = ok
         self._publish_contact(risk, ok, opened)
         if call_url and opened and ok:
             next_step = ("Hang up on the other caller first." if risk.kind == "remote_access" else

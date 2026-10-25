@@ -1,3 +1,4 @@
+import contextlib
 import json
 import shutil
 import subprocess
@@ -127,7 +128,72 @@ class SpacecallTests(unittest.TestCase):
         self.assertIn(helper, requests[0].get_header("Actions"))
         self.assertNotIn("room=", requests[0].data.decode())
 
-    def test_pending_auto_alert_and_later_call_share_the_room_and_push(self):
+    def test_auto_alert_has_no_join_headers_or_room_until_the_call_tap(self):
+        offers, requests, asked = [], [], threading.Event()
+
+        def ask(offer):
+            offers.append(offer)
+            asked.set()
+            return "timeout"
+
+        def post(req, timeout):
+            requests.append(req)
+            return contextlib.nullcontext(SimpleNamespace(status=200))
+
+        wire = self.make_wire({"auto_alert": True}, ask=ask,
+                              send=contact.ntfy_sender("ally-priya-7f3k29qx", spacecall_url=BASE))
+        with patch("urllib.request.urlopen", post), \
+                patch("ally.risk.wire.secrets.token_urlsafe", return_value="created-on-tap") as room:
+            wire.on_risk_warning({"risk": RISK.to_dict(), "text": "x"})
+            self.assertTrue(self.delivered.wait(2))
+            self.assertTrue(asked.wait(2))
+            self.assertEqual(len(requests), 1)
+            self.assertIsNone(requests[0].get_header("Click"))
+            self.assertIsNone(requests[0].get_header("Actions"))
+            self.assertNotIn(BASE, requests[0].data.decode())
+            self.assertIn("If they tap Call", requests[0].data.decode())
+            self.assertEqual(self.opened, [])
+            room.assert_not_called()
+            self.assertEqual(offers[0].extra_action[0], "Call Priya")
+            self.assertEqual(offers[0].extra_action[1](), "Opening a call with Priya. I've asked them to join.")
+            room.assert_called_once_with(16)
+        self.assertEqual(len(self.opened), 1)
+        self.assertEqual(self.opened[0][0], "openCall")
+        self.assertEqual(fragment(self.opened[0][1]["url"])["role"], "elder")
+        self.assertEqual(len(requests), 2)
+        helper = requests[1].get_header("Click")
+        self.assertEqual(fragment(helper), dict(fragment(self.opened[0][1]["url"]), role="helper"))
+        self.assertIn(helper, requests[1].get_header("Actions"))
+        self.assertEqual(requests[1].data.decode(), "They're calling you through Ally. Tap to join.")
+        self.assertFalse(self.events[0]["call_opened"])
+
+    def test_auto_alert_without_a_browser_bridge_does_not_open_a_browser(self):
+        wire = self.make_wire({"auto_alert": True}, call=None)
+        with patch("webbrowser.open") as browser:
+            wire.on_risk_warning({"risk": RISK.to_dict(), "text": "x"})
+            self.assertTrue(self.delivered.wait(2))
+            browser.assert_not_called()
+        self.assertEqual(self.sent, [(contact.message_for(RISK.kind, call_available=True),)])
+        self.assertFalse(self.events[0]["call_opened"])
+
+    def test_auto_alert_off_waits_for_the_call_tap(self):
+        offers, asked = [], threading.Event()
+
+        def ask(offer):
+            offers.append(offer)
+            asked.set()
+            return "timeout"
+
+        wire = self.make_wire({"auto_alert": False}, ask=ask)
+        wire.on_risk_warning({"risk": RISK.to_dict(), "text": "x"})
+        self.assertTrue(asked.wait(2))
+        self.assertEqual((self.sent, self.opened), ([], []))
+        self.assertEqual(offers[0].extra_action[1](), "Opening a call with Priya. I've asked them to join.")
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(len(self.opened), 1)
+        self.assertEqual(fragment(self.sent[0][1])["role"], "helper")
+
+    def test_pending_auto_alert_and_later_call_use_a_separate_invitation_and_reuse_the_room(self):
         entered, release, asked, finished = (threading.Event() for _ in range(4))
         offers, attempts, notes = [], [], []
 
@@ -148,7 +214,8 @@ class SpacecallTests(unittest.TestCase):
             self.assertTrue(entered.wait(2))
             self.assertTrue(asked.wait(2))
             self.assertEqual(offers[0].extra_action[0], "Call Priya")
-            self.assertEqual(len(self.opened), 1)  # automatic alerts open the PC's call before sending
+            self.assertEqual(self.opened, [])
+            self.assertEqual(attempts, [(contact.message_for(RISK.kind, call_available=True),)])
 
             def tap():
                 try:
@@ -162,26 +229,51 @@ class SpacecallTests(unittest.TestCase):
             release.set()
         self.assertTrue(finished.wait(2))
         self.assertTrue(self.delivered.wait(2))
-        self.assertEqual(notes, ["Opening a call with Priya. They already got the alert."])
-        self.assertEqual(len(attempts), 1)
-        room = fragment(attempts[0][1])["room"]
-        self.assertEqual([fragment(args["url"])["room"] for _, args in self.opened], [room, room])
+        self.assertEqual(notes, ["Opening a call with Priya. I've asked them to join."])
+        self.assertEqual(len(attempts), 2)
+        room = fragment(attempts[1][1])["room"]
+        self.assertEqual([fragment(args["url"])["room"] for _, args in self.opened], [room])
         offers[0].extra_action[1]()
-        self.assertEqual(len(attempts), 1)
+        self.assertEqual(len(attempts), 2)
         self.assertEqual(fragment(self.opened[-1][1]["url"])["room"], room)
         self.assertNotIn(room, json.dumps(self.events))
         self.assertTrue(all(event["service"] == "spacecall" for event in self.events))
 
-    def test_new_auto_alert_incidents_have_new_rooms(self):
+    def test_new_auto_alert_incidents_get_new_rooms_only_on_call(self):
         now = [0]
         wire = self.make_wire({"auto_alert": True}, clock=lambda: now[0])
+        alerts = []
         for when in (0, 300):
             now[0] = when
             self.delivered.clear()
-            wire.on_risk_warning({"risk": RISK.to_dict(), "text": "x"})
+            alerts.append(wire._auto_alert(RISK))
             self.assertTrue(self.delivered.wait(2))
-        self.assertNotEqual(fragment(self.sent[0][1])["room"], fragment(self.sent[1][1])["room"])
-        self.assertTrue(all(event["auto"] and event["call_opened"] for event in self.events))
+        self.assertEqual(self.opened, [])
+        self.assertEqual(len(self.sent), 2)
+        self.assertTrue(all(len(args) == 1 for args in self.sent))
+        self.assertTrue(all(event["auto"] and not event["call_opened"] for event in self.events))
+        for alert in alerts:
+            wire._tell(RISK, alert)
+        self.assertNotEqual(fragment(self.sent[2][1])["room"], fragment(self.sent[3][1])["room"])
+
+    def test_failed_invitation_is_retried_in_the_same_room_after_any_auto_alert_result(self):
+        for auto_ok in (True, False):
+            with self.subTest(auto_ok=auto_ok):
+                attempts = []
+
+                def send(*args):
+                    attempts.append(args)
+                    return auto_ok if len(attempts) == 1 else len(attempts) > 2
+
+                wire = self.make_wire({"auto_alert": True}, send=send)
+                alert = wire._auto_alert(RISK)
+                self.assertTrue(self.delivered.wait(2))
+                self.assertIn("couldn't reach Priya", wire._tell(RISK, alert))
+                self.assertEqual(wire._tell(RISK, alert), "Opening a call with Priya. I've asked them to join.")
+                self.assertEqual(len(attempts), 3)
+                self.assertEqual(len(attempts[0]), 1)
+                self.assertEqual(attempts[1], attempts[2])
+                self.assertEqual(self.opened[0][1]["url"], self.opened[1][1]["url"])
 
     def test_missing_or_invalid_spacecall_falls_back_to_meet_then_tell(self):
         for url in ("", "http://calls.example/", BASE + "#room=x", "https://calls.example:443/"):
