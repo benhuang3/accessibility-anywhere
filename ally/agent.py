@@ -90,6 +90,7 @@ class Agent:
                                      self.proactive_context, self.proactive_cfg,
                                      ui=NullUI(self.events), voice=NullVoice(self.speaker), events=self.events)
         self.gaze.attach_bus(self.bus)  # offers can be answered by looking at Yes or No ([gaze] answer_offers)
+        self.bus.subscribe("offer_result", self._offer_answered)
         self.sensors: list = []  # Hayden's senses run as self.senses; the patch's own sensors are not used
         self.overlay = None      # Ganesh's overlay plugs in here when ally/overlay lands
         self.hotkeys = HotkeyManager(self)
@@ -302,7 +303,17 @@ class Agent:
         except Exception:
             pass
         app = title.rsplit(" - ", 1)[-1] if " - " in title else title  # "Inbox - Google Chrome" -> "Google Chrome"
-        return {"app": app, "site": site, "in_browser": in_browser, "window": title}
+        zoom = self.bridge.tab.get("zoom") if in_browser else None
+        return {"app": app, "site": site, "in_browser": in_browser, "window": title, "zoom": zoom}
+
+    def _offer_answered(self, offer) -> None:
+        """Tell the senses about a yes or no, so a "no" pauses those signals for a while."""
+        reason = getattr(offer, "reason", None)
+        if offer.choice in ("yes", "no") and hasattr(reason, "to_dict"):
+            try:
+                self.senses.answer(reason.to_dict(), offer.choice)
+            except Exception:
+                log.debug("senses.answer failed", exc_info=True)
 
     def on_struggle(self, data: dict) -> None:
         """Bridge: Hayden's senses calls this with a struggle dict; forward it onto the bus."""

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="style-src 'none'; script-src 'self' 'unsafe-inline'">
+<title>JS-only menu item</title>
+</head>
+<body>
+<nav aria-label="Main">
+  <ul>
+    <li><a href="/inbox">Inbox</a></li>
+    <li><a href="#" id="signout">Sign out</a></li>
+    <li><a href="javascript:void 0" id="print">Print page</a></li>
+  </ul>
+</nav>
+<input id="field" value="type here">
+<p>Out: <span id="out">none</span></p>
+<p>Site keys: <span id="keys"></span></p>
+<dialog id="dlg"><p>Are you sure?</p><button id="dlg-close">Close</button></dialog>
+<script>
+  document.getElementById("signout").addEventListener("click", (e) => {
+    e.preventDefault();
+    document.getElementById("out").textContent = "signed out";
+  });
+  document.getElementById("print").addEventListener("click", () => {
+    document.getElementById("out").textContent = "printed";
+  });
+  document.addEventListener("keydown", (e) => {
+    document.getElementById("keys").textContent += e.key + " ";
+  });
+  document.getElementById("dlg-close").addEventListener("click", () => document.getElementById("dlg").close());
+</script>
+</body>
+</html>

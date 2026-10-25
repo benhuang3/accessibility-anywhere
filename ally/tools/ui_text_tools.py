@@ -32,14 +32,36 @@ def undo_native_rewrites(ctx) -> list[str]:
     return problems
 
 
-@tool
+def _enlarge_page(ctx, buttons: bool) -> dict | None:
+    """The page steps in Chrome: measured zoom (+ bigger buttons), then verify. None if the extension can't
+    (an older version), so the caller falls back to one zoom step."""
+    from ..pagekit.core import PageSession, run_steps, summary
+
+    try:
+        session = PageSession(ctx)
+    except ToolError:
+        return None
+    report = run_steps(ctx, ["text", "buttons"] if buttons else ["text"], session=session)
+    _record(ctx, {"tier": "chrome-fit", "zoom": report.get("zoom")})
+    pct = round((report.get("zoom") or 1.0) * 100)
+    text = summary(report, "Made the page bigger.")
+    if report.get("offer_reader"):
+        text += " Want just the article in big text?"
+    return {"tier": "chrome-fit", "detail": f"{pct}%", "message": text}
+
+
+@tool(timeout=90)
 def enlarge_text(ctx, goal: Annotated[str, "'bigger' to magnify, or a replacement string to show instead"] = "bigger",
-                 level: Annotated[float, "Magnification for native apps (2 = 200%). 0 = pick a sensible default."] = 0.0):
+                 level: Annotated[float, "Magnification for native apps (2 = 200%). 0 = pick a sensible default."] = 0.0,
+                 buttons: Annotated[bool, "Also make the page's buttons bigger (Chrome)."] = False,
+                 in_browser: Annotated[bool, "Treat Chrome as the target even if it isn't in front."] = False):
     """Make the text in the program the user is looking at bigger (any app), or replace it with clearer words.
 
-    Use when the user says "make this bigger", "enlarge this", or wants the words in front of them
-    swapped for something easier to read. Chrome gets a real in-page edit: goal="bigger" zooms the
-    page, and any other goal rewrites the tab's title text in memory. Every other app is magnified
+    Use when the user says "make this bigger", "enlarge this", "I can't read this", or wants the words in
+    front of them swapped for something easier to read. In Chrome, goal="bigger" picks the biggest zoom
+    that doesn't break the page's layout (it measures the page first and checks the result; asking again
+    goes one step bigger), and buttons=true also makes the buttons bigger. Any other goal rewrites the
+    tab's title text in memory. Every other app is magnified
     on the element the user is working in (whole screen if that can't be found). Replacing the words
     in a non-Chrome app writes them into a short editable text box when possible (Windows), and
     otherwise shows them on a big reading card; if neither works here, this says so. Pass goal="bigger" to enlarge, or goal=<the words to show> to replace.
@@ -48,8 +70,11 @@ def enlarge_text(ctx, goal: Annotated[str, "'bigger' to magnify, or a replacemen
     """
     bigger = (goal or "bigger").strip().lower() == "bigger"
 
-    if ctx.browser.connected and ctx.browser.focused:
+    if ctx.browser.connected and (ctx.browser.focused or in_browser):
         if bigger:
+            smart = _enlarge_page(ctx, buttons)
+            if smart is not None:
+                return smart
             z = ctx.browser.call("zoomStep", direction="in")
             pct = round((z or 1.0) * 100)
             _record(ctx, {"tier": "chrome-zoom"})

@@ -107,14 +107,15 @@ def make_registry():
 
 
 class EnlargeTextTests(unittest.TestCase):
-    def test_chrome_in_front_bigger_uses_zoom_tier(self):
+    def test_chrome_bigger_falls_back_to_one_zoom_step_on_an_older_extension(self):
+        # FakeBrowser doesn't know pageInfo (returns None), like an extension without the page steps.
         r = make_registry()
         browser = FakeBrowser(connected=True, focused=True)
         ctx = FakeCtx(browser, FakePlatform())
         out = r.call("enlarge_text", {"goal": "bigger"}, ctx=ctx)
         self.assertTrue(out.ok, out.error)
         self.assertEqual(out.value["tier"], "chrome-zoom")
-        self.assertEqual(browser.calls, [("zoomStep", {"direction": "in"})])
+        self.assertEqual(browser.calls, [("pageInfo", {}), ("zoomStep", {"direction": "in"})])
         self.assertEqual(ctx.state.get("ui_text_edits"), [{"tier": "chrome-zoom"}])
 
     def test_chrome_rewrite_sets_tab_title(self):

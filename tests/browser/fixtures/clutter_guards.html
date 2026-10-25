@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clutter: things that must stay</title>
+<style>
+  body { margin: 0; font: 16px/1.5 sans-serif; overflow: hidden; }
+  main { padding: 16px; height: 3000px; }
+  .cookie-banner { position: fixed; left: 0; right: 0; bottom: 0; background: #333; color: #fff; padding: 12px; }
+  .timeout { position: fixed; top: 30px; left: 30px; width: 320px; background: #fff; border: 2px solid #000; padding: 16px; z-index: 5; }
+  .scam { position: fixed; inset: 0; background: #0033cc; color: #fff; padding: 40px; z-index: 4; }
+  .otp { position: fixed; right: 30px; top: 30px; width: 300px; background: #fff; border: 2px solid #060; padding: 16px; z-index: 6; }
+</style>
+</head>
+<body>
+<main><h1>Online banking</h1><p>Your accounts.</p></main>
+<div class="cookie-banner">This site uses cookies. <button>OK</button></div>
+<div class="timeout" role="dialog" aria-modal="true" aria-labelledby="t1">
+  <h2 id="t1">Your session is about to end</h2>
+  <p aria-live="polite">You will be signed out in 60 seconds. Sign up for paperless statements later.</p>
+  <button>Stay signed in</button> <button>Sign out</button>
+</div>
+<div class="scam">
+  <h1>Warning: your computer is infected with a virus!</h1>
+  <p>Call support now: <a href="tel:+18005550199">1-800-555-0199</a>. Subscribe to our protection plan.</p>
+</div>
+<div class="otp">
+  <p>Enter the one-time code we sent to your phone. Sign up for text alerts.</p>
+  <input autocomplete="one-time-code" inputmode="numeric" aria-label="Code"> <button>Verify</button>
+</div>
+</body>
+</html>

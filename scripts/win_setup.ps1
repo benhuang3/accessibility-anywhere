@@ -52,10 +52,10 @@ if (-not (Test-Path $venvPy)) {
     & $parts[0] @($parts[1..9] | Where-Object { $_ }) -m venv (Join-Path $Dest ".venv")
 }
 Write-Host "== Installing the OS-layer packages"
-# Only what the OS layer uses; mediapipe and faster-whisper are not needed for the lab
+# What the OS layer and the unit tests import (ally.gaze needs numpy); mediapipe and faster-whisper are not needed
 # (and may have no wheels for Windows on ARM, which is what Parallels runs on Apple silicon).
 & $venvPy -m pip install --quiet --upgrade pip
-& $venvPy -m pip install --quiet "comtypes>=1.2" "pynput>=1.7.6" "mss>=9.0" "pillow>=10.0"
+& $venvPy -m pip install --quiet "comtypes>=1.2" "pynput>=1.7.6" "mss>=9.0" "pillow>=10.0" "numpy>=1.26"
 & $venvPy -c "import struct, platform; print('python', platform.python_version(), struct.calcsize('P')*8, 'bit', platform.machine())"
 
 if ($SkipLab) { Write-Host "Ready. Run: $venvPy $Dest\scripts\os_lab.py"; exit 0 }

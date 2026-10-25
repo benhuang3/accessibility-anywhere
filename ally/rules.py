@@ -71,6 +71,39 @@ RULES = [
     Rule("eyes_on", [("eye_tracking", {"on": True})],
          full=r"(?:turn on|start|enable|resume) (?:the )?(?:eye ?track(?:er|ing)|camera|webcam|gaze(?: tracking)?)|"
               r"(?:eye ?track(?:er|ing)|camera|webcam) on"),
+    # Page steps (docs/page_steps.md). Before zoom_in and reader so "bigger buttons" and "simplify this
+    # site" don't fall into their loose patterns.
+    Rule("simple_off_all", [("simplified_mode", {"on": False, "everywhere": True})],
+         full=r"(turn off |stop )?simple mode off (everywhere|on (all|every) sites?)|"
+              r"(turn off|stop) simple mode (everywhere|on (all|every) sites?)",
+         loose=r"\bsimple mode off (everywhere|on (all|every) sites?)\b"),
+    Rule("simple_off", [("simplified_mode", {"on": False})],
+         full=r"(simple|simplified) mode off|(turn off|stop|exit|leave|end) (the )?(simple|simplified) mode|normal mode",
+         loose=r"\b((simple|simplified) mode off|(turn off|stop|exit) (simple|simplified) mode)\b"),
+    Rule("simple_on", [("simplified_mode", {"on": True})],
+         full=r"(turn on |start )?(simple|simplified) mode( on)?|simplify (this|the) (site|website)|"
+              r"make (this|the) (site|website) (simple|simpler|easier)|this (site|website|page) is (too busy|confusing)",
+         loose=r"\b((simple|simplified) mode|simplify (this|the) (site|website)|"
+               r"make (this|the) (site|website) (simple|simpler))\b"),
+    Rule("buttons", [("enlarge_buttons", {"on": True})],
+         full=r"make (the )?buttons (bigger|larger)|bigger buttons|enlarge (the )?buttons|"
+              r"(the )?buttons are too small|i keep missing (the )?buttons",
+         loose=r"\b(bigger buttons|buttons (are )?too small|make the buttons (bigger|larger)|enlarge (the )?buttons)\b"),
+    Rule("clutter_off", [("hide_clutter", {"on": False})],
+         full=r"show (the )?(clutter|pop[- ]?ups|ads)( again)?|bring back (the )?(pop[- ]?ups|ads)"),
+    Rule("clutter", [("hide_clutter", {"on": True})],
+         full=r"(hide|remove|get rid of|block|close) (the |all )?(clutter|pop[- ]?ups|ads|adverts|cookie (banners?|notices?))|"
+              r"declutter( (this|the) page)?|too many (pop[- ]?ups|ads)|clean up (this|the) page",
+         loose=r"\b(declutter|(hide|get rid of) (the |all )?(clutter|pop[- ]?ups|ads)|too many (pop[- ]?ups|ads))\b"),
+    Rule("menus_off", [("simplify_menus", {"on": False})],
+         full=r"close (the )?(ally |big |simple )menu"),
+    Rule("menus", [("simplify_menus", {"on": True})],
+         full=r"simplify (the |this )?menus?|(i )?can'?t use (this|the) menu|(the )?menu keeps (closing|disappearing)|"
+              r"(open |show )?(the )?(ally|big|simple) menu",
+         loose=r"\b(simplify (the |this )?menus?|can'?t use (this|the) menu|menu keeps (closing|disappearing))\b"),
+    Rule("check_layout", [("check_page_layout", {})],
+         full=r"check (the )?(page|layout|page layout)|does (this|the) page look (right|ok|okay)|is (anything|something) cut off",
+         loose=r"\b(check (the )?(page )?layout|is (anything|something) cut off)\b"),
     Rule("zoom_in", [("zoom_in", {})],
          full=r"(zoom in|zoom|bigger|larger|enlarge|increase|make (it|this|that|the text|text|things|everything) "
               r"(bigger|larger)|bigger please|i can't (see|read)( (this|that|it))?|too small|it's too small)",
@@ -102,8 +135,8 @@ RULES = [
     Rule("dyslexia", [("restyle_page", {"style": "dyslexia"})],
          full=r"dyslexi[ac]( mode| font)?( on)?", loose=r"\bdyslexi"),
     Rule("reader", [("reader_view", {"on": True})],
-         full=r"(reader( mode| view)?|simplify( (this|the) page)?|declutter|clean (it |this )?up)( on)?",
-         loose=r"\b(reader (mode|view)|simplify|declutter)\b"),
+         full=r"(reader( mode| view)?|simplify( (this|the) page)?|clean (it |this )?up)( on)?",
+         loose=r"\b(reader (mode|view)|simplify)\b"),
     Rule("reader_off", [("reader_view", {"on": False})],
          full=r"(close|exit|leave|turn off) (the )?reader( mode| view)?|reader( mode| view)? off"),
     Rule("invert", [("color_filter", {"kind": "invert"})],
@@ -167,4 +200,5 @@ def match(text: str, strict: bool = True) -> Match | None:
 HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the selection, stop, high contrast, "
              "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, "
              "what am I looking at, check my eye tracker, set up my eyes, "
-             "invert colors, scroll down, go back, or ask anything when you're online.")
+             "invert colors, scroll down, go back, simple mode, bigger buttons, hide pop-ups, simplify the menu, "
+             "check the page, or ask anything when you're online.")

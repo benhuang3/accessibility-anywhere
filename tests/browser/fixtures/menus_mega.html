@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mega menu shop</title>
+<style>
+  body { font: 14px Arial, sans-serif; margin: 0; }
+  header { background: #234; color: #fff; }
+  header a { color: #fff; }
+  .menu { display: flex; gap: 24px; list-style: none; margin: 0; padding: 12px; }
+  .menu > li { position: relative; }
+  .mega { display: none; position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #999;
+    padding: 12px; width: 420px; gap: 24px; }
+  .mega a { color: #036; }
+  .menu > li:hover > .mega { display: flex; }
+  .skip { position: absolute; left: -999px; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<header>
+  <nav aria-label="Main">
+    <ul class="menu">
+      <li><a href="/">Home</a></li>
+      <li id="products"><a href="/products">Products</a>
+        <div class="mega">
+          <ul>
+            <li><a href="/products/chairs">Chairs</a></li>
+            <li><a href="/products/tables">Tables</a></li>
+            <li><a href="/products/lamps">Lamps</a></li>
+          </ul>
+          <ul>
+            <li><a href="/products/sale">On sale</a></li>
+            <li><a href="/products/chairs">Chairs again</a></li>
+            <li><a href="#"></a></li>
+          </ul>
+        </div>
+      </li>
+      <li id="help"><a href="/help">Help</a>
+        <div class="mega">
+          <ul>
+            <li><a href="/help/delivery">Delivery</a></li>
+            <li><a href="/help/returns">Returns</a></li>
+          </ul>
+        </div>
+      </li>
+      <li><a href="/about">About us</a></li>
+    </ul>
+  </nav>
+</header>
+<main id="main">
+  <h1>Welcome</h1>
+  <p>Hover the menu to see more.</p>
+  <button id="other">A page button</button>
+</main>
+</body>
+</html>

@@ -32,10 +32,12 @@ low vision, dyslexia, tremors, or other disabilities read and use their screen a
 How to act:
 - Do it, don't describe it. Use the tools, then reply in one short, plain sentence that says what
   you changed. Your reply is read aloud, so no lists, markdown, or emoji.
-- Vague requests get a sensible default. "I can't read this" means zoom the page to 150% (or
-  magnify the screen to 2x if Chrome isn't in front). Only ask a question if you truly must.
+- Vague requests get a sensible default. "I can't read this" means enlarge_text (in Chrome it picks the
+  biggest zoom that doesn't break the page; elsewhere it magnifies). Only ask a question if you truly must.
 - Prefer small changes that are easy to undo. After a big change, mention "say reset to undo".
-- Chrome in front: use page tools (set_page_zoom, restyle_page, reader_view, read_page).
+- Chrome in front: use page tools (enlarge_text, enlarge_buttons, hide_clutter, simplify_menus,
+  simplified_mode, open_reader, restyle_page, read_page). set_page_zoom only for an exact zoom the user names.
+  "Too busy" or "confusing" site: simplified_mode. Ask "Do this every time on this site?" before remember=true.
   Another app in front: use screen tools (magnify_screen, color_filter, read_selection, describe_screen).
 - "What I'm looking at", "here" or "this spot" means where the user's eyes are: use magnify_where_i_look.
   The user may be talking hands-free, so never ask them to click or type.
@@ -138,7 +140,8 @@ img, video, picture, canvas, iframe, [style*="background-image"] {
   filter: invert(1) hue-rotate(180deg) !important; }
 """
 spacing = """
-body, body * { line-height: 1.6 !important; letter-spacing: 0.12em !important;
+body, body * { line-height: 1.6 !important; }
+p, li, dd, td, th, blockquote, h1, h2, h3, h4, h5, h6 { letter-spacing: 0.12em !important;
   word-spacing: 0.16em !important; }
 p { margin-bottom: 2em !important; }
 """

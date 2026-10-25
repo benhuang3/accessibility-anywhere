@@ -61,8 +61,12 @@ class WebSocketFrameTests(unittest.TestCase):
     def test_sizes_roundtrip(self):
         for n in (0, 1, 125, 126, 65535, 65536, 200_000):
             text = "x" * n
-            self.send_client(OP_TEXT, text.encode())
+            # Send from another thread: a big frame is larger than the socket buffer (small on macOS), so
+            # sending and receiving on one thread would wait on each other forever.
+            sender = threading.Thread(target=self.send_client, args=(OP_TEXT, text.encode()))
+            sender.start()
             self.assertEqual(self.ws.recv(), text, n)
+            sender.join(5)
 
     def test_binary_and_fragments(self):
         self.send_client(OP_BIN, b"\x00\x01")

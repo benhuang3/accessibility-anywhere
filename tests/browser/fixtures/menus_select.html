@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Long select</title>
+<style> body { font: 14px Arial, sans-serif; } select { font-size: 13px; } .big { font-size: 18px; } </style>
+</head>
+<body>
+<h1>Pick a country</h1>
+<label for="country">Country</label>
+<select id="country" name="country"></select>
+<p>Chosen: <span id="out">none</span> (input events: <span id="inputs">0</span>)</p>
+<label for="size">Size</label>
+<select id="size" class="big"><option>Small</option><option>Medium</option><option>Large</option></select>
+<script>
+  const sel = document.getElementById("country");
+  const groups = { Europe: 12, Asia: 10, Americas: 8 };
+  let n = 0;
+  for (const [name, count] of Object.entries(groups)) {
+    const og = document.createElement("optgroup");
+    og.label = name;
+    for (let i = 1; i <= count; i++) {
+      n++;
+      const o = document.createElement("option");
+      o.value = name.toLowerCase() + "-" + i;
+      o.textContent = name + " country " + i;
+      if (n === 5) o.disabled = true;
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+  sel.onchange = () => { document.getElementById("out").textContent = sel.value; };
+  sel.addEventListener("input", () => {
+    const s = document.getElementById("inputs");
+    s.textContent = String(Number(s.textContent) + 1);
+  });
+</script>
+</body>
+</html>

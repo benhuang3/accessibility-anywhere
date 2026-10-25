@@ -56,8 +56,9 @@ class Target:
             if not (isinstance(box, (list, tuple)) and len(box) == 4):
                 raise ContractError("target.box must be [left, top, width, height]")
             box = tuple(int(v) for v in box)
-        return cls(app=str(d.get("app", ""))[:120], site=str(d.get("site", ""))[:200],
-                   window=str(d.get("window", ""))[:200],
+        # `or ""`: a sender's None must stay empty, not become the text "None" (habits would key on it).
+        return cls(app=str(d.get("app") or "")[:120], site=str(d.get("site") or "")[:200],
+                   window=str(d.get("window") or "")[:200],
                    x=int(d["x"]) if d.get("x") is not None else None,
                    y=int(d["y"]) if d.get("y") is not None else None, box=box)
 

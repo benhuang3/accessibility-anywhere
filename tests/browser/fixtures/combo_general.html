@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Combo general page</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { margin: 0; font: 14px/1.4 Arial, sans-serif; color: #333; background: #fff; }
+  header.site { position: sticky; top: 0; z-index: 10; background: #234; color: #fff;
+    display: flex; align-items: center; gap: 16px; padding: 0 16px; height: 48px; }
+  header.site a { color: #fff; text-decoration: none; }
+  nav ul { list-style: none; margin: 0; padding: 0; display: flex; gap: 14px; }
+  nav li { position: relative; }
+  nav li .mega { display: none; position: absolute; top: 100%; left: 0; background: #fff; color: #333;
+    border: 1px solid #ccc; padding: 8px; width: 420px; columns: 2; }
+  nav li .mega a { color: #234; }
+  nav li:hover > .mega { display: block; }
+  #signup { margin-left: auto; height: 30px; background: #e60; color: #fff; border: 0; border-radius: 4px; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  .tiny { height: 24px; font-size: 12px; padding: 0 6px; }
+  #onetrust-banner-sdk { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000; background: #f4f4f4;
+    border-top: 1px solid #aaa; padding: 12px 16px; display: flex; gap: 12px; align-items: center; }
+  #chat { position: fixed; right: 16px; bottom: 90px; width: 64px; height: 64px; border: 0; z-index: 999;
+    border-radius: 32px; }
+</style>
+</head>
+<body>
+  <header class="site">
+    <a href="/" class="logo"><strong>Walk Well</strong></a>
+    <nav aria-label="Main">
+      <ul>
+        <li><a href="/">Home</a></li>
+        <li><a href="/products">Products</a>
+          <ul class="mega">
+            <li><a href="/products/1">Product line 1</a></li>
+            <li><a href="/products/2">Product line 2</a></li>
+            <li><a href="/products/3">Product line 3</a></li>
+            <li><a href="/products/4">Product line 4</a></li>
+            <li><a href="/products/5">Product line 5</a></li>
+            <li><a href="/products/6">Product line 6</a></li>
+            <li><a href="/products/7">Product line 7</a></li>
+            <li><a href="/products/8">Product line 8</a></li>
+            <li><a href="/products/9">Product line 9</a></li>
+            <li><a href="/products/10">Product line 10</a></li>
+            <li><a href="/products/11">Product line 11</a></li>
+            <li><a href="/products/12">Product line 12</a></li>
+          </ul>
+        </li>
+        <li><a href="/about">About us</a></li>
+        <li><a href="/help">Help</a></li>
+        <li><a href="/contact">Contact</a></li>
+      </ul>
+    </nav>
+    <button id="signup" type="button">Sign up</button>
+  </header>
+  <main>
+    <h1>Walking for health</h1>
+    <div class="controls">
+      <label for="pick">Pick a walk</label>
+      <select id="pick" name="pick">
+        <option value="c1">Choice number 1</option>
+        <option value="c2">Choice number 2</option>
+        <option value="c3">Choice number 3</option>
+        <option value="c4">Choice number 4</option>
+        <option value="c5">Choice number 5</option>
+        <option value="c6">Choice number 6</option>
+        <option value="c7">Choice number 7</option>
+        <option value="c8">Choice number 8</option>
+        <option value="c9">Choice number 9</option>
+        <option value="c10">Choice number 10</option>
+        <option value="c11">Choice number 11</option>
+        <option value="c12">Choice number 12</option>
+        <option value="c13">Choice number 13</option>
+        <option value="c14">Choice number 14</option>
+        <option value="c15">Choice number 15</option>
+        <option value="c16">Choice number 16</option>
+        <option value="c17">Choice number 17</option>
+        <option value="c18">Choice number 18</option>
+        <option value="c19">Choice number 19</option>
+        <option value="c20">Choice number 20</option>
+        <option value="c21">Choice number 21</option>
+        <option value="c22">Choice number 22</option>
+        <option value="c23">Choice number 23</option>
+        <option value="c24">Choice number 24</option>
+        <option value="c25">Choice number 25</option>
+        <option value="c26">Choice number 26</option>
+        <option value="c27">Choice number 27</option>
+        <option value="c28">Choice number 28</option>
+        <option value="c29">Choice number 29</option>
+        <option value="c30">Choice number 30</option>
+      </select>
+      <button class="tiny" id="save" type="button">Save</button>
+      <button class="tiny" id="share" type="button">Share</button>
+    </div>
+    <section id="story">
+      <h2>Why walk every day</h2>
+      <h3>Tip 1</h3>
+      <p>Walking every day helps the heart, the joints and the mind.</p>
+      <p>Good shoes, a steady pace and a route with benches make it pleasant.</p>
+      <h3>Tip 2</h3>
+      <p>Doctors suggest about thirty minutes, split into short walks if that is easier.</p>
+      <p>Many towns have walking groups that meet in the morning.</p>
+      <h3>Tip 3</h3>
+      <p>Good shoes, a steady pace and a route with benches make it pleasant.</p>
+      <p>Bring water on warm days and a light coat when it is cold.</p>
+      <h3>Tip 4</h3>
+      <p>Many towns have walking groups that meet in the morning.</p>
+      <p>Walk with a friend: the time goes faster and it is safer.</p>
+      <h3>Tip 5</h3>
+      <p>Bring water on warm days and a light coat when it is cold.</p>
+      <p>Walking every day helps the heart, the joints and the mind.</p>
+      <h3>Tip 6</h3>
+      <p>Walk with a friend: the time goes faster and it is safer.</p>
+      <p>Doctors suggest about thirty minutes, split into short walks if that is easier.</p>
+      <h3>Tip 7</h3>
+      <p>Walking every day helps the heart, the joints and the mind.</p>
+      <p>Good shoes, a steady pace and a route with benches make it pleasant.</p>
+      <h3>Tip 8</h3>
+      <p>Doctors suggest about thirty minutes, split into short walks if that is easier.</p>
+      <p>Many towns have walking groups that meet in the morning.</p>
+      <h3>Tip 9</h3>
+      <p>Good shoes, a steady pace and a route with benches make it pleasant.</p>
+      <p>Bring water on warm days and a light coat when it is cold.</p>
+      <h3>Tip 10</h3>
+      <p>Many towns have walking groups that meet in the morning.</p>
+      <p>Walk with a friend: the time goes faster and it is safer.</p>
+      <h3>Tip 11</h3>
+      <p>Bring water on warm days and a light coat when it is cold.</p>
+      <p>Walking every day helps the heart, the joints and the mind.</p>
+      <h3>Tip 12</h3>
+      <p>Walk with a friend: the time goes faster and it is safer.</p>
+      <p>Doctors suggest about thirty minutes, split into short walks if that is easier.</p>
+      <h3>Tip 13</h3>
+      <p>Walking every day helps the heart, the joints and the mind.</p>
+      <p>Good shoes, a steady pace and a route with benches make it pleasant.</p>
+      <h3>Tip 14</h3>
+      <p>Doctors suggest about thirty minutes, split into short walks if that is easier.</p>
+      <p>Many towns have walking groups that meet in the morning.</p>
+      <h3>Tip 15</h3>
+      <p>Good shoes, a steady pace and a route with benches make it pleasant.</p>
+      <p>Bring water on warm days and a light coat when it is cold.</p>
+      <h3>Tip 16</h3>
+      <p>Many towns have walking groups that meet in the morning.</p>
+      <p>Walk with a friend: the time goes faster and it is safer.</p>
+      <h3>Tip 17</h3>
+      <p>Bring water on warm days and a light coat when it is cold.</p>
+      <p>Walking every day helps the heart, the joints and the mind.</p>
+      <h3>Tip 18</h3>
+      <p>Walk with a friend: the time goes faster and it is safer.</p>
+      <p>Doctors suggest about thirty minutes, split into short walks if that is easier.</p>
+    </section>
+  </main>
+  <div id="onetrust-banner-sdk" role="region" aria-label="Cookie banner">
+    <span>We use cookies to improve your experience. You can accept or choose your cookie settings.</span>
+    <button type="button" id="onetrust-accept-btn-handler">Accept all cookies</button>
+  </div>
+  <iframe id="chat" title="Intercom live chat" src="combo_intercom_frame.html"></iframe>
+</body>
+</html>
