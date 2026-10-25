@@ -668,8 +668,8 @@ class LiveCnnTests(unittest.TestCase):
             self.assertEqual(angles, (yaw_deg, pitch_deg))
             self.assertIs(fake.frame, frame)
             feat = frame_features({"features": "v5", "screen_mm": mm}, landmarks, {}, mat, 640, 480, cnn=angles)
-            self.assertEqual(len(feat[0]), 11)
-            self.assertEqual(feat[0][9:], [yaw_deg, pitch_deg])
+            self.assertEqual(len(feat[0]), 12)
+            self.assertEqual(feat[0][9:11], [yaw_deg, pitch_deg])
             eye = gm.hybrid_terms(feat[0][:9], yaw_deg, pitch_deg) @ coef
             point = gm.project_gaze(feat[0], float(eye[0] + shy * feat[0][4]),
                                     float(eye[1] + shp * feat[0][5]), screen, mm)

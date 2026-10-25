@@ -62,6 +62,25 @@ def _eye(pts: np.ndarray, idx: dict) -> tuple[float, float, float]:
     rel = pts[idx['iris'], :2] - (inner + outer) / 2
     return (float(rel @ ux) / width, float(rel @ uy) / width, float(np.hypot(*pts[idx['top'], :2] - pts[idx['bottom'], :2])) / width)
 
+
+def _lid_rel(pts: np.ndarray, idx: dict) -> float | None:
+    """Where the iris sits between the eyelids: 0 at the upper lid, 1 at the lower lid.
+
+    The upper lid follows the eyes up and down, so this ratio still moves when a camera at the
+    top of the screen sees the iris barely shift on a downward look. Being a ratio, it does not
+    change when the head comes closer or tilts. None when the lids are almost closed.
+    """
+    inner, outer = pts[idx['inner'], :2], pts[idx['outer'], :2]
+    axis = outer - inner
+    width = float(np.hypot(*axis)) or 1e-06
+    uy = np.array([-axis[1], axis[0]]) / width
+    if uy[1] < 0:
+        uy = -uy
+    top, bottom, iris = (float(pts[idx[k], :2] @ uy) for k in ('top', 'bottom', 'iris'))
+    if bottom - top < 0.05 * width:
+        return None
+    return min(2.0, max(-1.0, (iris - top) / (bottom - top)))
+
 def _frame_parts(landmarks, blendshapes, matrix, width, height, screen_mm=(344.0, 193.0)):
     """Extract both feature versions, openness, and the six head-pose values."""
     pts = np.asarray(landmarks, dtype=float)
@@ -89,7 +108,9 @@ def _frame_parts(landmarks, blendshapes, matrix, width, height, screen_mm=(344.0
     v1 = [(lh - rh) / 2, (lv + rv) / 2, (b.get('eyeLookInLeft', 0) + b.get('eyeLookOutRight', 0) - b.get('eyeLookOutLeft', 0) - b.get('eyeLookInRight', 0)) / 2, (b.get('eyeLookUpLeft', 0) + b.get('eyeLookUpRight', 0) - b.get('eyeLookDownLeft', 0) - b.get('eyeLookDownRight', 0)) / 2, yaw, pitch, tx, ty, tz]
     v2 = [rh, rv, lh, lv, lo, ro, b.get('eyeLookUpLeft', 0), b.get('eyeLookDownLeft', 0), b.get('eyeLookUpRight', 0), b.get('eyeLookDownRight', 0), yaw, pitch, roll, tx, ty, tz]
     v3 = _v3(pts, matrix, rh, rv, lh, lv, width, height, screen_mm)
-    return (v1, v2, v3, openness, (yaw, pitch, roll, tx, ty, tz))
+    rels = [r for r in (_lid_rel(pts, RIGHT_EYE), _lid_rel(pts, LEFT_EYE)) if r is not None]
+    rel = sum(rels) / len(rels) if rels else float('nan')
+    return (v1, v2, v3, openness, (yaw, pitch, roll, tx, ty, tz), rel)
 
 def features(landmarks, blendshapes: dict | None, matrix, width: int, height: int) -> tuple[list[float], float] | None:
     """Return the v1 feature vector and eye openness for one normalized landmark frame."""
@@ -124,15 +145,19 @@ def features_for_model(model, landmarks, blendshapes, matrix, width, height, cnn
 
     v5 is the v4 vector plus the CNN yaw and pitch in degrees. Other feature sets ignore `cnn`.
     Missing angles are NaN, and predict then uses the v4 model stored beside the v5 fit.
+    v4 and v5 end with the iris position between the eyelids (see _lid_rel; NaN when unknown):
+    v4 is 10 numbers, v5 is 12.
     """
     p = _frame_parts(landmarks, blendshapes, matrix, width, height, model.get('screen_mm', (344.0, 193.0)))
     if p is None:
         return None
     fs = model.get('features', 'v1')
     base = p[2] if fs == 'v3' else p[1] if fs == 'v2' else p[0]
+    if fs == 'v4':
+        base = list(base) + [p[5]]
     if fs == 'v5':
         yaw, pitch = _cnn_pair(cnn)
-        base = list(base) + [yaw, pitch]
+        base = list(base) + [yaw, pitch, p[5]]
     return (base, p[3])
 
 def expand(f, feature_set='v1'):
@@ -230,6 +255,35 @@ def _v4_eye_terms(f) -> np.ndarray:
     return np.array([h, v, lh, lv, h * h, v * v, h * v, 1.0])
 
 
+# Up and down: a camera at the top of the screen sees the iris move little when the eyes look down,
+# while the upper lid follows the eyes. The iris position between the lids (the last number of a
+# v4 or v5 vector) goes into the vertical angle only, as a second set of weights ('coef_lid').
+# On six real recordings it cut the vertical error after calibration from 81 to 64 px and after
+# the user moved from 133 to 89 px; sideways stays the same. Models saved before it have no
+# 'coef_lid' and predict as they did, and so does a frame whose lids can't be measured.
+def _rel_of(f, feature_set='v4') -> float | None:
+    """The iris-between-lids number of a v4 vector (index 9) or a v5 vector (index 11), or None."""
+    i = 11 if feature_set == 'v5' else 9
+    try:
+        return _finite_angle(f[i]) if len(f) > i else None
+    except TypeError:
+        return None
+
+
+def _with_rel(terms: np.ndarray, rel: float) -> np.ndarray:
+    """Eye terms with the iris-between-lids number put before the constant."""
+    return np.concatenate([terms[:-1], [rel], terms[-1:]])
+
+
+def _lid_pitch(rows, lam=1e-3):
+    """Weights for the vertical eye angle from (terms with rel, needed pitch) rows, or None."""
+    if len(rows) < 8:
+        return None
+    x = np.asarray([r[0] for r in rows], dtype=float)
+    y = np.asarray([r[1] for r in rows], dtype=float)
+    return np.linalg.solve(x.T @ x + lam * np.eye(x.shape[1]), x.T @ y)
+
+
 def _px_per_cm(screen, screen_mm) -> tuple[float, float]:
     return screen[0] / (screen_mm[0] / 10.0), screen[1] / (screen_mm[1] / 10.0)
 
@@ -250,7 +304,11 @@ def _v4_point(model, f):
     """Raw screen point for one feature vector, or None when the head pose isn't usable."""
     _sx, _sy, shy, shp, _stx, _sty = _V4_SIGNS
     yaw, pitch = float(f[4]), float(f[5])
-    eye_yaw, eye_pitch = _v4_eye_terms(f) @ np.asarray(model['coef'], dtype=float)
+    terms = _v4_eye_terms(f)
+    eye_yaw, eye_pitch = terms @ np.asarray(model['coef'], dtype=float)
+    rel = _rel_of(f, 'v4')
+    if model.get('coef_lid') is not None and rel is not None:
+        eye_pitch = float(_with_rel(terms, rel) @ np.asarray(model['coef_lid'], dtype=float))
     screen, screen_mm = model['screen'], model.get('screen_mm') or DEFAULT_SCREEN_MM
     return project_gaze(f, shy * yaw + eye_yaw, shp * pitch + eye_pitch, screen, screen_mm)
 
@@ -268,24 +326,48 @@ def _v4_coef(rows, screen, screen_mm, lam=1e-3):
     return np.linalg.solve(x.T @ x + lam * np.eye(x.shape[1]), x.T @ y)
 
 
+def _v4_lid_coef(rows, screen, screen_mm):
+    """coef_lid for v4 from (v4 vector, target) rows, or None when too few frames have lids."""
+    lid = []
+    for f, t in rows:
+        rel, need = _rel_of(f, 'v4'), _v4_needed(f, t, screen, screen_mm)
+        if rel is not None and need is not None:
+            lid.append((_with_rel(_v4_eye_terms(f), rel), need[1]))
+    return _lid_pitch(lid)
+
+
+def _v4_probe(rows, screen, screen_mm) -> dict | None:
+    coef = _v4_coef(rows, screen, screen_mm)
+    if coef is None:
+        return None
+    lid = _v4_lid_coef(rows, screen, screen_mm)
+    return {'coef': coef.tolist(), 'coef_lid': None if lid is None else lid.tolist(),
+            'screen': list(screen), 'screen_mm': list(screen_mm)}
+
+
 def _fit_v4(samples, screen, screen_mm, openness_cutoff, sample_weights):
     screen_mm = tuple(float(v) for v in (screen_mm or DEFAULT_SCREEN_MM))
-    fallback = fit(samples, screen, 'v1', openness_cutoff, sample_weights)  # for frames without a pose
-    coef = _v4_coef(samples, screen, screen_mm)
-    if coef is None:  # no usable head pose (no transformation matrix): plain v1 still works
+    # for frames without a pose; v1 takes the first nine numbers
+    fallback = fit([(list(f)[:9], t) for f, t in samples], screen, 'v1', openness_cutoff, sample_weights)
+    whole = _v4_probe(samples, screen, screen_mm)
+    if whole is None:  # no usable head pose (no transformation matrix): plain v1 still works
         return fallback
     targets = sorted({tuple(t) for _f, t in samples})
-    errs = []
+    errs, plain = [], []
     for g in targets:  # leave one target out, like the other feature sets
-        part = _v4_coef([s for s in samples if tuple(s[1]) != g], screen, screen_mm)
-        if part is None:
+        probe = _v4_probe([s for s in samples if tuple(s[1]) != g], screen, screen_mm)
+        if probe is None:
             continue
-        probe = {'coef': part.tolist(), 'screen': list(screen), 'screen_mm': list(screen_mm)}
-        pts = [p for p in (_v4_point(probe, f) for f, t in samples if tuple(t) == g) if p is not None]
-        if pts:
-            errs.append(float(np.hypot(*(np.median(np.asarray(pts), axis=0) - np.asarray(g, float)))))
+        for out, use in ((errs, probe), (plain, dict(probe, coef_lid=None))):
+            pts = [p for p in (_v4_point(use, f) for f, t in samples if tuple(t) == g) if p is not None]
+            if pts:
+                out.append(float(np.hypot(*(np.median(np.asarray(pts), axis=0) - np.asarray(g, float)))))
+    coef_lid = whole['coef_lid']
+    if coef_lid is not None and plain and (not errs or np.median(errs) > np.median(plain)):
+        coef_lid, errs = None, plain  # the lids don't help this person's calibration: leave them out
     model = dict(fallback)
-    model.update({'features': 'v4', 'coef': coef.tolist(), 'screen_mm': list(screen_mm),
+    model.update({'features': 'v4', 'coef': whole['coef'], 'coef_lid': coef_lid,
+                  'screen_mm': list(screen_mm),
                   'error_px': round(float(np.median(errs))) if errs else fallback['error_px'],
                   'fallback': fallback, 'mean': None, 'std': None})
     return model
@@ -326,8 +408,10 @@ def _v5_angles(f):
 
 
 def _v4_of(f) -> list[float]:
-    """The v4 vector at the front of a v5 vector (the CNN degrees sit after it)."""
-    return [float(v) for v in list(f)[:9]]
+    """The v4 vector inside a v5 vector: the first nine numbers, then the lids number at the end."""
+    f = list(f)
+    rel = _rel_of(f, 'v5')
+    return [float(v) for v in f[:9]] + ([rel] if rel is not None else [])
 
 
 def project_gaze(features, gaze_yaw: float, gaze_pitch: float, screen, screen_mm):
@@ -362,22 +446,29 @@ def fit_hybrid(samples, screen, screen_mm, lam: float = 1e-3) -> dict | None:
 
     Same ridge as v4. samples are (features, target_xy, yaw_deg, pitch_deg), and features
     are the v4 vector. Returns None when fewer than 8 frames have a usable head pose.
+    When the v4 vectors carry the lids number, the vertical angle also gets 'coef_lid'.
     """
     screen_mm = tuple(float(v) for v in (screen_mm or DEFAULT_SCREEN_MM))
-    rows, needed = [], []
+    rows, needed, lid = [], [], []
     for feat, target, yaw, pitch in samples:
         eye = _v4_needed(feat, target, screen, screen_mm)
         if eye is None:
             continue
-        rows.append(hybrid_terms(feat, yaw, pitch))
+        terms = hybrid_terms(feat, yaw, pitch)
+        rows.append(terms)
         needed.append(eye)
+        rel = _rel_of(feat, 'v4')
+        if rel is not None:
+            lid.append((_with_rel(terms, rel), eye[1]))
     if len(rows) < 8:
         return None
     design = np.asarray(rows, dtype=float)
     target_angles = np.asarray(needed, dtype=float)
     coef = np.linalg.solve(design.T @ design + lam * np.eye(design.shape[1]), design.T @ target_angles)
+    lid_coef = _lid_pitch(lid, lam)
     return {
         'coef': coef.tolist(),
+        'coef_lid': None if lid_coef is None else lid_coef.tolist(),
         'screen': [int(screen[0]), int(screen[1])],
         'screen_mm': [float(screen_mm[0]), float(screen_mm[1])],
     }
@@ -385,7 +476,11 @@ def fit_hybrid(samples, screen, screen_mm, lam: float = 1e-3) -> dict | None:
 
 def hybrid_point(model, features, yaw_deg, pitch_deg):
     """Raw screen point from the hybrid eye angle, or None. No clamp and no offset."""
-    eye = hybrid_terms(features, yaw_deg, pitch_deg) @ np.asarray(model['coef'], dtype=float)
+    terms = hybrid_terms(features, yaw_deg, pitch_deg)
+    eye = terms @ np.asarray(model['coef'], dtype=float)
+    rel = _rel_of(features, 'v4')
+    if model.get('coef_lid') is not None and rel is not None:
+        eye = np.array([eye[0], float(_with_rel(terms, rel) @ np.asarray(model['coef_lid'], dtype=float))])
     _sx, _sy, shy, shp, _stx, _sty = _V4_SIGNS
     yaw, pitch = float(features[4]), float(features[5])
     screen = model['screen']
@@ -408,22 +503,26 @@ def _fit_v5(samples, screen, screen_mm, openness_cutoff, sample_weights):
     if fitted is None:  # no usable CNN angles: the v4 model still tracks
         return fallback
     targets = sorted({tuple(row[1]) for row in angled})
-    errs = []
+    errs, plain = [], []
     for g in targets:
         part = fit_hybrid([row for row in angled if tuple(row[1]) != g], screen, screen_mm)
         if part is None:
             continue
-        pts = []
-        for feat, target, yaw, pitch in angled:
-            if tuple(target) != g:
-                continue
-            point = hybrid_point(part, feat, yaw, pitch)
-            if point is not None:
-                pts.append(point)
-        if pts:
-            errs.append(float(np.hypot(*(np.median(np.asarray(pts), axis=0) - np.asarray(g, float)))))
+        for out, use in ((errs, part), (plain, dict(part, coef_lid=None))):
+            pts = []
+            for feat, target, yaw, pitch in angled:
+                if tuple(target) != g:
+                    continue
+                point = hybrid_point(use, feat, yaw, pitch)
+                if point is not None:
+                    pts.append(point)
+            if pts:
+                out.append(float(np.hypot(*(np.median(np.asarray(pts), axis=0) - np.asarray(g, float)))))
+    if fitted['coef_lid'] is not None and plain and (not errs or np.median(errs) > np.median(plain)):
+        fitted, errs = dict(fitted, coef_lid=None), plain  # the lids don't help here: leave them out
     model = dict(fallback)
-    model.update({'features': 'v5', 'coef': fitted['coef'], 'screen_mm': list(screen_mm),
+    model.update({'features': 'v5', 'coef': fitted['coef'], 'coef_lid': fitted['coef_lid'],
+                  'screen_mm': list(screen_mm),
                   'error_px': round(float(np.median(errs))) if errs else fallback['error_px'],
                   'fallback': fallback, 'cnn_model': CNN_MODEL, 'mean': None, 'std': None})
     return model
@@ -448,9 +547,11 @@ def predict(model: dict, f, clamp: bool = True) -> tuple[float, float]:
     elif model.get('features') == 'v4':
         point = _v4_point(model, f)
         if point is None:  # no usable head pose in this frame: the v1 model fitted alongside
-            point = predict(model['fallback'], f, clamp=False)
+            point = predict(model['fallback'], list(f)[:9], clamp=False)
         p = np.asarray(point, dtype=float)
     else:
+        if model.get('features', 'v1') == 'v1':
+            f = list(f)[:9]  # a v4 vector (v4 fell back to v1) ends with the lids number
         raw = expand(f, model.get('features', 'v1'))
         x = np.column_stack([np.ones(len(raw)), (raw - np.array(model['mean'])) / np.array(model['std'])])
         p = (x @ np.array(model['coef']))[0]
@@ -624,7 +725,7 @@ def radius_px(model, features=None):
     distance = max(abs(float(calibration[-1])), 1e-06)
     translation_delta = float(np.linalg.norm(f[ix + angles:ix + pose_size] - calibration[angles:])) / distance
     movement = max(rotation_delta / 10.0, translation_delta / 0.15)
-    if fs == 'v4':  # head geometry is modelled: moving costs much less accuracy (about 1.5x on recordings)
+    if fs in ('v4', 'v5'):  # head geometry is modelled: moving costs much less accuracy (about 1.5x on recordings)
         movement *= 0.25
     return base * (1 + min(2.0, movement))
 

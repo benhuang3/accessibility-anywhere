@@ -206,6 +206,45 @@ class GazeModelTests(unittest.TestCase):
         self.assertLess(err(v4), 15)
         self.assertGreater(err(v1), 150)  # the old regression memorised the calibration head pose
 
+    def _lid_scene(self, rel_of_need, v_scale=0.0, pose=(0.0, -0.10, 0.0, -2.0, -30.0)):
+        """A v4 scene whose iris barely moves up and down (v_scale), with the lids number appended."""
+        out = []
+        for (f, t) in self._v4_scene(pose, (0.9, 1.1)):
+            need = gm._v4_needed(f, t, (1920, 1080), gm.DEFAULT_SCREEN_MM)
+            f = list(f)
+            f[1] *= v_scale
+            out.append((f + [rel_of_need(need[1])], t))
+        return out
+
+    def test_the_lids_carry_up_and_down_when_the_iris_barely_moves(self):
+        calib = self._lid_scene(lambda pitch: 0.45 + 1.5 * pitch)
+        m = gm.fit(calib, (1920, 1080), 'v4')
+        self.assertIsNotNone(m['coef_lid'])
+        flat = dict(m, coef_lid=None)
+        moved = self._lid_scene(lambda pitch: 0.45 + 1.5 * pitch, pose=(0.1, -0.04, 2.0, -1.0, -38.0))
+        dy = lambda model: float(np.median([abs(gm.predict(model, f, clamp=False)[1] - t[1]) for f, t in moved]))
+        self.assertLess(dy(m), 15)
+        self.assertGreater(dy(flat), 100)  # without the lids, up and down is lost
+
+    def test_lids_that_do_not_help_are_left_out(self):
+        rng = np.random.default_rng(3)
+        calib = self._lid_scene(lambda pitch: float(rng.uniform(0.2, 0.8)), v_scale=1.0)
+        m = gm.fit(calib, (1920, 1080), 'v4')
+        self.assertIsNone(m['coef_lid'])
+        self.assertLess(m['error_px'], 10)
+
+    def test_older_models_and_unknown_lids_predict_as_before(self):
+        calib = self._v4_scene((0.0, -0.10, 0.0, -2.0, -30.0), (0.9, 1.1))
+        old = gm.fit(calib, (1920, 1080), 'v4')
+        old.pop('coef_lid', None)  # saved before the lids number existed
+        f = list(calib[5][0])
+        self.assertEqual(gm.predict(old, f + [0.7]), gm.predict(old, f))
+        new = gm.fit(self._lid_scene(lambda pitch: 0.45 + 1.5 * pitch, v_scale=1.0), (1920, 1080), 'v4')
+        m = dict(new, coef_lid=new['coef_lid'] or [0.0] * 9)
+        self.assertEqual(gm.predict(m, f + [float('nan')]), gm.predict(dict(m, coef_lid=None), f))
+        g = list(f); g[8] = -0.06  # no head pose: the v1 fallback gets the first nine numbers
+        self.assertEqual(gm.predict(m, g + [0.7]), gm.predict(m['fallback'], g))
+
     def test_v4_falls_back_without_a_head_pose(self):
         calib = self._v4_scene((0.0, -0.10, 0.0, -2.0, -30.0), (0.9, 1.1))
         m = gm.fit(calib, (1920, 1080), 'v4')
@@ -270,11 +309,12 @@ class GazeModelTests(unittest.TestCase):
     def test_features_for_model_adds_cnn_angles_only_for_v5(self):
         lm = self.landmarks(0.1, -0.05, 0.05, 0.08)
         bare = gm.features_for_model({'features': 'v5'}, lm, {}, None, 640, 480)
-        self.assertEqual(len(bare[0]), 11)
+        self.assertEqual(len(bare[0]), 12)  # v4's nine, the CNN's two, then the lids number
         self.assertTrue(math.isnan(bare[0][9]) and math.isnan(bare[0][10]))
         angled = gm.features_for_model({'features': 'v5'}, lm, {}, None, 640, 480, cnn=(12.5, -3.25))
         self.assertEqual(angled[0][:9], bare[0][:9])
-        self.assertEqual(angled[0][9:], [12.5, -3.25])
+        self.assertEqual(angled[0][9:11], [12.5, -3.25])
+        self.assertEqual(angled[0][11], bare[0][11])
         for name in ('v1', 'v2', 'v3', 'v4'):
             without = gm.features_for_model({'features': name}, lm, {}, None, 640, 480)
             with_cnn = gm.features_for_model({'features': name}, lm, {}, None, 640, 480, cnn=(12.5, -3.25))
