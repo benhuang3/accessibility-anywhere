@@ -13,7 +13,7 @@ def magnify_screen(ctx, level: Annotated[float, "Magnification: 1 = off, 1.5, 2 
     """Magnify the whole screen (every app) with the operating system's magnifier.
 
     Use when the user can't see something outside the web browser, or asks to zoom the screen.
-    On Windows the view follows the mouse. On Mac this uses Apple's Zoom shortcuts.
+    On Windows the view follows the mouse; on Linux it uses GNOME's zoom.
     """
     return ctx.os.magnify(max(1.0, min(8.0, float(level))))
 

@@ -5,7 +5,7 @@ Usage (in the VM, from C:\ally):  python demo\capture_site.py <url> <output fold
 Each version is saved as a static HTML file (BBC's scripts removed so it doesn't re-render, a <base> so images
 load from bbc.com, Ally's injected CSS and its shadow-DOM overlays baked in) plus a screen-size and a full-page PNG.
 """
-import json, os, re, sys, time
+import os, re, sys, time
 from pathlib import Path
 sys.path.insert(0, r"C:\ally\tests"); sys.path.insert(0, r"C:\ally")
 from browser.harness import AllyBrowser, FixtureServer, ActionError

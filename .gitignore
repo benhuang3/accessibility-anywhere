@@ -7,3 +7,5 @@ __pycache__/
 venv/
 .DS_Store
 cache/
+# Claude Code agent worktrees (local checkouts, not part of the project)
+.claude/worktrees/
