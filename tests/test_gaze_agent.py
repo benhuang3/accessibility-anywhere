@@ -11,13 +11,15 @@ from unittest import mock
 
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
+from ally import gaze_element
 from ally.doctor import describe_calibration
-from ally.gaze import GazeManager, choice_index, ongoing_choice
-from ally.gaze_helper import RecentFeatures, apply_click, classify_command, nearest_click_frame
+from ally.gaze import RETUNE_OFFER, GazeManager, choice_index, ongoing_choice
+from ally.gaze_helper import RecentFeatures, adopt_model, apply_click, classify_command, nearest_click_frame
 from ally.registry import ToolError
+from ally.senses import clickable
 from ally.senses.manager import Senses
-from ally.tools.gaze_tools import (calibration_words, check_words, choose_by_looking, looking_text,
-                                   where_am_i_looking)
+from ally.tools.gaze_tools import (calibration_words, check_eye_tracker, check_words, choose_by_looking,
+                                   looking_text, where_am_i_looking)
 
 
 class _Stdin:
@@ -114,6 +116,57 @@ class TargetTests(unittest.TestCase):
         gaze.override = False
         got = gaze.target()
         self.assertIn("off", got["why"])
+
+    def test_retune_offer_after_ten_seconds_then_waits(self):
+        self.assertEqual(RETUNE_OFFER, "Your position changed. Say check my eye tracker to re-tune it.")
+        gaze, agent = manager()
+        said, added = [], []
+        agent.events = types.SimpleNamespace(add=lambda kind, text: added.append((kind, text)))
+        agent.speaker = types.SimpleNamespace(say=lambda text: said.append(text))
+        now = {"t": 1_000.0}
+
+        def fake_time():
+            return now["t"]
+
+        def unsure():
+            gaze.face_at = now["t"]
+            gaze.points.clear()
+            _cluster(gaze, now["t"] - 1.0, 200, 180, radius=400)
+            return gaze.target()
+
+        with mock.patch("ally.gaze.time.time", fake_time):
+            got = unsure()
+            self.assertEqual(got["source"], "mouse")
+            self.assertIn("isn't sure", got["why"])
+            self.assertEqual(said, [])
+            now["t"] = 1_009.0
+            unsure()
+            self.assertEqual(said, [])
+            now["t"] = 1_010.0
+            unsure()
+            self.assertEqual(said, [RETUNE_OFFER])
+            self.assertEqual(added, [("gaze", RETUNE_OFFER)])
+            now["t"] = 1_010.0 + 299.0
+            unsure()
+            self.assertEqual(len(said), 1)
+            now["t"] = 1_010.0 + 300.0
+            unsure()
+            self.assertEqual(len(said), 2)
+            self.assertEqual(len(added), 2)
+
+            # A steady look, or a fallback that is not high uncertainty, starts the wait over.
+            gaze.points.clear()
+            _cluster(gaze, now["t"] - 1.0, 200, 180, radius=40)
+            self.assertEqual(gaze.target()["source"], "eyes")
+            now["t"] += 30.0
+            unsure()
+            self.assertEqual(len(said), 2)
+            gaze.face_at = 0
+            gaze.target()
+            now["t"] += 30.0
+            gaze.face_at = now["t"]
+            unsure()
+            self.assertEqual(len(said), 2)
 
 
 class ClickTests(unittest.TestCase):
@@ -239,6 +292,66 @@ class ToolTests(unittest.TestCase):
         with self.assertRaises(ToolError):
             check_words({"calibrated": False, "why": "The eye tracker needs a setup first."})
 
+    def test_check_eye_tracker_retunes_and_saves(self):
+        import numpy as np
+
+        from ally import gaze_model
+        from ally.gaze_helper import retune_check
+
+        gaze, agent = manager()
+        screen = gaze.screen
+        rnd = np.random.default_rng(2)
+        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.1, 0.5, 0.9) for fx in (0.08, 0.5, 0.92)]
+        trained = []
+        for tx, ty in dots:
+            for _ in range(8):
+                u, v = tx / screen[0] - 0.5, ty / screen[1] - 0.5
+                feat = np.array([0.3 * u, 0.2 * v, 0.8 * u, 0.6 * v, 0, 0, 0, 0, 0.4], dtype=float)
+                feat = (feat + rnd.normal(0, 0.001, 9)).tolist()
+                trained.append((feat, (tx, ty)))
+        model = gaze_model.fit(trained, screen)
+        model["camera"] = 0
+        gaze_model.save(model, gaze.calibration_path)
+        samples = []
+        for feat, _target in trained[::8][:5]:
+            pred = gaze_model.predict(model, feat)
+            shifted = (pred[0] + 400.0, pred[1] - 150.0)
+            for _ in range(4):
+                samples.append((list(feat), shifted))
+        sent = []
+        gaze.send = lambda line: sent.append(line) or True
+        gaze.check = lambda timeout=40: {"calibrated": True, "check": True, "samples": samples,
+                                         "cause": "Sit still, with light on your face, and try again."}
+
+        class _Os:
+            def view(self):
+                return (1.0, 0, 0)
+
+            def other_magnifier_open(self):
+                return False
+
+            def magnify(self, _level):
+                raise AssertionError("the check dots are already unmagnified")
+
+        ctx = types.SimpleNamespace(agent=agent, os=_Os(), say=lambda _text: None)
+        with mock.patch("ally.gaze_model.retune", wraps=gaze_model.retune) as retuned:
+            text = check_eye_tracker(ctx)
+        retuned.assert_called_once()
+        self.assertEqual(sent, ["reload"])
+        saved = gaze_model.load(gaze.calibration_path, screen)
+        self.assertIsNotNone(saved)
+        self.assertNotEqual(saved["offset"], [0.0, 0.0])
+        preview = retune_check(model, samples)
+        self.assertGreater(preview["error_before"], preview["error_after"])
+        self.assertIn(str(preview["error_before"]), text)
+        self.assertIn(str(preview["error_after"]), text)
+        self.assertIn("re-tuning", text.lower())
+        self.assertEqual(saved["validation"]["error_px"], preview["error_after"])
+        loaded, corrector = adopt_model(gaze.calibration_path, screen, 0, True)
+        self.assertEqual(loaded["offset"], saved["offset"])
+        self.assertIsNotNone(corrector)
+        self.assertEqual(classify_command("reload"), ("reload", None))
+
 
 class DoctorTests(unittest.TestCase):
     def test_lines(self):
@@ -265,6 +378,103 @@ class DoctorTests(unittest.TestCase):
         status, detail = describe_calibration(poor, camera=0, features="v1", now=now)
         self.assertEqual(status, "warn")
         self.assertIn("400", detail)
+
+
+class UnknownElementTests(unittest.TestCase):
+    def test_unnamed_client_and_pane_are_not_controls(self):
+        info = {"region": "middle", "source": "eyes", "why": ""}
+        for role in ("client", "pane", "control", "Client", "Pane"):
+            text = looking_text(info, {"role": role, "name": "  "})
+            self.assertEqual(text, "Region: middle.")
+            self.assertNotIn("control", text.lower())
+            self.assertNotIn(role.lower(), text.lower())
+        self.assertIn("Button: Save", looking_text(info, {"role": "button", "name": "Save"}))
+        gaze, agent = manager()
+        gaze.target = lambda t0=None, t1=None: {
+            "x": 8, "y": 9, "radius_px": 40, "confidence": 0.8,
+            "region": "top left", "source": "eyes", "why": ""}
+        ctx = types.SimpleNamespace(agent=agent)
+        with mock.patch("ally.tools.gaze_tools._element_at", return_value={"role": "pane", "name": ""}):
+            text = where_am_i_looking(ctx)
+        self.assertEqual(text, "Region: top left.")
+        self.assertNotIn("pane", text.lower())
+        self.assertNotIn("control", text.lower())
+
+    def test_client_and_pane_stay_unknown_to_clickable(self):
+        self.assertIsNone(clickable.hint_for_role(0x0A))
+        self.assertIsNone(clickable.hint_for_role(0x10))
+        self.assertIs(clickable.hint_for_role(0x2B), True)
+        # The older role map still marks them non-clickable; the point lookup uses the hint.
+        self.assertIs(clickable._role_result(0x0A), False)
+        self.assertIs(clickable._role_result(0x10), False)
+
+    def test_lookups_initialize_com_on_the_worker_thread(self):
+        seen = {}
+
+        def co_initialize(_reserved, mode):
+            seen["mode"] = int(mode)
+            return 0
+
+        def co_uninitialize():
+            seen["uninit"] = True
+
+        windll = types.SimpleNamespace(ole32=types.SimpleNamespace(
+            CoInitializeEx=co_initialize, CoUninitialize=co_uninitialize))
+        with mock.patch("ctypes.windll", windll, create=True):
+            self.assertTrue(gaze_element._com_init())
+            gaze_element._com_uninit()
+            self.assertTrue(clickable._com_init())
+            clickable._com_uninit()
+        self.assertEqual(seen["mode"], 0x2)
+        self.assertTrue(seen["uninit"])
+
+        def changed(_reserved, _mode):
+            return 0x80010106
+
+        blocked = types.SimpleNamespace(ole32=types.SimpleNamespace(CoInitializeEx=changed))
+        with mock.patch("ctypes.windll", blocked, create=True):
+            self.assertFalse(gaze_element._com_init())
+            self.assertFalse(clickable._com_init())
+
+        order = []
+
+        def init():
+            order.append("init")
+            return True
+
+        def uninit():
+            order.append("uninit")
+
+        def describe_at(x, y):
+            order.append(("lookup", x, y))
+            return {"role": "button", "name": "Ok"}
+
+        with mock.patch("ally.gaze_element.sys.platform", "win32"), \
+                mock.patch("ally.gaze_element._com_init", init), \
+                mock.patch("ally.gaze_element._com_uninit", uninit), \
+                mock.patch("ally.gaze_element._describe", describe_at):
+            got = gaze_element.describe(3, 4, timeout=1)
+        self.assertEqual(got, {"role": "button", "name": "Ok"})
+        self.assertEqual(order, ["init", ("lookup", 3, 4), "uninit"])
+
+        clicked = []
+
+        def click_init():
+            clicked.append("init")
+            return True
+
+        def click_uninit():
+            clicked.append("uninit")
+
+        def lookup(x, y):
+            clicked.append(("lookup", x, y))
+            return None
+
+        with mock.patch("ally.senses.clickable._com_init", click_init), \
+                mock.patch("ally.senses.clickable._com_uninit", click_uninit), \
+                mock.patch("ally.senses.clickable._lookup", lookup):
+            self.assertIsNone(clickable.is_clickable(5, 6, timeout=1))
+        self.assertEqual(clicked, ["init", ("lookup", 5, 6), "uninit"])
 
 
 if __name__ == "__main__":

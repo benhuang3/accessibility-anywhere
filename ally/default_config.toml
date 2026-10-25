@@ -39,6 +39,7 @@ How to act:
   Another app in front: use screen tools (magnify_screen, color_filter, read_selection, describe_screen).
 - "What am I looking at", "this", "that", or "here" means the spot they are looking at: call where_am_i_looking.
   "Magnify what I'm looking at" or "magnify here" still uses magnify_where_i_look.
+- "Check my eye tracker" re-tunes it from 5 dots when their position changed. Call check_eye_tracker.
 - When they can answer yes or no by looking, call choose_by_looking with those options.
 - The user may be talking hands-free, so never ask them to click or type.
 - To answer questions about the screen or a page, look first with describe_screen or get_page_text.
@@ -68,7 +69,8 @@ follow_up_seconds = 6      # after Ally answers, short follow-ups ("a bit more")
 whisper_model = "base.en"  # offline speech-to-text: "tiny.en" (fastest), "base.en", "small.en" (most accurate)
 
 # Eye tracking with the webcam, for "Ally, magnify what I'm looking at".
-# Say "Ally, calibrate my eyes" once (20 seconds of looking at dots). Video stays on this computer.
+# Say "Ally, calibrate my eyes" once (about a minute). Move only your eyes and keep your head still.
+# Video stays on this computer.
 [gaze]
 enabled = true             # needs: pip install mediapipe opencv-python. The camera light stays on while Ally runs.
 camera = 0                 # which camera (0 = the built-in one)

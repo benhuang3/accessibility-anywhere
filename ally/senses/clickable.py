@@ -7,6 +7,9 @@ import threading
 # MSAA ROLE_SYSTEM_* values. Only roles that reliably accept a click are positive.
 CLICKABLE_ROLES = {0x2B, 0x1E, 0x0C, 0x2C, 0x2D, 0x25, 0x22, 0x24, 0x2E, 0x3E, 0x39, 0x38}
 NONCLICKABLE_ROLES = {0x0A, 0x0F, 0x29, 0x10, 0x09, 0x16, 0x12, 0x2A, 0x28}
+# Chrome, Electron, and the Windows 11 taskbar often expose only these, with no name.
+GENERIC_ROLES = {0x0A, 0x10}  # client, pane: not a control
+_COINIT_APARTMENTTHREADED = 0x2
 
 
 def _role_result(role: int) -> bool | None:
@@ -15,6 +18,34 @@ def _role_result(role: int) -> bool | None:
     if role in NONCLICKABLE_ROLES:
         return False
     return None
+
+
+def hint_for_role(role: int) -> bool | None:
+    """What a point lookup should return. A bare client or pane is unknown, not a control."""
+    if role in GENERIC_ROLES:
+        return None
+    return _role_result(role)
+
+
+def _com_init() -> bool:
+    """Initialize COM on this thread. True when this call must be paired with CoUninitialize."""
+    if not hasattr(ctypes, "windll"):
+        return False
+    try:
+        fn = ctypes.windll.ole32.CoInitializeEx
+        fn.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        fn.restype = ctypes.c_long
+        hr = int(fn(None, _COINIT_APARTMENTTHREADED))
+    except Exception:
+        return False
+    return hr in (0, 1)  # S_OK, or S_FALSE when this thread already initialized COM
+
+
+def _com_uninit() -> None:
+    try:
+        ctypes.windll.ole32.CoUninitialize()
+    except Exception:
+        pass
 
 
 def _msaa_role(x: int, y: int) -> bool | None:
@@ -49,7 +80,7 @@ def _msaa_role(x: int, y: int) -> bool | None:
         role = VARIANT()
         if get_role(obj, child, ctypes.byref(role)) != 0 or role.vt != 3:  # VT_I4
             return None
-        return _role_result(int(role.lVal))
+        return hint_for_role(int(role.lVal))
     finally:
         if obj.value:
             vtable = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
@@ -86,9 +117,15 @@ def is_clickable(x: int, y: int, timeout: float = 0.25) -> bool | None:
     done = threading.Event()
 
     def run() -> None:
+        com = False
         try:
+            com = _com_init()
             result.append(_lookup(x, y))
+        except Exception:
+            result.append(None)
         finally:
+            if com:
+                _com_uninit()
             done.set()
 
     threading.Thread(target=run, daemon=True, name="clickable-query").start()

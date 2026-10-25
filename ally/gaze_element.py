@@ -15,6 +15,9 @@ _GET_ROLE = 13
 _VT_I4 = 3
 _VT_BSTR = 8
 
+# CoInitializeEx: apartment-threaded, so AccessibleObjectFromPoint is legal on this thread.
+_COINIT_APARTMENTTHREADED = 0x2
+
 ROLE_NAMES = {
     0x09: "window",
     0x0A: "client",
@@ -39,6 +42,31 @@ ROLE_NAMES = {
 }
 
 
+def _com_init() -> bool:
+    """Initialize COM on this thread. True when this call must be paired with CoUninitialize."""
+    import ctypes
+
+    if not hasattr(ctypes, "windll"):
+        return False
+    try:
+        fn = ctypes.windll.ole32.CoInitializeEx
+        fn.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        fn.restype = ctypes.c_long
+        hr = int(fn(None, _COINIT_APARTMENTTHREADED))
+    except Exception:
+        return False
+    return hr in (0, 1)  # S_OK, or S_FALSE when this thread already initialized COM
+
+
+def _com_uninit() -> None:
+    import ctypes
+
+    try:
+        ctypes.windll.ole32.CoUninitialize()
+    except Exception:
+        pass
+
+
 def describe(x: int, y: int, timeout: float = 0.4) -> dict | None:
     """{"role", "name"} at this point, or None off Windows and when the lookup fails."""
     if sys.platform != "win32":
@@ -47,11 +75,15 @@ def describe(x: int, y: int, timeout: float = 0.4) -> dict | None:
     done = threading.Event()
 
     def run() -> None:
+        com = False
         try:
+            com = _com_init()
             result.append(_describe(int(x), int(y)))
         except Exception:
             result.append(None)
         finally:
+            if com:
+                _com_uninit()
             done.set()
 
     threading.Thread(target=run, daemon=True, name="gaze-element").start()

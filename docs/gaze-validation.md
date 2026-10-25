@@ -22,15 +22,22 @@ With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This tak
 - "What am I looking at", and "this", "that", or "here" when you mean a spot: the area of the screen.
   On Windows, also the role and name of the control there (a button, a link, some text). That name is
   read only when you ask, and it goes to Claude only as part of your request.
+  A Chrome page, an Electron window, or the Windows 11 taskbar often comes back as only a pane or a
+  client with no name. Ally then says the region only, and does not call it a control. Naming the
+  thing inside Chrome needs the extension: a content script that asks `document.elementFromPoint`.
+  That is the extension owner's area.
 - "Magnify what I'm looking at", or "magnify here": zoom around that spot. The view then follows your eyes.
 - A yes or no by looking: Ally shows the choices as large cards. Two choices use the left and right
   halves of the screen. Look at one for about a second. Up to four choices. If you don't settle, Ally says none.
-- "Check my eye tracker": only the 5 check dots, about 8 seconds. This updates the saved check numbers.
-  It does not throw away the fit.
+- "Check my eye tracker": only the 5 check dots, about 10 seconds. Ally re-tunes the saved model
+  from those dots (a shift, not a new fit) and says how far off it was before and after.
 - "Set up my eyes" runs the full setup again.
 
 If the tracker isn't set up, Ally can't see your face, your eyes don't stay on one spot, or the
 uncertainty is above `max_radius_px` (default 250), Ally uses the mouse pointer and says why.
+If that uncertainty stays high for about 10 seconds while your face is still visible, Ally says,
+once: "Your position changed. Say check my eye tracker to re-tune it." It waits 5 minutes before
+saying that again.
 
 Clicks can improve the estimate after setup (`click_learning`, on by default). The click is two
 numbers used on this computer. It is not saved as a picture and it is not sent anywhere. Set
@@ -46,7 +53,7 @@ set, and whether `gaze.camera` still matches the camera the file was made for.
 
 With Ally running, say "Ally, set up my eyes".
 
-The screen waits until the setup looks right, then holds for about 3 seconds. If something is off, it says what to fix and waits:
+The screen waits until the setup looks right, then holds for about 3 seconds. Your face width and head pose also have to stay steady for about 1 second, so the first dots are not taken while you are still sitting down. The screen says: move only your eyes, keep your head still. If something is off, it says what to fix and waits:
 
 - "I can't see your face. Look at the screen."
 - "I see two faces. Only one person, please."
@@ -54,9 +61,9 @@ The screen waits until the setup looks right, then holds for about 3 seconds. If
 - "turn on a light in front of you"
 - "Center your head and look at the screen."
 
-Then 13 dots: the 3x3 grid, plus 4 between the center and the corners. A ring shrinks onto each dot for 0.8 seconds. The next 1.0 second is kept, skipping blinks. A dot with fewer than 10 good frames is shown once more at the end.
+Then 13 dots: the 3x3 grid, plus 4 between the center and the corners. A ring shrinks onto each dot for 0.8 seconds. The next 1.5 seconds are kept, skipping blinks. A dot with fewer than 10 good frames is shown once more at the end. The same happens, once, when the head turns more than about 3 degrees during a dot, or sits that far from the pose at the first dot. That repeat says: keep your head still, look with your eyes only.
 
-Then 5 new dots, each in a different area of the screen, for 1.5 seconds. Those dots are not used to fit the model. They are the check.
+Then 5 new dots, each in a different area of the screen. Each one settles, then 1.5 seconds are kept. Those dots are not used to fit the model. They are the check.
 
 Esc cancels. A saved calibration is ignored if the screen size or the camera index changes.
 
