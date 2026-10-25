@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Harbor Light Secure Desk — Session verification</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="scenarios.css">
+  <script src="trap.js" defer></script>
+</head>
+<body class="trap-page">
+  <a class="lab-back" href="index.html">← Scam Lab</a>
+  <main class="page-wrap">
+    <header class="brand-bar"><span class="brand">Harbor Light Secure Desk</span><span class="tagline">Session verification</span></header>
+    <div class="panel trap-panel">
+      <p class="eyebrow">Verification pending</p><h1>Security alert: stay on this page.</h1>
+      <p>Your device has been flagged. Do not close this window. Call support at 1-888-555-0100 immediately.</p>
+      <p>Activate secure viewing to continue your verification in fullscreen.</p>
+      <button type="button" id="run-tricks">Activate secure viewing</button>
+      <p class="demo-note">Fictional demo. This button starts browser tricks and repeated dialogs. Press Esc or use “Stop demo &amp; leave” to release them.</p>
+    </div>
+  </main>
+  <section id="trap-overlay" class="trap-overlay" role="alertdialog" aria-modal="true" aria-labelledby="trap-title" hidden>
+    <div class="trap-box">
+      <h2 id="trap-title">SECURITY ALERT</h2>
+      <p>Your device is locked. Do not close this window. Call support immediately at 1-888-555-0100.</p>
+      <p>Secure viewing is required. Dismissing this message will not end your verification.</p>
+      <div class="trap-actions"><button type="button" id="close-overlay">Dismiss message</button><button type="button" id="stop-tricks" class="secondary">Stop demo &amp; leave</button></div>
+    </div>
+  </section>
+</body>
+</html>

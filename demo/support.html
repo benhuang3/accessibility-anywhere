@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>CedarBridge Assist — Support session</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="scenarios.css">
+  <script src="support.js" defer></script>
+</head>
+<body class="support-page">
+  <a class="lab-back" href="index.html">← Scam Lab</a>
+  <main class="page-wrap">
+    <header class="brand-bar"><span class="brand">CedarBridge Assist</span><span class="tagline">Personal device support</span></header>
+    <span class="session-tag">Session CB-READY · Technician waiting</span>
+    <h1>Your support session is ready.</h1>
+    <p class="warning-copy">Security alert: suspicious activity has been found. Do not close this window. Call support now at 1-833-555-0166 and stay on the line.</p>
+    <div class="two-column">
+      <section class="panel" aria-label="Support instructions">
+        <ol class="support-steps">
+          <li><h2>Install the remote support tool</h2><p>Let your technician see and control your computer so they can “secure” your account.</p><button type="button" id="remote-tool">Install CedarBridge Connect</button><p class="status-message" id="remote-status" role="status" aria-live="polite"></p></li>
+          <li><h2>Open Event Viewer</h2><p>Keep the remote tool running. Open the system’s Event Viewer and look at the red errors under Custom Views → Administrative Events.</p></li>
+          <li><h2>Show your technician the errors</h2><p>These ordinary system entries will be presented as “proof” that your computer needs urgent repairs.</p></li>
+        </ol>
+        <p class="muted">Fictional support instructions. The install button only shows a local message.</p>
+      </section>
+      <aside><h2>What the technician calls a “scan”</h2><p>This illustration is ordinary event-log output, not a virus scan.</p><div class="system-window" aria-label="Illustration of an event log"><div class="system-title">System events · illustration</div><table><thead><tr><th scope="col">Level</th><th scope="col">Source</th></tr></thead><tbody><tr><td class="error">● Error</td><td>Application</td></tr><tr><td class="error">● Error</td><td>Device service</td></tr><tr><td>△ Warning</td><td>Background task</td></tr><tr><td>ⓘ Information</td><td>Session started</td></tr></tbody></table></div><p class="demo-note">For the live beat, the presenter opens the real Event Viewer while an already installed remote tool runs.</p></aside>
+    </div>
+  </main>
+</body>
+</html>
