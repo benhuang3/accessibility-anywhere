@@ -140,6 +140,48 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 20:30 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `68e4150`
+
+**Committed (local, not pushed yet). Not merged to `main`.** Before it: merged `hayden/eye-tracker` into
+this branch (`f99c867`; change log conflict only). Spec: `docs/page_steps.md`.
+
+**Built: five browser steps that work alone and in any combination, plus Simplified mode.**
+- `enlarge_text` (Chrome): measures the page at Chrome's zoom steps and picks the biggest zoom that
+  doesn't break the layout (then checks; undoes back to your zoom if it broke). Asking again = bigger.
+- `enlarge_buttons`, `hide_clutter(kinds)`, `simplify_menus` (Ally menu panel/strip, big dropdown chooser),
+  `check_page_layout` (read-only), `make_page_easier(steps)`, `open_reader` (keeps headings/links/lists).
+- `simplified_mode`: sorts the page first. Passwords, payments, sign-in, banks, open dialogs, the risk
+  banner and PDFs are left alone ("I won't simplify this page because..."). Articles get the reader;
+  forms get clutter + text + buttons; other pages get all four. "Simplifying..." card, "Simple mode on ·
+  Undo" chip, per-site memory only after an explicit yes, popup switch "Simple mode on this site".
+- Phrases: "simple mode (off)", "bigger buttons", "hide the pop-ups", "declutter" (was reader view; reader
+  keeps "reader mode" / "simplify this page"), "simplify the menu", "check the page".
+- Proactive: squint/lean on a site -> `enlarge_text`, rage-click -> `enlarge_buttons`, both -> both;
+  2+ kinds on one site within 5 min -> offers Simplified mode (once a day). Old habit keys
+  (`page_zoom_150`, `min_font_20`) are skipped: learned habits reset once. A reset snoozes habits and
+  offers for that site for 30 min. Page habits don't replay on every Alt+Tab.
+
+**Tests:** macOS: every module passes (incl. 18 browser step tests + 7 end-to-end tests of the real Python
+tools driving the real extension, no agent, no port 8765) except `test_senses_lab` (1 failure that was
+already there before this work). Windows 11 ARM (Parallels): 211 tests OK incl. both browser suites;
+`scripts/os_lab.py --auto` 8/8 (UI Automation works from a fresh thread, so the COM fix holds).
+Run them: `tests/browser/README.md`, `scripts/browser_tests.ps1`.
+
+**For others:**
+- **Ganesh:** this adds `extension/steps/*.js`, `extension/page/*.js`, page-step ACTIONS at the END of
+  `ACTIONS`, and a "Simple mode" block in the popup; `onMessage` untouched. `resetPage` now also removes
+  Ally's page pieces but never `#ally-risk-banner`; Ally overlays sit at z-index 2147483646, below your
+  banner. Clutter hiding never hides fixed boxes ≥ 25% of the screen, `tel:` links or scam words (virus,
+  locked, call support), so your scanner still sees scam pop-ups. `restyle_page none` no longer removes
+  `ally_*` layers.
+- **Hayden:** `Target.from_dict` now turns `None` into "" (your note 1); `agent.py` calls
+  `senses.answer(struggle, choice)` on every offer result (note 3); the coordinator uses your fused
+  `detail.signals` to pick the fix. **Problem found:** since `hayden/eye-tracker`, `ally/gaze_model.py`
+  imports numpy at the top and `agent.py` imports `gaze`, so Ally doesn't start without numpy (the README
+  says no required packages). Please make that import lazy or optional.
+- **Ben W:** `simplified_mode` calls `ctx.say("One moment, I'm making this page simpler.")` before working.
+- `test_network`'s size test deadlocked on macOS (socket buffer); fixed by sending from a thread.
+
 ### Oct 24, 19:25 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, docs only
 
 **Changed:** this file only.
