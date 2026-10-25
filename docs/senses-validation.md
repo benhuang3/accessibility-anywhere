@@ -45,6 +45,8 @@ python -m ally.senses.matrix record --person ada --glasses no --light bright --f
 
 `--camera N` picks the camera. `--run NAME` groups files under one folder. The default folder name is the time in UTC.
 
+Optional, and only if the person wants to say so: `--eyes monolid|double|hooded|unsure` and `--age under40|40to64|65plus`. Glasses is already on the command. Eye shape, age, and glasses are the physical things that change how eyes look to the camera, and the benchmark reports errors for each group. The recorder does not ask for race, ethnicity, or skin color. On the metadata line, `eyes` and `age` are those values, or null when they were left off.
+
 Each session writes `state/senses_runs/<run>/<alias>-<glasses>-<light>.jsonl`. The first line is metadata: alias, glasses, light, camera index, screen size, the `[senses]` settings in effect, and the git commit. Later lines are helper numbers, input events, and labels (`start`, `end`, `expect`). Ctrl+C keeps what was already written. A partial label is not scored as a miss.
 
 The script on screen, and in the terminal:

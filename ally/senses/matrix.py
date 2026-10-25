@@ -1,6 +1,6 @@
 """Record a scripted senses session, or run the live face self-check.
 
-    python -m ally.senses.matrix record --person ALIAS --glasses yes|no --light bright|dim [--free MINUTES]
+    python -m ally.senses.matrix record --person ALIAS --glasses yes|no --light bright|dim [--free MINUTES] [--eyes SHAPE] [--age BAND]
     python -m ally.senses.matrix selfcheck
 
 The camera helper and the mouse/keyboard helper run as child processes. This writes numbers only
@@ -48,6 +48,10 @@ _MAX_BLENDSHAPES = 128  # the face landmarker reports 52; a longer map is not bl
 _DROP = object()
 # The recorder asks for this many signals a second. Live senses keep their own fps and never set raw.
 RECORD_SIGNALS_FPS = 15
+# Self-described, all optional. Eye shape, age, and glasses are what change how eyes look
+# to the camera. Race, ethnicity, and skin color are not collected.
+EYES = ("monolid", "double", "hooded", "unsure")
+AGES = ("under40", "40to64", "65plus")
 
 # Ground truth for each acted part. "natural" is scored on its own. Gaps and calibration are not scored.
 # name, title, text, seconds, expect, size, place.
@@ -463,11 +467,21 @@ def _output_path(state_dir: Path, run: str, person: str, glasses: str, light: st
     return path
 
 
+def _session_meta(person: str, glasses: str, light: str, camera: int, screen, senses_cfg: dict,
+                  commit_id: str, started: float, eyes: str | None, age: str | None) -> dict:
+    """The first JSONL line. eyes and age are null when the person skipped them."""
+    return {
+        "rec": "meta", "alias": person, "glasses": glasses, "light": light,
+        "eyes": eyes, "age": age, "camera": int(camera), "screen": list(screen),
+        "senses": senses_cfg, "commit": commit_id, "started": started,
+    }
+
+
 def record(person: str, glasses: str, light: str, free_minutes: float = 0, camera: int | None = None,
            run: str = "", *, root: Path | None = None, model: Path | None = None, spawn=None,
            sleep=None, ally_running=None, now=None, commit: str | None = None,
            senses: dict | None = None, screen: tuple[int, int] | None = None,
-           paths: Paths | None = None) -> int:
+           paths: Paths | None = None, eyes: str | None = None, age: str | None = None) -> int:
     """Walk one person through the protocol and write the JSONL. Returns a process exit code."""
     paths = paths or Paths()
     if not TOKEN.fullmatch(person or ""):
@@ -475,6 +489,12 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
         return 2
     if glasses not in ("yes", "no") or light not in ("bright", "dim"):
         print("Glasses must be yes or no, and light must be bright or dim.")
+        return 2
+    if eyes is not None and eyes not in EYES:
+        print("Eyes must be monolid, double, hooded, or unsure.")
+        return 2
+    if age is not None and age not in AGES:
+        print("Age must be under40, 40to64, or 65plus.")
         return 2
     if free_minutes < 0:
         print("--free minutes cannot be negative.")
@@ -536,11 +556,9 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
         else:
             got = ready.get("screen")
             meta_screen = list(got) if isinstance(got, list) and len(got) == 2 else list(screen or (0, 0))
-        meta = {
-            "rec": "meta", "alias": person, "glasses": glasses, "light": light, "camera": int(camera),
-            "screen": meta_screen, "senses": senses_cfg, "commit": git_commit() if commit is None else commit,
-            "started": now(),
-        }
+        commit_id = git_commit() if commit is None else commit
+        meta = _session_meta(person, glasses, light, int(camera), meta_screen, senses_cfg,
+                             commit_id, now(), eyes, age)
         log.open_with(meta)
         if code != 0:
             return code
@@ -560,11 +578,9 @@ def record(person: str, glasses: str, light: str, free_minutes: float = 0, camer
     except KeyboardInterrupt:
         interrupted = True
         if not log._open:
-            log.open_with({
-                "rec": "meta", "alias": person, "glasses": glasses, "light": light, "camera": int(camera),
-                "screen": list(screen or (0, 0)), "senses": senses_cfg,
-                "commit": git_commit() if commit is None else commit, "started": now(),
-            })
+            log.open_with(_session_meta(
+                person, glasses, light, int(camera), list(screen or (0, 0)), senses_cfg,
+                git_commit() if commit is None else commit, now(), eyes, age))
         if current is not None:
             current["end"] = now()
             current["partial"] = True
@@ -800,6 +816,10 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument("--person", required=True)
     rec.add_argument("--glasses", required=True, choices=("yes", "no"))
     rec.add_argument("--light", required=True, choices=("bright", "dim"))
+    rec.add_argument("--eyes", choices=EYES, default=None,
+                     help="optional eye shape: monolid, double, hooded, or unsure")
+    rec.add_argument("--age", choices=AGES, default=None,
+                     help="optional age band: under40, 40to64, or 65plus")
     rec.add_argument("--free", type=float, default=0, metavar="MINUTES",
                      help="extra minutes of normal computer use, labeled as no struggle")
     rec.add_argument("--camera", type=int, default=None)
@@ -808,7 +828,8 @@ def main(argv: list[str] | None = None) -> int:
     chk.add_argument("--camera", type=int, default=None)
     args = parser.parse_args(argv)
     if args.cmd == "record":
-        return record(args.person, args.glasses, args.light, args.free, args.camera, args.run)
+        return record(args.person, args.glasses, args.light, args.free, args.camera, args.run,
+                      eyes=args.eyes, age=args.age)
     if args.cmd == "selfcheck":
         return selfcheck(camera=args.camera)
     return 2
