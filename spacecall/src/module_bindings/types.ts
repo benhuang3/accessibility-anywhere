@@ -10,6 +10,15 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const ActionResultEvent = __t.object("ActionResultEvent", {
+  roomId: __t.string(),
+  recipient: __t.identity(),
+  seq: __t.u32(),
+  ok: __t.bool(),
+  serverAt: __t.timestamp(),
+});
+export type ActionResultEvent = __Infer<typeof ActionResultEvent>;
+
 export const AudioFrameEvent = __t.object("AudioFrameEvent", {
   roomId: __t.string(),
   sender: __t.identity(),
@@ -26,6 +35,25 @@ export type AudioFrameEvent = __Infer<typeof AudioFrameEvent>;
 export const CallIncident = __t.object("CallIncident", {});
 export type CallIncident = __Infer<typeof CallIncident>;
 
+export const FaceProfile = __t.object("FaceProfile", {
+  owner: __t.identity(),
+  profileJson: __t.string(),
+  version: __t.u32(),
+  updatedAt: __t.timestamp(),
+});
+export type FaceProfile = __Infer<typeof FaceProfile>;
+
+export const HelperActionEvent = __t.object("HelperActionEvent", {
+  roomId: __t.string(),
+  recipient: __t.identity(),
+  seq: __t.u32(),
+  action: __t.string(),
+  x: __t.f32(),
+  y: __t.f32(),
+  serverAt: __t.timestamp(),
+});
+export type HelperActionEvent = __Infer<typeof HelperActionEvent>;
+
 export const Incident = __t.object("Incident", {
   roomId: __t.string(),
   kind: __t.string(),
@@ -36,6 +64,9 @@ export const Incident = __t.object("Incident", {
   screenSharing: __t.bool(),
 });
 export type Incident = __Infer<typeof Incident>;
+
+export const OwnFaceProfile = __t.object("OwnFaceProfile", {});
+export type OwnFaceProfile = __Infer<typeof OwnFaceProfile>;
 
 export const Presence = __t.object("Presence", {
   slot: __t.string(),
@@ -71,23 +102,3 @@ export const VideoFrameEvent = __t.object("VideoFrameEvent", {
 });
 export type VideoFrameEvent = __Infer<typeof VideoFrameEvent>;
 
-
-export const HelperActionEvent = __t.object("HelperActionEvent", {
-  roomId: __t.string(),
-  recipient: __t.identity(),
-  seq: __t.u32(),
-  action: __t.string(),
-  x: __t.f32(),
-  y: __t.f32(),
-  serverAt: __t.timestamp(),
-});
-export type HelperActionEvent = __Infer<typeof HelperActionEvent>;
-
-export const ActionResultEvent = __t.object("ActionResultEvent", {
-  roomId: __t.string(),
-  recipient: __t.identity(),
-  seq: __t.u32(),
-  ok: __t.bool(),
-  serverAt: __t.timestamp(),
-});
-export type ActionResultEvent = __Infer<typeof ActionResultEvent>;
