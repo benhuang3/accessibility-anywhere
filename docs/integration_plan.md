@@ -140,6 +140,14 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 00:40 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `346c1dd`
+
+**Pushed to `benh/os-layer` (not yet on `main`).** Open issues 1 and 2 from the 23:45 entry are fixed:
+"bigger buttons" now also makes labels a little bigger (1.2x, at least +2px) and enlarges links styled as
+buttons. Issues 3 (small list/menu toggles) and 4 (buttons already 44px tall) are on hold by decision.
+Tests: new browser checks for label growth, link-buttons and order independence; both browser suites pass on
+Windows. **Ganesh:** your risk banner's own buttons aren't touched (Ally hosts are skipped).
+
 ### Oct 25, 00:10 PT — Ben H (via Claude Code) — `main` (merged from `benh/os-layer`, commit `53b75d1`)
 
 **Merged `benh/os-layer` into `main` and pushed.** `main` now has every branch: page steps + Simplified mode +
