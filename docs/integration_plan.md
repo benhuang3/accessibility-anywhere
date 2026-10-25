@@ -140,6 +140,20 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 00:10 PT — Ben H (via Claude Code) — `main` (merged from `benh/os-layer`, commit `53b75d1`)
+
+**Merged `benh/os-layer` into `main` and pushed.** `main` now has every branch: page steps + Simplified mode +
+AI check, the Windows OS layer, Hayden's senses and eye tracker, Ben W's/Ben H's voice (BusVoice wired),
+Ganesh's risk protection, overlay and demo site. All 43 test modules pass on Windows 11.
+**Decisions (Ben H):**
+- **One Yes/No surface:** Ganesh's overlay bubble (plus voice) answers offers; Hayden's gaze cards are off by
+  default (`[gaze] answer_offers = false`). Hayden: turn them back on per machine if wanted.
+- **Offer timeout 20 s** (`[proactive] offer_timeout_seconds`), up from 8 s.
+- **One confidence gate:** struggles from the senses (source `senses`, `senses.*`, `simulated`) skip the
+  Coordinator's `min_confidence`; `run.py simulate` / API struggles are still checked.
+**Everyone:** pull `main`; branch from it for new work. Reload the extension (new files). Recalibrate the eye
+tracker once. Open issues are in the 23:45 entry below.
+
 ### Oct 24, 23:58 PT — Ben H (via Claude Code) — branch `benh/os-layer`, integration (merge `17f57df`)
 
 **Integrated every branch into `benh/os-layer` and pushed. `main` not updated yet.**
