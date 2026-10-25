@@ -311,22 +311,35 @@ class _RawHeld:
         self.tune, self.kind = tune, kind
         self.points = collections.deque()
         self.fired_at = -1e9
+        self.latched = False
+        self.gated = ""
+        self.delta = 0.0
+        self.hold_seconds = tune.squint_hold
 
     def _held_signal(self, t, score, gate_ok=True, detail=None):
+        self.delta = score
+        self.gated = "" if gate_ok else "gated"
         while self.points and t - self.points[0][0] > self.tune.squint_window:
             self.points.popleft()
         if not gate_ok:
             self.points.clear()
+            self.latched = False
             return None
+        if self.latched:
+            if score < self.weak_threshold / 2:
+                self.latched = False
+            else:
+                return None
         self.points.append((t, score))
         threshold = self.weak_threshold
         duration = held(self.points, threshold)
-        strong = held(self.points, self.strong_threshold) >= self.tune.squint_hold
-        if not strong and duration < self.tune.squint_hold:
+        strong = held(self.points, self.strong_threshold) >= self.hold_seconds
+        if not strong and duration < self.hold_seconds:
             return None
         if t - self.fired_at < self.tune.rearm_seconds:
             return None
         self.fired_at = t
+        self.latched = True
         tier = "strong" if strong else "weak"
         return Signal(self.kind, .75 if strong else .45, t, tier, "vision", detail=detail or {})
 
@@ -447,6 +460,7 @@ class PersonalSquintDetector(_RawHeld):
         super().__init__(tune, "squint")
         self.weak_threshold = 2.0
         self.strong_threshold = 3.0
+        self.hold_seconds = PERSONAL_HOLD_SECONDS
         self.model = {}
 
     @classmethod

@@ -27,7 +27,8 @@ from ..registry import ToolError
 from ..state import atomic_write
 from .detectors import (Baseline, HesitationDetector, LeanDetector, RageClickDetector, RetypeDetector, Signal,
                         SquintDetector, Tuning, gate, RelativeSquintDetector, GeometricSquintDetector,
-                        PersonalSquintDetector, HybridSquintDetector, DistanceLeanDetector, HybridLeanDetector)
+                        PersonalSquintDetector, HybridSquintDetector, DistanceLeanDetector,
+                        HybridLeanDetector)
 from .fusion import Fuser, Struggle
 from .contract import validate_struggle
 from .features import extract as extract_face_features
@@ -203,11 +204,11 @@ class Senses:
                     continue
                 self._begin_calibration_phase(phase_name, duration)
                 if gaze is not None:
-                    gaze.send(f"card place {place}")
                     gaze.send("card " + json.dumps({
                         "title": "Face setup",
                         "text": prompt,
                         "size": "normal",
+                        "place": "center" if place == "middle" else place,
                         "seconds": duration,
                     }))
                 if not self._calib_done.wait(duration + 10):
@@ -271,7 +272,8 @@ class Senses:
         self._reset_vision()
         message = "Face baseline set."
         if not model.get("enabled"):
-            message = "Squint sensing is off for you because the deliberate squint was not distinct. Lean and other signals still work."
+            message = ("Squint sensing is off for you because the deliberate squint was not distinct. "
+                       "Lean and other signals still work.")
         self._calib_result = {"ok": True, "baseline": self.baseline.to_dict(),
                               "squint_enabled": bool(model.get("enabled")), "why": model.get("why", "")}
         self.agent.events.add("senses", message)

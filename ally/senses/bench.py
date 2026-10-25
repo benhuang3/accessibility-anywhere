@@ -417,9 +417,9 @@ def _group_metrics(person_metrics, rows):
             group = row.get(group_key, "unknown")
             groups.setdefault(group, []).append(metrics)
         for group, people in groups.items():
-            fp_rates = [m["fp"] / (m["none_seconds"] / 60) if m["none_seconds"] else 0
-                        for m in people]
-            miss_rates = [m["miss"] / m["positive"] if m["positive"] else 0 for m in people]
+            fp_rates = [m["fp"] / (m["none_seconds"] / 60) for m in people
+                        if m["none_seconds"] > 0]
+            miss_rates = [m["miss"] / m["positive"] for m in people if m["positive"] > 0]
             off_rates = [m["off"] for m in people if m["off_seen"]]
             fp_ci = _bootstrap(fp_rates)
             miss_ci = _bootstrap(miss_rates)
@@ -482,7 +482,7 @@ def report(paths, out, london=None):
     md = ["# Offline senses benchmark", "",
           "Results use people as the sampling unit. Frames without labels are not counted as negatives.", "",
           "## Per person", "",
-          "| Person | Signal | Method | FP/min | Squint hits | Strong hits | Latency | "
+          "| Person | Signal | Method | FP/min | Hits | Strong hits | Latency | "
           "Natural detections | Squint off |",
           "|---|---|---|---:|---:|---:|---:|---:|---|"]
     for (person, kind, method), metric in sorted(per_person.items()):
@@ -551,7 +551,7 @@ def _format_interval(value, interval):
         return "n/a"
     if interval[0] is None:
         return f"{value:.3f} (n/a)"
-    return f"{value:.3f} ({interval[0]:.3f}–{interval[1]:.3f})"
+    return f"{value:.3f} ({interval[0]:.3f} to {interval[1]:.3f})"
 
 
 def tune(paths):
