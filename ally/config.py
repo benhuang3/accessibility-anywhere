@@ -69,8 +69,9 @@ SPEC = {
                   "fusion_window_seconds": NUM, "min_confidence": NUM, "auto_apply_after": int,
                   "voice_confirm": bool, "overlay": bool, "senses_behavior": bool, "senses_vision": bool,
                   "camera_index": int, "context_poll_seconds": NUM},
-    "risk": {"screen_review": bool, "daily_calls": int, "hourly_calls": int, "trusted_contact": str,
-             "contact_topic": str, "contact_call_url": str, "auto_alert": bool},
+    "risk": {"screen_review": bool, "screen_share": bool, "daily_calls": int, "hourly_calls": int, "trusted_contact": str,
+             "contact_topic": str, "contact_call_url": str, "auto_alert": bool,
+             "call_service": ("meet", "spacecall"), "spacecall_url": str},
     "profile": {"page_zoom": NUM, "min_font_px": int, "page_styles": list, "screen_magnify": NUM,
                 "color_filter": ("none", "invert", "grayscale", "high_contrast")},
     "page_enlarge": {"text_goal_px": NUM, "target_goal_px": NUM, "max_zoom": NUM, "max_text_scale": NUM,
@@ -196,6 +197,13 @@ def validate(cfg: dict, known_tools: set[str] | None = None) -> tuple[list[str],
                 rng = RANGES.get((section, key))
                 if rng and not (rng[0] <= v <= rng[1]):
                     errors.append(f"{section}.{key} = {v} is outside {rng[0]}..{rng[1]}")
+
+    risk = cfg.get("risk")
+    if isinstance(risk, dict) and isinstance(risk.get("spacecall_url"), str) and risk["spacecall_url"]:
+        from .risk.contact import valid_spacecall_url
+
+        if not valid_spacecall_url(risk["spacecall_url"]):
+            errors.append("risk.spacecall_url must use HTTPS without user info, a port, whitespace or #")
 
     gaze = cfg.get("gaze")
     if isinstance(gaze, dict):
