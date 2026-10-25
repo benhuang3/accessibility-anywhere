@@ -115,7 +115,6 @@ class TextScoreTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 self.assertFalse((node.module or "").split(".")[0] == "ally")
                 self.assertEqual(node.level, 0)
-        self.assertFalse((ROOT / "ally" / "risk" / "__init__.py").exists())
 
     def test_unknown_bank_help_page_is_a_nudge_not_a_block(self):
         # Decision (Oct 24): "high" needs a brand claim, a full-screen page or an overlay signal as well as

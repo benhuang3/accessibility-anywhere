@@ -7,6 +7,9 @@
   "background": { "service_worker": "background.js" },
   "permissions": ["scripting", "fontSettings", "storage", "alarms", "tts"],
   "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    { "matches": ["http://*/*", "https://*/*"], "js": ["risk.js"], "run_at": "document_idle", "all_frames": false }
+  ],
   "action": {
     "default_title": "Ally",
     "default_popup": "popup.html",

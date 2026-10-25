@@ -321,6 +321,17 @@ const ACTIONS = {
   async getTab() {
     return await tabInfo();
   },
+  // Agent found a risk on a page: show the in-page banner on the tab(s) with that URL.
+  async showRiskBanner({ url, text }) {
+    const tabs = await chrome.tabs.query({});
+    let shown = 0;
+    for (const t of tabs) {
+      if (t.url === url) {
+        await chrome.tabs.sendMessage(t.id, { kind: "allyRiskBanner", text }).then(() => { shown += 1; }, () => {});
+      }
+    }
+    return { shown };
+  },
   async setZoom({ factor }) {
     const t = await activeTab();
     await chrome.tabs.setZoom(t.id, clamp(Number(factor) || 1, 0.25, 5));
@@ -562,7 +573,13 @@ async function handlePopup(msg) {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.kind === "pageRisk") {
+    // From extension/risk.js: pass the page to the agent over the existing bridge.
+    const { url, title, text, fields, overlay_text, fullscreen, has_tel_link } = msg;
+    sendResponse({ ok: send({ type: "event", name: "page", url, title, text, fields, overlay_text, fullscreen, has_tel_link }) });
+    return false;
+  }
   if (!msg || msg.kind !== "popup") return false;
   handlePopup(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: friendlyError(e) }));
   return true; // answer asynchronously

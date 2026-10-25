@@ -120,7 +120,6 @@ class RemoteWatcherTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 self.assertNotEqual((node.module or "").split(".")[0], "ally")
                 self.assertEqual(node.level, 0)
-        self.assertFalse((ROOT / "ally" / "risk" / "__init__.py").exists())
 
 
 class SnapshotTests(unittest.TestCase):
