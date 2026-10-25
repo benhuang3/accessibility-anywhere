@@ -13,8 +13,10 @@ Settings "gaze" (default true) turns gaze points on; "signals" sends face number
 "signals_fps". Frames never leave this process and are never written to disk.
 
 Commands on stdin: "calibrate" or "calibrate 1" / "calibrate 3" (head positions); "check" runs only the 5 check dots; "stop" cancels a calibration in
-progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not saved
-and is not sent anywhere); "choose {json}" shows 2 to 4 large cards and "choose off" closes them;
+progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not
+sent anywhere). What that learning has learned is saved next to the calibration, as numbers only,
+at most once a minute and on exit, and restored on start. A new calibration starts fresh.
+"choose {json}" shows 2 to 4 large cards and "choose off" closes them;
 "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
 "card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds) and
 "card off" closes it. The card also closes itself after seconds. "dot on" / "dot off" show or hide
@@ -624,14 +626,227 @@ def retune_check(model: dict, samples: list) -> dict:
             "validation": tuned.get("validation"), "grade": result_grade(after)}
 
 
+LEARNING_EVERY = 60.0  # what click learning has learned is written at most this often
+# A list this long whose items are also long is a picture, not feature samples.
+_BITMAP = 64
+_IMAGE_KEYS = frozenset({
+    "image", "images", "jpeg", "jpg", "png", "pixels", "pixel", "video", "picture", "bitmap",
+})
+
+
+def learning_path(calib_path) -> Path:
+    """File next to the calibration. The calibration file itself stays the fitted model."""
+    path = Path(calib_path)
+    return path.with_name(path.stem + ".learning.json")
+
+
+def _model_stamp(model) -> str | None:
+    """Identity of a calibration. A new fit has a new stamp, so old learning does not apply."""
+    if not isinstance(model, dict):
+        return None
+    created = model.get("created")
+    if isinstance(created, bool) or not isinstance(created, (int, float)):
+        return None
+    return format(float(created), ".6f")
+
+
+def _plain_learning(value, depth: int = 0) -> bool:
+    """True for feature numbers, screen points, times, and short labels. Not a picture."""
+    if depth > 8:
+        return False
+    if value is None or isinstance(value, bool):
+        return True
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, str):
+        return len(value) <= 80 and "\x00" not in value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return False
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str) or len(key) > 40 or key.lower() in _IMAGE_KEYS:
+                return False
+            if not _plain_learning(item, depth + 1):
+                return False
+        return True
+    if isinstance(value, (list, tuple)):
+        if len(value) > 5000:
+            return False
+        if len(value) > _BITMAP:
+            for item in value:
+                if isinstance(item, (list, tuple)) and len(item) > _BITMAP:
+                    return False
+        return all(_plain_learning(item, depth + 1) for item in value)
+    return False
+
+
+def _jsonable(value):
+    """Plain JSON values. Numeric array types become lists, without importing them."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, tuple):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    as_list = getattr(value, "tolist", None)
+    if callable(as_list):
+        try:
+            return _jsonable(as_list())
+        except Exception:
+            pass
+    as_item = getattr(value, "item", None)
+    if callable(as_item):
+        try:
+            return _jsonable(as_item())
+        except Exception:
+            pass
+    return value
+
+
+def learning_document(corrector, model) -> dict | None:
+    """The corrector's own state, or None when it cannot be stored safely."""
+    if corrector is None or not hasattr(corrector, "to_dict"):
+        return None
+    stamp = _model_stamp(model)
+    if stamp is None:
+        return None
+    try:
+        data = _jsonable(corrector.to_dict())
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not _plain_learning(data):
+        return None
+    return {"created": stamp, "corrector": data}
+
+
+def save_learning(path, corrector, model) -> bool:
+    """Write what learning has learned. False when there is nothing safe to store."""
+    doc = learning_document(corrector, model)
+    if doc is None:
+        return False
+    try:
+        text = json.dumps(doc, allow_nan=False)
+    except (TypeError, ValueError):
+        return False
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / (path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def load_learning(path, model) -> dict | None:
+    """Saved corrector state for this calibration, or None when it is missing or stale."""
+    stamp = _model_stamp(model)
+    if stamp is None:
+        return None
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or not _plain_learning(doc):
+        return None
+    if doc.get("created") != stamp:
+        return None
+    data = doc.get("corrector")
+    return data if isinstance(data, dict) else None
+
+
+def restore_corrector(model, data, click_learning: bool, factory=None):
+    """A corrector for this model. Restores `data` when Corrector.from_dict exists.
+
+    Without that API, or when `data` is empty, this is a fresh corrector. Click learning
+    off returns None.
+    """
+    if factory is None:
+        from ally import gaze_model
+        factory = gaze_model.Corrector
+    if not click_learning or not model:
+        return None
+    if data and hasattr(factory, "from_dict"):
+        try:
+            restored = factory.from_dict(model, data)
+        except Exception:
+            restored = None
+        if restored is not None:
+            return restored
+    try:
+        return factory(model)
+    except Exception:
+        return None
+
+
+class LearningStore:
+    """Writes the corrector at most once a minute, and whenever save() is called on exit."""
+
+    def __init__(self, path, interval: float = LEARNING_EVERY):
+        self.path = Path(path)
+        self.interval = float(interval)
+        self.dirty = False
+        self.saved_at: float | None = None
+
+    def mark(self) -> None:
+        self.dirty = True
+
+    def due(self, now: float) -> bool:
+        if not self.dirty:
+            return False
+        if self.saved_at is None:
+            return True
+        return float(now) - self.saved_at >= self.interval
+
+    def save(self, corrector, model, now: float | None = None) -> bool:
+        """Write now. Used on exit, so it does not wait for the minute."""
+        if not self.dirty or corrector is None or not hasattr(corrector, "to_dict"):
+            return False
+        try:
+            ok = save_learning(self.path, corrector, model)
+        except OSError:
+            ok = False
+        self.saved_at = time.monotonic() if now is None else float(now)
+        if ok:
+            self.dirty = False
+        return ok
+
+    def maybe_save(self, corrector, model, now: float) -> bool:
+        if not self.due(now):
+            return False
+        return self.save(corrector, model, now)
+
+    def clear(self) -> None:
+        """A new calibration starts with nothing learned."""
+        self.dirty = False
+        self.saved_at = None
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+
+
 def adopt_model(path, screen, camera: int, click_learning: bool):
-    """The model a check just saved, and a fresh click corrector. (None, None) if it cannot be used."""
+    """The model a check just saved, and its click corrector. (None, None) if it cannot be used.
+
+    Learning saved beside the calibration is restored when it belongs to this model.
+    """
     from ally import gaze_model
 
     loaded = kept_model(gaze_model.load(path, screen), camera)
     if not loaded:
         return None, None
-    corrector = gaze_model.Corrector(loaded) if click_learning else None
+    data = load_learning(learning_path(path), loaded)
+    corrector = restore_corrector(loaded, data, click_learning, gaze_model.Corrector)
     return loaded, corrector
 
 
@@ -1939,7 +2154,8 @@ def main(argv: list[str]) -> int:
     calib_path = Path(cfg.get("calibration", "gaze_calibration.json"))
     camera = int(cfg.get("camera", 0))
     model = kept_model(gaze_model.load(calib_path, size), camera)
-    corrector = gaze_model.Corrector(model) if model is not None and click_learning else None
+    learning = LearningStore(learning_path(calib_path))
+    corrector = restore_corrector(model, load_learning(learning.path, model), click_learning)
     recent = RecentFeatures()
     try:
         landmarker = vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(
@@ -2022,7 +2238,8 @@ def main(argv: list[str]) -> int:
                     corrector = new_corrector
                     recent = RecentFeatures()
             elif kind == "click" and corrector is not None and calib is None:
-                apply_click(corrector, recent.frames, payload[0], payload[1], payload[2])
+                if apply_click(corrector, recent.frames, payload[0], payload[1], payload[2]):
+                    learning.mark()
             elif kind == "hud_off":
                 if hud:
                     try:
@@ -2075,6 +2292,7 @@ def main(argv: list[str]) -> int:
                     cv2.destroyAllWindows()
                 except Exception:
                     pass
+                learning.save(corrector, model)
                 return 1
             time.sleep(0.05)
             continue
@@ -2178,7 +2396,8 @@ def main(argv: list[str]) -> int:
                     try:
                         gaze_model.save(checked, calib_path)
                         model = checked
-                        corrector = gaze_model.Corrector(model) if click_learning else None
+                        learning.clear()  # a new calibration starts with nothing learned
+                        corrector = restore_corrector(model, None, click_learning)
                         recent = RecentFeatures()
                     except OSError as e:
                         result = {"calibrated": False, "why": f"couldn't save the calibration ({e})"}
@@ -2225,6 +2444,7 @@ def main(argv: list[str]) -> int:
             emit({"t": round(now, 3), "x": px, "y": py, "r": radius})
             dot.set_view(*view)
             dot.update(px, py, radius, face=True, calibrated=True)
+        learning.maybe_save(corrector, model, time.monotonic())
         spare = period - (time.monotonic() - tick)
         if spare > 0:
             time.sleep(spare)
@@ -2239,6 +2459,7 @@ def main(argv: list[str]) -> int:
         cv2.destroyAllWindows()
     except Exception:
         pass
+    learning.save(corrector, model)
     return 0
 
 

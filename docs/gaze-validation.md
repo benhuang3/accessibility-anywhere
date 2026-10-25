@@ -46,7 +46,10 @@ once: "Your position changed. Say check my eye tracker to re-tune it." It waits 
 saying that again.
 
 Clicks can improve the estimate after setup (`click_learning`, on by default). The click is two
-numbers used on this computer. It is not saved as a picture and it is not sent anywhere. Set
+numbers used on this computer. It is not saved as a picture and it is not sent anywhere. What the
+tracker has learned from those clicks is written next to the calibration (feature numbers, screen
+points, and times only), at most once a minute and when the camera helper exits, and read back
+when Ally starts. A new setup throws that away and starts fresh. Set
 `click_learning = false` to turn that off.
 
 `features` defaults to `v5`. v5 is the v4 head model (where the head is, plus an eye angle learned at

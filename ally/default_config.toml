@@ -108,7 +108,7 @@ pan_speed = 0.35           # magnifier following your eyes: how eagerly it keeps
 show_dot = false           # a soft circle where the tracker thinks you are looking. Say "show where I am looking".
 calibration_poses = 3      # 3 = 9 dots, then sit back for 5, then lean in for 5. 1 = the 9 dots only.
 features = "v5"            # v5 is v4 plus MobileGaze yaw and pitch (mobileone_s0). If that model is missing, setup uses v4.
-click_learning = true      # clicks quietly improve the estimate. Set false to turn that off. Clicks stay on this computer.
+click_learning = true      # clicks quietly improve the estimate, and that learning is kept across restarts. A new setup starts fresh. Set false to turn that off. Clicks stay on this computer.
 max_radius_px = 250        # above this uncertainty, Ally uses the mouse pointer and says so
 answer_offers = true       # when Ally offers help, Yes and No cards appear; look at one to answer (if the tracker is reliable)
 

@@ -142,7 +142,9 @@ too unsure, Ally uses the mouse pointer and says so.
   one download, `python scripts/get_gaze_models.py`, which puts `mobileone_s0_gaze.onnx` in `state/models`.
   The face model downloads once (3.7 MB). Video is processed on your computer and never saved; only the
   calibration (a few numbers) is kept, in `state/`. Mouse clicks can quietly improve the estimate
-  (`gaze.click_learning`, on by default). The click stays on this computer.
+  (`gaze.click_learning`, on by default). What they teach is saved next to the calibration and
+  restored when Ally starts. A new setup starts fresh. The file is feature numbers, screen points,
+  and times, not pictures. The click stays on this computer.
 - `[gaze] features` defaults to `v5`: the v4 head model plus MobileGaze yaw and pitch from `mobileone_s0`.
   If that file or onnxruntime is missing, setup and tracking use v4 and say so. A new setup uses whichever
   you set. `max_radius_px` (default 250) is when Ally stops trusting the eyes and uses the pointer.
