@@ -138,7 +138,8 @@ def simplified_mode(ctx, on: bool = True,
     finally:
         session.call("stepOn", step="simple", opts={"working": False})
     applied = report["applied"] + (["reader"] if plan["reader"] else [])
-    session.call("stepOn", step="simple", opts={"steps": applied, "remember": bool(remember)})
+    session.call("stepOn", step="simple", opts={"steps": applied, "remember": bool(remember),
+                                                "scale": report.get("scale") or 0})
     text = summary(report, "Simple mode is on.")
     if report.get("offer_reader") and not plan["reader"]:
         text += " This page doesn't get much bigger without breaking. Want just the article in big text?"
