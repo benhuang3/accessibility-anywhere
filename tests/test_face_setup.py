@@ -205,12 +205,12 @@ class SensesIntakeTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertTrue(result["squint_enabled"], result)
         self.assertEqual(senses.baseline.feature_stats["lean_ratio"]["width"], 1.28)
-        self.assertAlmostEqual(senses.tune.lean_ratio, 1.28)
+        self.assertAlmostEqual(senses.tune.lean_ratio, 1.112)  # 40% of the setup's lean-in
         saved = senses.baseline_path.read_text(encoding="utf-8")
         self.assertIn("lean_ratio", saved)
         self.assertIn("personal_model", saved)
         again = Senses(agent)
-        self.assertAlmostEqual(again.tune.lean_ratio, 1.28)
+        self.assertAlmostEqual(again.tune.lean_ratio, 1.112)
         self.assertEqual(again.squint.__class__.__name__, "PersonalSquintDetector")
 
     def test_a_weak_squint_turns_sensing_off_and_says_so(self):
@@ -223,14 +223,14 @@ class SensesIntakeTests(unittest.TestCase):
         result = senses.finish_setup_intake({"width": 1.2, "distance": 0.9})
         self.assertTrue(result["ok"], result)
         self.assertFalse(result["squint_enabled"])
-        self.assertFalse(senses.baseline.squint_reliable)
+        self.assertTrue(senses.baseline.squint_reliable)  # only the personal model is off
         words = face_setup_words(
             {"calibrated": True, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5},
              "grade": "good", "lines": ["Good.", "About 120 pixels off, and 5 of 5 areas right."]},
             result)
         self.assertIn("120", words)
-        self.assertIn("Squint sensing is off for you", words)
-        self.assertIn("Lean and the other signals still work", words)
+        self.assertIn("Squint sensing uses the standard check for you", words)
+        self.assertIn("Lean and the other signals work as usual", words)
 
 
 class PhraseTests(unittest.TestCase):

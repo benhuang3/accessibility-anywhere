@@ -61,7 +61,7 @@ def face_setup_words(result: dict, senses: dict | None) -> str:
         return f"{eyes} Face sensing needs another try: {why}"
     if senses.get("squint_enabled"):
         return f"{eyes} Squint sensing is on for you."
-    return f"{eyes} Squint sensing is off for you. Lean and the other signals still work."
+    return f"{eyes} Squint sensing uses the standard check for you. Lean and the other signals work as usual."
 
 
 def _run_face_setup(ctx) -> str:

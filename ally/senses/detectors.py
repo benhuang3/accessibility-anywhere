@@ -112,7 +112,10 @@ class Baseline:
         light = statistics.median(s.get("light", -1.0) for s in good)
         scores = [(s["squint_l"] + s["squint_r"]) / 2 for s in good]
         mad = statistics.median(abs(v - squint) for v in scores)
-        asymmetry = statistics.median(abs(s["squint_l"] - s["squint_r"]) for s in good)
+        asym = statistics.median(s["squint_l"] - s["squint_r"] for s in good)
+        # How steady the left/right difference is, around this person's own difference. Many faces
+        # read one eye narrower at rest (asym is subtracted later); that alone must not turn squint off.
+        asymmetry = statistics.median(abs(s["squint_l"] - s["squint_r"] - asym) for s in good)
         reliable = mad <= 0.06 and asymmetry <= 0.10 and light >= 40
         why = "" if reliable else "squint readings were unsteady, uneven, or too dim; squint sensing is off"
         asym = statistics.median(s["squint_l"] - s["squint_r"] for s in good)

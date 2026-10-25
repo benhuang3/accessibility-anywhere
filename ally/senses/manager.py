@@ -35,6 +35,12 @@ from .features import extract as extract_face_features
 
 log = logging.getLogger("ally.senses")
 
+# The face setup's lean-in sets the lean trigger: this share of how far the person leaned in,
+# between LEAN_MIN and LEAN_MAX (1.45 measured -> about 1.18).
+LEAN_SHARE = 0.4
+LEAN_MIN = 1.10
+LEAN_MAX = 1.20
+
 AUTO_BASELINE_SECONDS = 20  # with no saved baseline, learn one quietly from the first 20 s of face
 SIMULATED = {"squint", "lean", "rage_click", "hesitation", "retype"}
 
@@ -301,7 +307,9 @@ class Senses:
             return
         width = saved.get("width")
         if isinstance(width, (int, float)) and not isinstance(width, bool) and float(width) > 1.02:
-            ratio = max(1.05, min(1.6, float(width)))
+            # The setup's lean-in is a deliberate, big lean. A reader leans in less, so the trigger is
+            # a share of it, kept near the default (1.15).
+            ratio = max(LEAN_MIN, min(LEAN_MAX, 1.0 + LEAN_SHARE * (float(width) - 1.0)))
             self.tune.lean_ratio = round(ratio, 3)
             weak = min(self.tune.lean_ratio - 0.01, max(1.03, ratio - 0.04))
             self.tune.lean_weak = round(weak, 3)
@@ -309,7 +317,8 @@ class Senses:
             self.tune.lean_release = round(release, 3)
         dist = saved.get("distance")
         if isinstance(dist, (int, float)) and not isinstance(dist, bool) and 0 < float(dist) < 1:
-            self.tune.lean_distance_ratio = round(max(1.05, min(1.6, 1.0 / float(dist))), 3)
+            near = 1.0 / float(dist)
+            self.tune.lean_distance_ratio = round(max(LEAN_MIN, min(LEAN_MAX, 1.0 + LEAN_SHARE * (near - 1.0))), 3)
 
     def begin_setup_intake(self) -> None:
         """Start collecting labelled face-setup samples. Frames are numbers, not pictures."""
@@ -347,9 +356,8 @@ class Senses:
     def finish_setup_intake(self, lean: dict | None = None) -> dict:
         """Fit the personal squint model from the labelled samples and store the lean ratio."""
         result = self._finish_personal_calibration()
-        if result.get("ok") and not result.get("squint_enabled") and self.baseline is not None:
-            self.baseline.squint_reliable = False
-            self.baseline.squint_why = str(result.get("why") or "the deliberate squint was not distinct")
+        # A personal model that is not sure turns only itself off: the regular squint detector keeps
+        # its own reliability check (Baseline.from_samples).
         if lean and result.get("ok"):
             self._remember_lean(lean)
         elif result.get("ok"):
