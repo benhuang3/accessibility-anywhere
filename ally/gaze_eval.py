@@ -80,7 +80,7 @@ def evaluate(path):
         for index, (target, group) in enumerate(drift_items):
             pred = np.median([gm.predict(model, f) for f, _, _ in group], axis=0)
             drift_points.append((target, pred))
-            other = [item for i, (_, other_group) in enumerate(drift_items) if i != index
+            other = [(f, t) for i, (_, other_group) in enumerate(drift_items) if i != index
                      for f, t, _ in other_group]
             tuned = gm.retune(model, other) if len({tuple(t) for _, t in other}) >= 3 else model
             retuned = np.median([gm.predict(tuned, f) for f, _, _ in group], axis=0)
