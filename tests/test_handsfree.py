@@ -296,6 +296,9 @@ class HandsFreeConfigTests(unittest.TestCase):
         for s in ("I want what I'm looking at magnified", "Zoom in on what I am looking at", "magnify here"):
             self.assertEqual(rules.match(s).actions, [("magnify_where_i_look", {})], s)
         self.assertEqual(rules.match("calibrate my eyes").actions, [("calibrate_eye_tracker", {})])
+        self.assertEqual(rules.match("set up my eyes").actions, [("calibrate_eye_tracker", {})])
+        self.assertEqual(rules.match("what am I looking at").actions, [("where_am_i_looking", {})])
+        self.assertEqual(rules.match("check my eye tracker").actions, [("check_eye_tracker", {})])
         self.assertEqual(rules.match("turn off the camera").actions, [("eye_tracking", {"on": False})])
         self.assertEqual(rules.match("follow my eyes").actions, [("magnifier_follow", {"target": "eyes"})])
         self.assertEqual(rules.match("make it bigger").actions, [("zoom_in", {})])
