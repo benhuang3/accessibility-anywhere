@@ -141,6 +141,7 @@ class GazeManager:
         self.screen = (1920, 1080)
         self._unsure_since: float | None = None
         self._retune_offer_at = 0.0
+        self._view_sent = None  # last "view LEVEL LEFT TOP" sent to the camera helper
 
     @property
     def cfg(self) -> dict:
@@ -183,6 +184,7 @@ class GazeManager:
                      self.senses_wanted(), self._senses_fps(), str(self.cfg.get("features", "v1")),
                      bool(self.cfg.get("click_learning", True)))
         if signature == self._signature and (self.running or self._gave_up):
+            self._push_dot()
             return
         self._signature, self._gave_up, self._crashes = signature, False, []
         threading.Thread(target=self._restart, name="gaze-start", daemon=True).start()
@@ -203,7 +205,9 @@ class GazeManager:
                     "camera": int(self.cfg.get("camera", 0)), "fps": int(self.cfg.get("fps", 20)),
                     "gaze": self.wanted(), "signals": self.senses_wanted(), "signals_fps": self._senses_fps(),
                     "features": self.cfg.get("features", "v1"),
-                    "click_learning": bool(self.cfg.get("click_learning", True))}
+                    "click_learning": bool(self.cfg.get("click_learning", True)),
+                    "show_dot": bool(self.cfg.get("show_dot", False))}
+            self._view_sent = None
             try:
                 self.proc = subprocess.Popen(
                     [python_for_children(), "-m", "ally.gaze_helper", json.dumps(args)], cwd=str(CODE_ROOT),
@@ -212,6 +216,7 @@ class GazeManager:
             except OSError as e:
                 self.error = f"couldn't start the eye tracker: {e}"
                 return
+            self._dot_sent = bool(self.cfg.get("show_dot", False))
             proc = self.proc
         threading.Thread(target=self._read_stdout, args=(proc,), daemon=True, name="gaze-out").start()
         threading.Thread(target=self._read_stderr, args=(proc,), daemon=True, name="gaze-err").start()
@@ -231,6 +236,7 @@ class GazeManager:
                         pass
                 self.points.append(row)
                 self.face_at = time.time()
+                self._sync_view()
             elif "f" in msg:
                 self.face_at = time.time()
                 senses = getattr(self.agent, "senses", None)
@@ -318,6 +324,60 @@ class GazeManager:
     def _senses_fps(self) -> int:
         senses = getattr(self.agent, "senses", None)
         return int(senses.cfg.get("fps", 10)) if senses is not None else 10
+
+    def _current_view(self):
+        """(level, left, top) of the magnified view. The magnifier thread's own numbers when it
+        is running, so a poll does not queue a command and stall the pan. Otherwise platform.view()."""
+        platform = getattr(self.agent, "platform", None)
+        if platform is None:
+            return None
+        mag = getattr(platform, "_mag", None)
+        if mag is not None and getattr(mag, "ok", False):
+            off = getattr(mag, "offset", (0, 0)) or (0, 0)
+            try:
+                return float(getattr(mag, "level", 1.0) or 1.0), int(off[0]), int(off[1])
+            except (TypeError, ValueError, IndexError):
+                return None
+        view = getattr(platform, "view", None)
+        if view is None:
+            return None
+        try:
+            level, left, top = view()
+            return float(level), int(left), int(top)
+        except Exception:
+            return None
+
+    def _sync_view(self) -> None:
+        """Tell the camera helper when the magnified view moves, so the gaze dot stays on the glass."""
+        if not bool(self.cfg.get("show_dot", False)) and not getattr(self, "_dot_sent", False):
+            return
+        got = self._current_view()
+        if got is None:
+            return
+        level, left, top = got
+        key = (round(level, 3), left, top)
+        if key == self._view_sent:
+            return
+        if self.send(f"view {level:g} {left} {top}"):
+            self._view_sent = key
+
+    def _push_dot(self) -> None:
+        """Send show/hide when [gaze] show_dot changed and the helper is already running."""
+        if not self.running:
+            return
+        on = bool(self.cfg.get("show_dot", False))
+        if on == getattr(self, "_dot_sent", None):
+            return
+        self.set_show_dot(on)
+
+    def set_show_dot(self, on: bool) -> None:
+        """Show or hide the gaze circle in the camera helper. The helper draws it, so there is no lag."""
+        on = bool(on)
+        self._dot_sent = on
+        self.send("dot on" if on else "dot off")
+        if on:
+            self._view_sent = None
+            self._sync_view()
 
     def on_click(self, t: float, x: int, y: int) -> bool:
         """Tell the camera helper about a mouse click so it can learn. The click stays on this computer."""

@@ -115,6 +115,9 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
    **"follow my eyes slower"** or **"follow my eyes faster"** to change that speed (saved as
    `[gaze] pan_speed`, default 0.35). Move the mouse and the view follows the mouse again. Say
    "follow my eyes" / "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
+   Say **"show where I am looking"** for a soft circle on the spot the tracker is using (click-through;
+   it does not get in the way), and **"hide the eye dot"** to remove it. `[gaze] show_dot` remembers
+   that, and it is off until you ask.
 4. A yes or no can be answered by looking. Ally shows the choices as large cards (two choices: the
    left half and the right half). Look at one for a moment.
 5. Say **"Ally, check my eye tracker"** for the 5 check dots only (about 12 seconds), without a full setup.

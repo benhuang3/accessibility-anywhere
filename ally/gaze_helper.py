@@ -17,7 +17,9 @@ progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the
 and is not sent anywhere); "choose {json}" shows 2 to 4 large cards and "choose off" closes them;
 "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
 "card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds) and
-"card off" closes it. The card also closes itself after seconds. Unknown or broken lines are ignored.
+"card off" closes it. The card also closes itself after seconds. "dot on" / "dot off" show or hide
+the click-through gaze circle. "view LEVEL LEFT TOP" is the magnified view, so the circle can sit
+on the glass point while zoomed in. Unknown or broken lines are ignored.
 It exits when the agent closes its stdin (like the hotkey helper),
 so a camera or MediaPipe crash can never take Ally down. The agent never opens the camera.
 ally.gaze_record opens it only while Ally is stopped, and it writes numbers, not pictures.
@@ -1283,6 +1285,18 @@ def classify_command(cmd: str) -> tuple[str, object]:
             return "check", None
         if cmd == "reload":
             return "reload", None
+        if cmd == "dot on":
+            return "dot", True
+        if cmd == "dot off":
+            return "dot", False
+        if cmd.startswith("view "):
+            parts = cmd.split()
+            if len(parts) != 4:
+                return "ignore", None
+            try:
+                return "view", (float(parts[1]), int(float(parts[2])), int(float(parts[3])))
+            except ValueError:
+                return "ignore", None
         if cmd == "choose off":
             return "choose_off", None
         if cmd.startswith("choose"):
@@ -1697,6 +1711,10 @@ def main(argv: list[str]) -> int:
     calib: Calibration | None = None
     card: CardWindow | None = None
     choices: ChoiceBoard | None = None
+    from ally.gaze_dot import GazeDot
+    dot = GazeDot()
+    dot.set_enabled(bool(cfg.get("show_dot", False)))
+    view = [1.0, 0, 0]
     t_start = time.monotonic()
     last_face_msg, misses = 0.0, 0
     while True:
@@ -1724,6 +1742,11 @@ def main(argv: list[str]) -> int:
                 else:
                     calib = Calibration(size)
                     calib.begin_check()
+            elif kind == "dot":
+                dot.set_enabled(bool(payload))
+            elif kind == "view" and payload is not None:
+                view[0], view[1], view[2] = payload
+                dot.set_view(*view)
             elif kind == "reload":
                 loaded, new_corrector = adopt_model(calib_path, size, camera, click_learning)
                 if loaded is not None:
@@ -1778,6 +1801,7 @@ def main(argv: list[str]) -> int:
                 if choices is not None:
                     choices.close()
                 indicator.close()
+                dot.close()
                 cap.release()
                 try:
                     cv2.destroyAllWindows()
@@ -1827,6 +1851,7 @@ def main(argv: list[str]) -> int:
                 choices = None
 
         if calib is not None:
+            dot.update(face=False, calibrated=False)  # the dots on screen are the thing to look at
             state = calib.step(feat, time.monotonic(), face, now)
             if state == "fit":
                 try:
@@ -1898,10 +1923,13 @@ def main(argv: list[str]) -> int:
             continue
 
         if feat is None or feat[1] < MIN_OPEN:
+            if feat is None:
+                dot.update(face=False, calibrated=model is not None)
             if now - last_face_msg > 1.0 and feat is None:
                 emit({"t": now, "face": False})
                 last_face_msg = now
         elif model is None or not gaze_on:
+            dot.update(face=True, calibrated=False)
             if now - last_face_msg > 0.5:
                 emit({"t": now, "face": True})
                 last_face_msg = now
@@ -1917,9 +1945,12 @@ def main(argv: list[str]) -> int:
             x = min(max(x, -0.05 * size[0]), 1.05 * size[0])
             y = min(max(y, -0.05 * size[1]), 1.05 * size[1])
             sx, sy = smooth(np.array([x, y]), now)
-            emit({"t": round(now, 3), "x": int(min(max(sx, 0), size[0] - 1)),
-                  "y": int(min(max(sy, 0), size[1] - 1)),
-                  "r": round(float(gaze_model.radius_px(radius_model, vector)), 1)})
+            px = int(min(max(sx, 0), size[0] - 1))
+            py = int(min(max(sy, 0), size[1] - 1))
+            radius = round(float(gaze_model.radius_px(radius_model, vector)), 1)
+            emit({"t": round(now, 3), "x": px, "y": py, "r": radius})
+            dot.set_view(*view)
+            dot.update(px, py, radius, face=True, calibrated=True)
         spare = period - (time.monotonic() - tick)
         if spare > 0:
             time.sleep(spare)
@@ -1928,6 +1959,7 @@ def main(argv: list[str]) -> int:
     if choices is not None:
         choices.close()
     indicator.close()
+    dot.close()
     cap.release()
     try:
         cv2.destroyAllWindows()

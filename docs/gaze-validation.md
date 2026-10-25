@@ -35,6 +35,9 @@ With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This tak
 - "Check my eye tracker": only the 5 check dots, about 10 seconds. Ally re-tunes the saved model
   from those dots (a shift, not a new fit) and says how far off it was before and after.
 - "Set up my eyes" runs the full setup again.
+- "Show where I am looking" draws a soft circle at the gaze point. "Hide the eye dot" removes it.
+  The circle is click-through and does not take focus. `[gaze] show_dot` (default false) remembers it.
+  While zoomed in, the circle is placed in the magnified view so it stays on the glass where you look.
 
 If the tracker isn't set up, Ally can't see your face, your eyes don't stay on one spot, or the
 uncertainty is above `max_radius_px` (default 250), Ally uses the mouse pointer and says why.

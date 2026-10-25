@@ -60,6 +60,10 @@ RULES = [
     Rule("check_eyes", [("check_eye_tracker", {})],
          full=r"check (?:my |the )?(?:eye ?track(?:er|ing)|eyes)",
          loose=r"\bcheck (?:my |the )?(?:eye ?track(?:er|ing)|eyes)\b"),
+    Rule("show_dot", [("show_gaze", {"on": True})],
+         full=r"show where i am looking"),
+    Rule("hide_dot", [("show_gaze", {"on": False})],
+         full=r"hide the eye dot"),
     Rule("follow_slower", [("eye_follow_speed", {"speed": "slower"})],
          full=r"follow my eyes slower"),
     Rule("follow_faster", [("eye_follow_speed", {"speed": "faster"})],
@@ -171,5 +175,5 @@ def match(text: str, strict: bool = True) -> Match | None:
 HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the selection, stop, high contrast, "
              "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, "
              "what am I looking at, check my eye tracker, set up my eyes, "
-             "follow my eyes slower, follow my eyes faster, "
+             "follow my eyes slower, follow my eyes faster, show where I am looking, hide the eye dot, "
              "invert colors, scroll down, go back, or ask anything when you're online.")

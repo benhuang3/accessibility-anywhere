@@ -339,9 +339,25 @@ def eye_follow_speed(ctx, speed: Annotated[str, "slower, faster, slow, medium, f
     current = float(ctx.agent.config.data.get("gaze", {}).get("pan_speed", 0.35))
     value = resolve_pan_speed(speed, current)
     _save_gaze_key(ctx, "pan_speed", _fmt_speed(value))
-    ctx.agent.platform.set_gaze_source(ctx.agent.gaze.latest, value)
+    platform = getattr(ctx.agent, "platform", None)
+    if platform is not None:
+        platform.set_gaze_source(ctx.agent.gaze.latest, value)
     if isinstance(speed, str) and speed.strip().lower() == "slower":
         return f"The view will follow your eyes more slowly ({_fmt_speed(value)})."
     if isinstance(speed, str) and speed.strip().lower() == "faster":
         return f"The view will follow your eyes a little faster ({_fmt_speed(value)})."
     return f"The view will follow your eyes at speed {_fmt_speed(value)}."
+
+
+@tool
+def show_gaze(ctx, on: bool):
+    """Show or hide the dot that marks where the eye tracker thinks the user is looking.
+
+    Use for "show where I am looking" and "hide the eye dot". The dot is click-through.
+    It is drawn by the camera helper on each gaze point, and the choice is saved.
+    """
+    _save_gaze_key(ctx, "show_dot", "true" if on else "false")
+    ctx.agent.gaze.set_show_dot(bool(on))
+    if on:
+        return "The eye dot is on. It sits where the tracker thinks you are looking."
+    return "The eye dot is hidden."
