@@ -386,6 +386,30 @@ Logs: `logs/ally.log` and `logs/supervisor.log`.
   The microphone and camera stay on while Ally runs; turn them off with `voice.always_listen = false` and
   `gaze.enabled = false`, or say "Ally, turn off eye tracking".
 
+## Scam protection
+
+Ally looks for fake virus warnings, lookalike bank addresses, card forms on unfamiliar sites,
+remote-control tools running while a bank page is open, and pages that try to trap you.
+Local rules check first. If you turn on screen review, AI can look at a flagged screen for a second opinion.
+A calm panel explains the concern and asks before closing a page or remote tool. Tap Yes or No,
+or press Enter / Esc; the current risk prompts cannot hear spoken answers.
+When a remote tool and bank page are open together, Yes waits for a 30-second countdown (`ally/risk/wire.py`).
+
+High warnings can also offer Call or Tell a trusted person. With a standing Google Meet link configured,
+Call opens the room in Chrome and sends the helper a phone push with a Join button; Tell sends only the push.
+Set `trusted_contact`, `contact_topic` and optionally `contact_call_url` under `[risk]` to enable it.
+
+The saved screen eval scored **9/14 with rules alone, 13/14 with AI**, including hidden-text instructions
+trying to make the AI call a scam safe ([screen eval](handoff/results/guardian_eval.txt)).
+A rules-only sweep warned on **3 of 500 sites (0.6%), none high** ([site sweep](handoff/results/fp_sweep.txt)).
+Our own rules set has **25 scam texts, 25 benign texts, 10 lookalike addresses and 10 real addresses**
+([test_risk_eval](tests/test_risk_eval.py)). These small, self-written checks do not cover every scam.
+
+Screen review is **off by default** and has daily, hourly and per-page spend caps. A review sends a screenshot
+of the whole primary screen to Anthropic. Contact alerts never include the page address or page content.
+ntfy topics are only as private as their name, and the call link is a standing room.
+See [the risk handoff](docs/RISK_HANDOFF.md) for setup, evidence and limitations.
+
 ## Hackathon notes
 
 Check the CalHacks rules on when code may be written and how to credit AI tools, and say in your
