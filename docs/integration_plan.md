@@ -110,6 +110,64 @@ delegated at freeze.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 19:05 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `4d3f365`
+
+**Pushed:** eye tracker v2, built on current `main` (includes `hayden/bus-fixes`). **Not merged.**
+409 tests pass. Spec: `docs/eye-tracker-plan.md`. Guide: `docs/gaze-validation.md`.
+
+**What it does:**
+- **Calibration** ("Ally, set up my eyes", about 50 s):
+  - A readiness check, then 13 dots and 5 check dots it wasn't trained on.
+  - It re-shows a dot if the head moved.
+  - The result in plain words: good, okay or poor.
+- **Default model:** stays on `v1` features. On 3 real sessions it was 81 and 114 px for Hayden and
+  355 px for a second person, whose head turned toward the dots.
+- **"Ally, check my eye tracker"** (about 12 s):
+  - A 5-dot re-tune.
+  - It fixes drift after the user moves: 776 px down to 127 px, and 1184 px down to 125 px.
+  - If gaze stays unsure for about 10 s, Ally offers it ("your position changed"), at most every
+    5 minutes.
+- **Click correction:** when about 4 of the user's last 6 clicks agree on the same shift, the
+  estimate moves by it. Clicks stay on the laptop.
+- **`GazeManager.target()`:** `{x, y, radius_px, confidence, region, source: eyes|mouse, why}`.
+  It falls back to the mouse pointer, with a reason, whenever the eyes aren't reliable
+  (`[gaze] max_radius_px`, 250).
+- **Tools:**
+  - `where_am_i_looking`: the region, plus the role and name of the thing there on Windows.
+  - `check_eye_tracker`.
+  - `choose_by_looking(options)`: 2–4 options; a 0.8 s look picks one.
+  - `magnify_where_i_look`: now uses `target()`.
+- **Brain instructions:** "this", "that", "here" and "what am I looking at" map to
+  `where_am_i_looking`.
+- **Privacy:** the model, recorder and evaluator are now under the camera privacy test.
+
+**Connected to the bus:**
+- **Offers can be answered by looking:** on each `offer`, if the tracker is reliable, Yes and No
+  cards appear and a 0.8 s look calls `offer.resolve("yes"|"no", by="eyes")`.
+  - **First answer wins:** voice, the API or a click still win if they come first; the cards close
+    once it's answered another way.
+  - **Off switch:** `[gaze] answer_offers = false`.
+- **Gaze point in struggles:** face-signal `Struggle.target.x/y` is the gaze point when the eyes are
+  reliable, otherwise the pointer.
+- **Bug fixed:** a look in `choose_by_looking` almost never counted with real frame timing. It now
+  does, and there's a test with irregular 15–20 fps timestamps.
+
+**For others:**
+- **Ben H:** `ally/agent.py` gets one line, `self.gaze.attach_bus(self.bus)`, right after the
+  Coordinator. New `[gaze]` keys: `features`, `click_learning`, `max_radius_px`, `answer_offers`.
+  `ally/doctor.py` had a conflict on merge, resolved by keeping both the voice checks and the gaze
+  calibration lines.
+- **Ganesh:**
+  - **Two Yes/No displays:** when the overlay lands, its Yes/No bubble and the gaze cards would both
+    appear. Either turn off `answer_offers`, or put the overlay's Yes and No in the left and right
+    halves of the screen and have the gaze answer them. Your call; tell Hayden.
+  - **Naming things in Chrome:** Windows' accessibility lookup only sees "pane" inside Chrome,
+    Electron and the Windows 11 taskbar. Saying "the Send button" needs the extension: a content
+    script answering `document.elementFromPoint` for a screen point.
+- **Ben W:** spoken yes/no and gaze can both answer the same offer; first answer wins.
+- **Needs a person and camera:** a new calibration with the second person (head-still prompts),
+  real `choose_by_looking` dwell, and `where_am_i_looking` on a native Win32 app.
+
 ### Oct 24, 18:35 PT — Hayden (via Claude Code) — branch `hayden/bus-fixes`, commit `58b388b`
 
 **Changed:** `ally/senses/manager.py` `Senses.target()`, plus a test in `tests/test_senses.py`.
