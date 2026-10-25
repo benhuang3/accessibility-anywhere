@@ -140,6 +140,13 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 05:45 PT — Ben H (via Claude Code) — branch `benh/os-layer`
+
+**Pushed to `benh/os-layer`.** Simplified mode no longer refuses a page just because a consent pop-up is open: it
+hides clutter first and looks again (BBC News now simplifies; this was the CNN open issue, not re-tested).
+`demo/capture_site.py` captures a site four ways for slides; BBC News, Wikipedia and allrecipes captures are on Ben
+H's machine only (`.gitignore`), with READMEs. allrecipes blocks automated browsers: capture it by hand.
+
 ### Oct 25, 05:30 PT — Ben H (via Claude Code) — branch `benh/os-layer`
 
 **Pushed to `benh/os-layer`.** "Switch back to facebook" / "go back to my email" now switch tabs by name without the
