@@ -73,6 +73,47 @@ camera = 0                 # which camera (0 = the built-in one)
 fps = 20                   # frames per second; lower saves battery
 pan_speed = 1.0            # magnifier following your eyes: how fast looking near an edge moves the view
 
+# Noticing when you're struggling, so Ally can offer help before you ask.
+# Camera: squinting and leaning toward the screen (shares the camera with the eye tracker; frames are
+# looked at in memory and thrown away, only a few numbers like a squint score are kept).
+# Mouse and keyboard: repeated clicks, deleting and retyping, and long pauses. Which keys you press is never recorded.
+# Say "Ally, set up face sensing" once (15 seconds of reading normally). Without it Ally learns your
+# resting face from the first 20 seconds it sees you.
+[senses]
+vision = true              # squint and lean from the webcam (needs: pip install mediapipe opencv-python)
+input = true               # mouse and keyboard signals (needs: pip install pynput)
+fps = 10                   # face readings per second; 5-10 is plenty
+calibrate_seconds = 15
+solo = []                  # signals that count on their own when strong, e.g. ["rage_click"]; others need a second signal
+window_seconds = 4         # signals this close together are combined
+cooldown_seconds = 30      # quiet time after reporting a struggle
+decline_seconds = 90       # quiet time for declined signal kinds
+post_url = ""              # optional struggle event endpoint; empty disables posting
+min_confidence = 0.5
+# Starting thresholds (unverified on real faces; tune them live with: python run.py tool senses_hud)
+squint_delta = 0.20        # squint score above your baseline for a strong squint...
+squint_weak = 0.12         # ...or a weak one
+squint_hold = 1.5          # seconds squinting, within the last squint_window seconds
+squint_window = 3.0
+wink_max = 0.12            # one eye this much narrower than your usual left/right difference is a wink
+smile_gate = 0.35          # smiling narrows the eyes: ignore squints above this smile score
+blink_gate = 0.5           # eyes this closed: a blink if it lasts under blink_max seconds...
+blink_max = 0.4            # ...longer is a held squint, which also closes the eyes partway
+blink_closed = 0.8         # eyes shut: never judged
+pose_gate = 20            # degrees: ignore the face when it's turned further than this
+light_floor = 40           # face brightness 0-255: too dark to judge squinting below this
+lean_ratio = 1.15          # face this much wider than usual (about 13% closer) for a strong lean
+lean_weak = 1.10
+lean_release = 1.08
+lean_hold = 2.0
+rage_clicks = 4            # clicks...
+rage_seconds = 2.0         # ...within this many seconds...
+rage_px = 30               # ...and this many pixels of each other
+retype_backspaces = 5      # backspaces within retype_seconds, then typing again
+retype_seconds = 3.0
+hesitation_seconds = 4.0   # pointer resting with no click; adapts to you after 20 clicks
+rearm_seconds = 20         # a signal waits this long before firing again
+
 # Global keyboard shortcuts (work in every app).
 # <mod> = Ctrl+Alt on Windows/Linux, Ctrl+Cmd on Mac. Other keys: <ctrl> <alt> <shift> <cmd> <f1>...
 # The value can be a tool name, a command name from [commands], or any sentence to send to Ally.
@@ -80,6 +121,7 @@ pan_speed = 1.0            # magnifier following your eyes: how fast looking nea
 [hotkeys]
 "<mod>+v" = "listen"               # talk to Ally (press again to stop early)
 "<mod>+r" = "read_selection"       # read the selected text, in any app
+"<mod>+c" = "calibrate_face_sensing" # recalibrate face sensing
 "<mod>+s" = "stop_speaking"
 "<mod>+=" = "zoom_in"              # page if Chrome is in front, else whole screen
 "<mod>+-" = "zoom_out"

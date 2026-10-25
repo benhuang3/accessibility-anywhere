@@ -22,6 +22,7 @@ from .macros import Macros
 from .paths import Paths, load_env_file
 from .platforms import get_platform
 from .registry import Outcome, PluginLoader, Registry, ToolError
+from .senses.manager import Senses
 from .server import PortBusy, start_server
 from .speech import Speaker
 from .state import State, load_or_create_token
@@ -66,6 +67,7 @@ class Agent:
         self.brain = Brain(self)
         self.voice = VoiceInput(self)
         self.listener = WakeListener(self)
+        self.senses = Senses(self)  # before gaze: the camera helper sends it face numbers
         self.gaze = GazeManager(self)
         self.platform.set_gaze_source(self.gaze.latest, float(self.config.data["gaze"].get("pan_speed", 1.0)))
         self.last_utterance: tuple[float, float] | None = None  # (start, end) of the last spoken request
@@ -95,6 +97,7 @@ class Agent:
             if self.start_hotkeys:
                 self.hotkeys.apply()
             self.listener.apply()
+            self.senses.apply()
             self.gaze.apply()
             self.platform.set_gaze_source(self.gaze.latest, float(cfg["gaze"].get("pan_speed", 1.0)))
             self.push_profile()
@@ -243,6 +246,7 @@ class Agent:
             "voice": {"available": ok_voice, "detail": voice_why, "listening": self.voice.listening},
             "listener": self.listener.info(),
             "gaze": self.gaze.info(),
+            "senses": self.senses.info(),
             "screen": {"magnify": self.platform.magnify_level, "color": self.platform.color},
             "config": {"error": self.config.error, "errors": self.config.errors, "warnings": self.config.warnings},
             "plugins": {"folder": str(self.plugins.folder), "errors": self.plugins.errors},
@@ -269,6 +273,7 @@ class Agent:
         if self.start_hotkeys:
             self.hotkeys.apply(force=True)
         self.listener.apply()
+        self.senses.apply()
         self.gaze.apply()
         threading.Thread(target=self._housekeeping, name="housekeeping", daemon=True).start()
         threading.Thread(target=self._startup_extras, name="startup", daemon=True).start()
@@ -296,6 +301,8 @@ class Agent:
                     self.hotkeys.ensure_running()
                 if n % 3 == 0:
                     self.gaze.ensure_running()
+                    self.senses.input.ensure_running()
+                self.senses.tick()
             except Exception:
                 log.exception("housekeeping error")
             self._stop.wait(1.0)
@@ -327,7 +334,7 @@ class Agent:
     def close(self) -> None:
         self._stop.set()
         log.info("Ally stopping (code %s)", self.exit_code)
-        for step in (self.hotkeys.stop, self.listener.stop, self.gaze.stop, self.speaker.stop,
+        for step in (self.hotkeys.stop, self.listener.stop, self.senses.stop, self.gaze.stop, self.speaker.stop,
                      self.platform.shutdown, self.bridge.close_all):
             try:
                 step()

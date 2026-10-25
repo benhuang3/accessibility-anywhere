@@ -21,9 +21,40 @@ def temp_home(config: str = "") -> Path:
     # Tests never open the real microphone or camera unless they ask for it.
     base += '' if "[voice]" in config else '[voice]\nalways_listen = false\n'
     base += '' if "[gaze]" in config else '[gaze]\nenabled = false\n'
+    base += '' if "[senses]" in config else '[senses]\nvision = false\ninput = false\n'
     (home / "config.toml").write_text(base + config, encoding="utf-8")
     (home / "plugins").mkdir()
     return home
+
+
+def fake_screen(platform) -> list:
+    """Stop a real platform from zooming or recoloring the screen. Returns the calls it gets."""
+    calls = []
+
+    def magnify(level):
+        calls.append(("magnify", level))
+        platform.magnify_level = float(level)
+        return f"Screen magnifier {level}x."
+
+    def magnify_at(level, x, y, follow="eyes"):
+        calls.append(("magnify_at", level, x, y))
+        platform.magnify_level = float(level)
+        return f"Screen magnifier {level}x."
+
+    def color_filter(kind):
+        calls.append(("color_filter", kind))
+        platform.color = kind
+        return f"Color filter {kind}."
+
+    def text_scale(factor):
+        calls.append(("text_scale", factor))
+        return f"Text size {factor}x."
+
+    platform.magnify, platform.magnify_at = magnify, magnify_at
+    platform.color_filter, platform.text_scale = color_filter, text_scale
+    platform.set_follow = lambda mode: calls.append(("set_follow", mode)) or f"Following the {mode}."
+    platform.other_magnifier_open = lambda: False
+    return calls
 
 
 class FakeClaude:

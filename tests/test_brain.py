@@ -1,6 +1,6 @@
 import unittest
 
-from helpers import EnvPatch, FakeClaude, final, temp_home, tool_use
+from helpers import EnvPatch, FakeClaude, fake_screen, final, temp_home, tool_use
 
 from ally import rules
 from ally.agent import Agent
@@ -11,6 +11,7 @@ from ally.registry import build_tool
 def make_agent(config: str = "", key: str | None = "test-key", base_url: str | None = None) -> Agent:
     with EnvPatch(ANTHROPIC_API_KEY=key, ANTHROPIC_BASE_URL=base_url):
         a = Agent(temp_home(config), start_hotkeys=False)
+    a.screen_calls = fake_screen(a.platform)  # never zoom the real screen
     calls = []
 
     def fake_zoom(zoom: float):
@@ -186,6 +187,7 @@ class OfflineAgentTests(unittest.TestCase):
             a.run_action("set_page_zoom")  # missing arg: reported, not raised
             a.run_action("zoom to 300%")  # phrase -> brain -> rules
         self.assertEqual(a.zoom_calls[0], 2.0)
+        self.assertIn(("magnify", 3.0), a.screen_calls)  # "zoom to 300%" hit the fake screen
         kinds = [e["kind"] for e in a.events.since(0)]
         self.assertIn("error", kinds)
 
