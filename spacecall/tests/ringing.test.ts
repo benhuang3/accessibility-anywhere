@@ -29,20 +29,15 @@ test('no-answer note starts at sixty seconds from opening, only while ringing', 
 type Bounds = { left: number; top: number; width: number; height: number };
 const source = readFileSync(new URL('../../extension/background.js', import.meta.url), 'utf8');
 const geometry = runInNewContext(source.slice(source.indexOf('function callWindowGeometry('),
-  source.indexOf('const ACTIONS = {')) + '\ncallWindowGeometry;') as (area: Bounds, expanded?: boolean) => Bounds;
+  source.indexOf('const ACTIONS = {')) + '\ncallWindowGeometry;') as (area: Bounds, unused?: boolean) => Bounds;
 const plain = (value: Bounds): Bounds => JSON.parse(JSON.stringify(value));
 
-test('ringing geometry is 360 by 340 with a sixteen-pixel work-area inset', () => {
-  assert.deepEqual(plain(geometry({ left: 0, top: 0, width: 1600, height: 900 })),
-    { left: 1224, top: 544, width: 360, height: 340 });
-  assert.deepEqual(plain(geometry({ left: -1920, top: -100, width: 1920, height: 1040 })),
-    { left: -376, top: 584, width: 360, height: 340 });
-});
-
-test('expanded geometry keeps the existing docked width limits and fills the work area height', () => {
-  for (const [width, expected] of [[800, 380], [1600, 480], [2560, 520]]) {
-    assert.deepEqual(plain(geometry({ left: -1920, top: 40, width, height: 1040 }, true)),
-      { left: -1920 + width - expected, top: 40, width: expected, height: 1040 });
+test('mini-player geometry stays 380 by 360 with a sixteen-pixel work-area inset', () => {
+  for (const connected of [false, true]) {
+    assert.deepEqual(plain(geometry({ left: 0, top: 0, width: 1600, height: 900 }, connected)),
+      { left: 1204, top: 524, width: 380, height: 360 });
+    assert.deepEqual(plain(geometry({ left: -1920, top: -100, width: 1920, height: 1040 }, connected)),
+      { left: -396, top: 564, width: 380, height: 360 });
   }
 });
 

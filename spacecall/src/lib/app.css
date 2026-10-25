@@ -59,42 +59,24 @@ footer a:hover { text-decoration: underline; }
   .join { background: #204e3b; color: #fff; }
 }
 
-.sharing-banner { width: min(1160px, 100%); padding: 18px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; z-index: 2; }
-.sharing-banner p { font-weight: 650; font-size: 26px; }
-.sharing-banner button { min-height: 80px; }
-@media (max-width: 650px) {
-  .sharing-banner { padding: 16px; }
-  .sharing-banner button { width: 100%; }
-}
-
-/* Reserve a middle row for the PC video, clear of the banner and controls. */
-.elder-call { height: 100dvh; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto auto; justify-items: center; }
-.elder-call .topbar { grid-row: 1; }
-.elder-call .sharing-banner { grid-row: 2; }
-.elder-call .remote-video, .elder-call .waiting { grid-row: 3; position: relative; inset: auto; width: 100%; height: 100%; min-height: 0; padding: 0; }
-.elder-call .notices { grid-row: 4; }
-.elder-call .controls { grid-row: 5; margin: 0; }
-.elder-call footer { grid-row: 6; }
-.elder-call .self-view { top: 280px; }
-
-/* Narrow, tall call window docked beside the browser: one column, face on top. */
-@media (max-width: 900px) {
-  .elder-call { grid-template-rows: auto minmax(200px, 1fr) auto auto auto auto; padding: 12px 14px; gap: 10px; }
-  .elder-call .topbar { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 10px 16px; width: 100%; }
-  .elder-call .brand { font-size: 20px; }
-  .elder-call .status { font-size: 20px; }
-  .elder-call .remote-video, .elder-call .waiting { grid-row: 2; border-radius: 22px; }
-  .elder-call .sharing-banner { grid-row: 3; width: 100%; padding: 12px 16px; flex-direction: column; align-items: stretch; gap: 10px; text-align: center; }
-  .elder-call .sharing-banner p { font-size: 24px; }
-  .elder-call .sharing-banner button { width: 100%; min-height: 64px; }
-  .elder-call .self-view { position: relative; inset: auto; grid-row: 4; width: 150px; justify-self: center; }
-  .elder-call .notices { grid-row: 5; width: 100%; margin: 0; }
-  .elder-call .controls { grid-row: 6; width: 100%; flex-wrap: wrap; }
-  .elder-call .controls button { flex: 1 1 100%; }
-  .elder-call .controls button:not(.end-call) { min-height: 64px; }
-  .elder-call .controls .end-call { min-width: 0; min-height: 88px; font-size: 26px; }
-  .elder-call footer { display: none; }
-}
+/* The connected elder call stays a face-first mini-player at every viewport size. */
+.elder-call { height: 100dvh; min-height: 0; padding: 0; gap: 0; display: block; color: #fff; }
+.elder-call .remote-video { object-fit: cover; }
+.mini-name { position: absolute; top: 10px; left: 10px; max-width: calc(100% - 20px); padding: 4px 10px; border-radius: 9px; background: #10201fcc; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-waiting { position: absolute; inset: 0 0 92px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+.mini-waiting .ringing-portrait { width: 64px; height: 64px; font-size: 34px; animation: none; }
+.mini-waiting h1 { font-size: 22px; max-width: calc(100% - 24px); text-align: center; overflow-wrap: anywhere; }
+.mini-bottom { position: absolute; inset: auto 0 0; display: flex; flex-direction: column; align-items: center; padding: 8px 12px 4px; gap: 2px; background: linear-gradient(transparent, #071a16ee 30%); }
+.mini-controls { display: flex; justify-content: center; gap: 10px; width: 100%; }
+.mini-controls button { min-height: 48px; min-width: 0; padding: 8px 14px; border-radius: 14px; font-size: 17px; display: flex; align-items: center; justify-content: center; gap: 7px; }
+.mini-controls svg { width: 22px; height: 22px; flex: none; }
+.mini-mute { background: #203d36; color: #fff; border-color: #ffffff55; }
+.mini-controls .end-call { background: #a32330; }
+.mini-sharing { display: flex; align-items: center; justify-content: center; width: 100%; gap: 6px; font-size: 14px; }
+.mini-sharing p { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mini-sharing button { min-height: 40px; flex: none; padding: 4px; border-radius: 6px; font-size: 14px; color: #fff; background: transparent; text-decoration: underline; }
+.mini-note { color: #ffe5ad; font-size: 14px; line-height: 1.2; max-height: 52px; overflow: auto; text-align: center; }
+.mini-bottom .audio-unlock { min-height: 48px; padding: 6px 14px; border-radius: 12px; font-size: 16px; }
 
 /* The elder's small ringing window keeps End call visible even during permission prompts. */
 .elder-ringing { min-height: 100svh; padding: 8px; gap: 0; justify-content: center; }

@@ -337,9 +337,9 @@ function scrollPage(direction, amount) {
 
 // ---------------------------------------------------------------- actions (called by the agent)
 
-// Ring in the corner first; save docking and restoration details across worker restarts.
-// Returns null when the work area cannot be determined, keeping the maximized fallback.
-async function openDockedCall(url) {
+// Keep the call in the corner without changing the normal browser window.
+// If the work area is unavailable, Chrome places the same small popup.
+async function openMiniCall(url) {
   try {
     const browser = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
     if (!browser || browser.type !== "normal" || browser.state === "minimized" || browser.state === "fullscreen") return null;
@@ -351,6 +351,16 @@ async function openDockedCall(url) {
         && cy >= x.bounds.top && cy < x.bounds.top + x.bounds.height) || displays[0];
       if (d) area = { left: d.workArea.left, top: d.workArea.top, width: d.workArea.width, height: d.workArea.height };
     }
+    if (!area && browser.state !== "maximized") {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, windowId: browser.id });
+        const [page] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => ({
+          left: screen.availLeft, top: screen.availTop, width: screen.availWidth, height: screen.availHeight,
+        }) });
+        const work = page?.result;
+        if (work && [work.left, work.top, work.width, work.height].every(Number.isFinite)) area = work;
+      } catch { /* Restricted tabs may not expose a work area. */ }
+    }
     if (!area) {
       // No display permission: a maximized window fills the work area (Windows reports a few hidden border pixels).
       if (browser.state !== "maximized") return null;
@@ -359,22 +369,16 @@ async function openDockedCall(url) {
     }
     if (!(area.width >= 800 && area.height >= 500)) return null;
     const win = await chrome.windows.create({ url, type: "popup", focused: true, ...callWindowGeometry(area) });
-    return { ...win, callLayout: {
-      workArea: area, browserWindowId: browser.id,
-      browserBounds: { left: browser.left, top: browser.top, width: browser.width, height: browser.height, state: browser.state },
-      expanded: false, browserShrunk: false,
-    } };
+    return win;
   } catch {
     return null;
   }
 }
 
-function callWindowGeometry(area, expanded = false) {
-  const width = expanded ? Math.round(Math.min(520, Math.max(380, area.width * 0.3))) : 360;
-  const height = expanded ? area.height : 340;
-  const margin = expanded ? 0 : 16;
+function callWindowGeometry(area) {
+  const width = 380, height = 360, margin = 16;
   return { left: area.left + area.width - width - margin,
-    top: expanded ? area.top : area.top + area.height - height - margin, width, height };
+    top: area.top + area.height - height - margin, width, height };
 }
 
 const ACTIONS = {
@@ -553,8 +557,9 @@ const ACTIONS = {
     }
     // Info requests and load events wait until the new popup's identity is saved.
     const opening = callCreation.then(async () => {
-      const docked = service === "spacecall" ? await openDockedCall(url) : null;
-      const win = docked || await chrome.windows.create({ url, type: "popup", state: "maximized", focused: true });
+      const mini = service === "spacecall" ? await openMiniCall(url) : null;
+      const fallback = service === "spacecall" ? { width: 380, height: 360 } : { state: "maximized" };
+      const win = mini || await chrome.windows.create({ url, type: "popup", ...fallback, focused: true });
       const tab = win.tabs && win.tabs[0];
       try {
         if (!tab || typeof tab.id !== "number") throw new Error("The call tab did not open.");
@@ -562,7 +567,6 @@ const ACTIONS = {
         await chrome.storage.session.set({ [key]: {
           tabId: tab.id, windowId: win.id, name: String(name || "your trusted person").slice(0, 30),
           service,
-          ...(docked ? docked.callLayout : {}),
         } });
       } catch (e) {
         await chrome.windows.remove(win.id).catch(() => {});
@@ -821,34 +825,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
   }
 });
 
-chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
-  if (typeof change.title !== "string") return;
-  // Serialize with opening and other title events so a call can expand only once.
-  const expanding = callCreation.then(async () => {
-    const key = `allySpacecall:${tabId}`;
-    const saved = (await chrome.storage.session.get(key))[key];
-    if (!saved || saved.expanded || !saved.workArea || saved.windowId !== tab.windowId) return;
-    const [page] = await chrome.scripting.executeScript({
-      target: { tabId }, func: () => document.documentElement.dataset.allyCall,
-    });
-    if (page?.result !== "connected") return;
-    const panel = callWindowGeometry(saved.workArea, true);
-    await chrome.windows.update(saved.windowId, { state: "normal", ...panel });
-    saved.expanded = true;
-    await chrome.storage.session.set({ [key]: saved });
-    try {
-      await chrome.windows.update(saved.browserWindowId, {
-        state: "normal", left: saved.workArea.left, top: saved.workArea.top,
-        width: panel.left - saved.workArea.left, height: saved.workArea.height,
-      });
-      saved.browserShrunk = true;
-      await chrome.storage.session.set({ [key]: saved });
-    } catch { /* The expanded call is usable even if Chrome could not be resized. */ }
-  });
-  callCreation = expanding.catch(() => {});
-  await callCreation;
-});
-
 async function insertCallCSS(tabId) {
   try {
     const saved = (await chrome.storage.session.get(callKey(tabId)))[callKey(tabId)];
@@ -863,15 +839,6 @@ chrome.windows.onRemoved?.addListener(async (windowId) => {
     const saved = { ...await closing, ...await chrome.storage.session.get(null) };
     const keys = Object.keys(saved).filter((key) => (key.startsWith("allyCall:") || key.startsWith("allySpacecall:")) && saved[key].windowId === windowId);
     if (keys.length) {
-      for (const key of keys) {
-        const call = saved[key];
-        if (!call.browserShrunk || !call.browserBounds) continue;
-        try {
-          const { state, ...bounds } = call.browserBounds;
-          await chrome.windows.update(call.browserWindowId, { state: "normal", ...bounds });
-          if (state !== "normal") await chrome.windows.update(call.browserWindowId, { state });
-        } catch { /* The original browser may have been closed as well. */ }
-      }
       await chrome.storage.session.remove(keys);
       send({ type: "event", name: "risk_call_ended", service: saved[keys[0]].service === "spacecall" ? "spacecall" : "meet" });
     }

@@ -25,6 +25,11 @@ def fragment(url):
 
 
 class SpacecallTests(unittest.TestCase):
+    def setUp(self):
+        pin = patch("ally.risk.wire.callwindow.keep_on_top", return_value=None)
+        pin.start()
+        self.addCleanup(pin.stop)
+
     def make_wire(self, settings=None, send=None, **kwargs):
         cfg = {"trusted_contact": "Priya", "contact_topic": "ally-priya-7f3k29qx",
                "call_service": "spacecall", "spacecall_url": BASE}
@@ -439,8 +444,8 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const source = fs.readFileSync("extension/background.js", "utf8").replace(/\r\n/g, "\n");
 const action = source.slice(source.indexOf("  async openCall("), source.indexOf("  async rememberSite("));
-const docked = source.slice(source.indexOf("async function openDockedCall("), source.indexOf("const ACTIONS = {"));
-const titleStart = source.indexOf('chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {\n  if (typeof change.title');
+const docked = source.slice(source.indexOf("async function openMiniCall("), source.indexOf("const ACTIONS = {"));
+const titleStart = source.indexOf('async function insertCallCSS(');
 const events = source.slice(titleStart, source.indexOf("// ---------------------------------------------------------------- shortcuts"));
 const stored = {}, css = [], sent = [], created = [], updated = [];
 let removed, titleChanged, status = "ringing", next = 0, browser = null, displays = null;
@@ -484,7 +489,8 @@ vm.runInNewContext(`let callCreation = Promise.resolve(); const callKey = (id) =
   assert.equal(created.length, 0);
   const space = await context.actions.openCall(options);
   assert.equal(created[0].type, "popup");
-  assert.equal(created[0].state, "maximized");
+  assert.equal(created[0].width, 380);
+  assert.equal(created[0].height, 360);
   await context.insertCallCSS(space.windowId); // reloads must not inject the Meet skin either
   assert.equal(css.length, 0);
   const meet = await context.actions.openCall({ url: "https://meet.google.com/abc-defg-hij", name: "Priya" });
@@ -500,40 +506,24 @@ vm.runInNewContext(`let callCreation = Promise.resolve(); const callKey = (id) =
   assert.equal(Object.keys(stored).length, 0);
   assert.ok(!JSON.stringify(sent).includes("private"));
 
-  // Ring in the corner first, leaving the maximized browser untouched.
+  // Ring and connect in the same corner, without a browser-bounds record or listener.
   browser = { id: 50, type: "normal", state: "maximized", left: 0, top: 0, width: 1600, height: 900 };
-  const dockedCall = await context.actions.openCall(options);
+  const miniCall = await context.actions.openCall(options);
   const popup = created[created.length - 1];
   assert.equal(popup.type, "popup");
-  assert.notEqual(popup.state, "maximized");
   assert.equal(popup.left + popup.width, 1600 - 16);
   assert.equal(popup.top + popup.height, 900 - 16);
-  assert.equal(popup.width, 360);
-  assert.equal(popup.height, 340);
+  assert.equal(popup.width, 380);
+  assert.equal(popup.height, 360);
+  assert.equal(titleChanged, undefined);
   assert.equal(updated.length, 0);
-  await titleChanged(dockedCall.windowId, { title: "Calling Priya" }, { windowId: dockedCall.windowId });
-  assert.equal(updated.length, 0);
-  // Only the saved call tab reporting connected docks the popup and shrinks Chrome.
-  status = "connected";
-  await titleChanged(999, { title: "Priya is here" }, { windowId: 999 });
-  assert.equal(updated.length, 0);
-  await titleChanged(dockedCall.windowId, { title: "Priya is here" }, { windowId: dockedCall.windowId });
-  assert.deepEqual(JSON.parse(JSON.stringify(updated)), [
-    { id: dockedCall.windowId, info: { state: "normal", left: 1120, top: 0, width: 480, height: 900 } },
-    { id: 50, info: { state: "normal", left: 0, top: 0, width: 1120, height: 900 } },
-  ]);
-  // Not maximized and no system.display permission: fall back to the maximized popup.
   browser = { ...browser, state: "normal", width: 1000 };
   const fallback = await context.actions.openCall(options);
-  assert.equal(created[created.length - 1].state, "maximized");
-  assert.equal(updated.length, 2);
-  await removed(dockedCall.windowId);
-  assert.deepEqual(JSON.parse(JSON.stringify(updated.slice(2))), [
-    { id: 50, info: { state: "normal", left: 0, top: 0, width: 1600, height: 900 } },
-    { id: 50, info: { state: "maximized" } },
-  ]);
+  assert.equal(created[created.length - 1].width, 380);
+  assert.equal(created[created.length - 1].height, 360);
+  await removed(miniCall.windowId);
   await removed(fallback.windowId);
-  assert.equal(updated.length, 4);
+  assert.equal(updated.length, 0);
   assert.equal(Object.keys(stored).length, 0);
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 '''

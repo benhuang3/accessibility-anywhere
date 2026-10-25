@@ -113,10 +113,14 @@ def bear_width(scale: float) -> int:
 
 
 def corner_origin(work: tuple[int, int, int, int], width: int, height: int,
-                  margin: int = EDGE_MARGIN) -> tuple[int, int]:
+                  margin: int = EDGE_MARGIN,
+                  reserved: tuple[int, int, int, int] | None = None) -> tuple[int, int]:
     """Top-left corner that puts a width x height window in the bottom-right of the work area
-    (left, top, right, bottom), never off its top or left edge."""
+    (left, top, right, bottom), or just above a reserved call rect with right edges aligned."""
     left, top, right, bottom = work
+    if reserved is not None:
+        _, reserved_top, reserved_right, _ = reserved
+        return max(left, min(right - width, reserved_right - width)), max(top, reserved_top - STACK_GAP - height)
     return max(left, right - margin - width), max(top, bottom - margin - height)
 
 

@@ -11,7 +11,7 @@ import unicodedata
 import urllib.parse
 
 from ally.contracts import EventBus, Offer, Risk
-from . import actions, behavior, contact, domains, fakescan, fields, joined, process, soft, text
+from . import actions, behavior, callwindow, contact, domains, fakescan, fields, joined, process, soft, text
 from .copy import load_copy, render
 from .guardian import Evidence
 from .screenshare import ScreenShare
@@ -134,7 +134,11 @@ class RiskWire:
                  poll_seconds=10.0, clock=time.time, deduper=None, ask=None, call=None,
                  broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None,
                  overlay_active=None, review_timeout_s=10.0, contact=None, notify=None, say=None,
-                 screen_capture=None, screen_share=True, done=None):
+                 screen_capture=None, screen_share=True, done=None, set_reserved=None):
+        self.set_reserved = set_reserved
+        self.call_window_rect = None
+        self._call_window_stop = threading.Event()
+        self._call_window_thread = None
         self.screen_capture = screen_capture
         self.screen_share = screen_share
         self._screen_share = None
@@ -239,6 +243,9 @@ class RiskWire:
                 with self._lock:
                     current = (generation == self._generation and not self._stop.is_set()
                                and not question["cancelled"].is_set())
+                called = offer.choice == "dismissed" and offer.answered_by == "call"
+                if called:
+                    answer, snooze_seconds = "dismissed", HOLD_SECONDS
                 if answer == "no" and current:
                     wording = render("confirm_close")
                     confirmation = Offer(wording.title + " " + wording.body,
@@ -247,7 +254,7 @@ class RiskWire:
                     answer = ask_offer(confirmation)
                     if answer == "no":
                         snooze_seconds = DECLINE_SNOOZE_SECONDS
-                if answer not in ("yes", "no"):
+                if answer not in ("yes", "no") and not called:
                     answer = "timeout"
                 with self._lock:
                     current = (generation == self._generation and not self._stop.is_set()
@@ -379,6 +386,7 @@ class RiskWire:
     def on_call_ended(self, msg) -> None:
         service = msg.get("service")
         if service in ("meet", "spacecall"):
+            self._stop_call_window()
             self._stop_screen_share()
             self.bus.publish("risk_call_ended", {"service": service})
 
@@ -482,6 +490,49 @@ class RiskWire:
             self._point_timer.start()
         return True
 
+    def _stop_call_window(self):
+        with self._lock:
+            self._call_window_stop.set()
+            self.call_window_rect = None
+            if self.set_reserved is not None:
+                self.set_reserved(None)
+            thread, self._call_window_thread = self._call_window_thread, None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=0.5)
+
+    def _start_call_window(self):
+        self._stop_call_window()
+        with self._lock:
+            if self._stop.is_set():
+                return
+            stopped = self._call_window_stop = threading.Event()
+
+            def watch():
+                deadline = time.monotonic() + 2 * 60 * 60
+                try:
+                    while not stopped.is_set() and time.monotonic() < deadline:
+                        try:
+                            rect = callwindow.keep_on_top()
+                        except Exception:
+                            rect = None
+                        with self._lock:
+                            if stopped.is_set():
+                                return
+                            self.call_window_rect = rect
+                            if self.set_reserved is not None:
+                                self.set_reserved(rect)
+                        if stopped.wait(1.0):
+                            return
+                finally:
+                    with self._lock:
+                        if self._call_window_stop is stopped and not stopped.is_set():
+                            self.call_window_rect = None
+                            if self.set_reserved is not None:
+                                self.set_reserved(None)
+
+            self._call_window_thread = threading.Thread(target=watch, name="call-window", daemon=True)
+            self._call_window_thread.start()
+
     def _stop_screen_share(self):
         with self._lock:
             share, self._screen_share = self._screen_share, None
@@ -508,7 +559,7 @@ class RiskWire:
             offer.extra_action = None
             return
         verb = "Call" if self._call_url() else "Tell"
-        offer.extra_action = (f"{verb} {self.contact[0]}", lambda: self._tell(risk, alert))
+        offer.extra_action = (f"{verb} {self.contact[0]}", lambda: self._tell(risk, alert, offer))
 
     def _send_contact(self, message, call_url="") -> bool:
         try:
@@ -549,7 +600,7 @@ class RiskWire:
             alert["done"].set()
         return alert
 
-    def _tell(self, risk, alert=None) -> str:
+    def _tell(self, risk, alert=None, offer=None) -> str:
         """Runs in a worker when the person taps 'Call/Tell <name>'. Returns the line shown in the panel.
         With a call link: open the video call here and send the helper a push whose button joins it."""
         name = self.contact[0]
@@ -563,6 +614,11 @@ class RiskWire:
         self._stop_screen_share()
         opened = self._open_call(call_url)
         if opened:
+            self.deduper.snooze(risk, HOLD_SECONDS)
+            if offer is not None:
+                offer.resolve("dismissed", "call")
+            if self._spacecall_url():
+                self._start_call_window()
             self._start_screen_share(call_url)
         if alert is not None:
             alert["done"].wait()  # the call opens immediately; only delivery waits for the pending push
@@ -776,8 +832,9 @@ class RiskWire:
             self._thread.start()
 
     def stop(self):
+        self._stop.set()
+        self._stop_call_window()
         with self._lock:
-            self._stop.set()
             self._point_generation += 1
             if self._point_timer is not None:
                 self._point_timer.cancel()
@@ -865,6 +922,12 @@ def attach(agent) -> RiskWire:
         if ui is not None:
             ui.highlight(box)
 
+    def set_reserved(rect):
+        ui = getattr(getattr(agent, "proactive", None), "ui", None)
+        reserve = getattr(ui, "set_reserved", None)
+        if reserve is not None:
+            reserve(rect)
+
     def say(message):
         voice = getattr(getattr(agent, "proactive", None), "voice", None)
         if voice is not None and hasattr(voice, "say"):
@@ -882,6 +945,7 @@ def attach(agent) -> RiskWire:
                     guardian=guardian, screen_size=screen_size,
                     overlay_active=lambda: getattr(agent, "overlay", None) is not None,
                     contact=_make_contact(agent), notify=notify, say=say, done=done, highlight=highlight,
+                    set_reserved=set_reserved,
                     screen_capture=lambda: ScreenShare.capture_screen(lambda: agent.platform.screenshot_png()),
                     screen_share=risk_config.get("screen_share", True) is True)
     if hasattr(bridge, "on_page"):

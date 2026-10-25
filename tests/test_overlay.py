@@ -39,6 +39,14 @@ class CompanionLayoutTests(unittest.TestCase):
         self.assertEqual(corner_origin((0, 0, 1920, 1040), 600, 400), (1920 - 24 - 600, 1040 - 24 - 400))
         self.assertEqual(corner_origin((100, 50, 500, 300), 600, 400), (100, 50))
 
+    def test_reserved_call_stacks_above_it_with_right_edges_aligned(self):
+        self.assertEqual(corner_origin((0, 0, 1920, 1040), 440, 300,
+                                       reserved=(1524, 664, 1904, 1024)), (1464, 352))
+        self.assertEqual(corner_origin((-1920, -200, 0, 880), 440, 300,
+                                       reserved=(-396, 504, -16, 864)), (-456, 192))
+        self.assertEqual(corner_origin((100, 50, 500, 300), 600, 400,
+                                       reserved=(120, 100, 500, 280)), (100, 50))
+
     def test_bear_sprite_matches_display_scaling(self):
         self.assertEqual([bear_width(s) for s in (1.0, 1.25, 1.5, 2.0, 3.0)], [140, 175, 210, 280, 280])
 
@@ -354,6 +362,43 @@ class PanelInteractionTests(unittest.TestCase):
         ov._handle(ov._q.get_nowait())
         self.assertEqual(ov._panel.current_card.kind, "done")
 
+    def test_call_dismissal_closes_warning_for_both_extra_result_clear_orders(self):
+        for order in (("clear", "extra_done"), ("extra_done", "clear")):
+            with self.subTest(order=order):
+                ov = self.overlay()
+                offer = Offer("Close it?", context="risk")
+                ov.show_card("Warning.", kind="risk")
+                ov.offer(offer)
+                while not ov._q.empty():
+                    ov._handle(ov._q.get_nowait())
+                offer.resolve("dismissed", "call")
+                for command in order:
+                    ov._handle(("clear",) if command == "clear" else ("extra_done", offer.id, "Opening call."))
+                self.assertEqual(ov._panel.view[0], "none")
+                self.assertIsNone(ov._state.card_kind)
+                ov._pick(offer.id, "no")
+                self.assertEqual((offer.choice, offer.answered_by), ("dismissed", "call"))
+
+    def test_work_area_follows_the_call_to_its_monitor(self):
+        ov = self.overlay()
+        ov._reserved = (-396, 704, -16, 1064)
+        with patch("ally.overlay.overlay._windows_work_area", return_value=(-1920, 40, 0, 1080)) as area:
+            self.assertEqual(ov._work_area(), (-1920, 40, 0, 1080))
+            area.assert_called_once_with(ov._reserved)
+
+    def test_reserved_area_is_queued_and_repositions_existing_panels(self):
+        ov = self.overlay()
+        rect = (700, 500, 1080, 860)
+        ov.set_reserved(rect)
+        self.assertIsNone(ov._reserved)
+        ov._handle(ov._q.get_nowait())
+        self.assertEqual(ov._reserved, rect)
+        ov._render.assert_called_once()
+        ov.set_reserved(None)
+        ov._handle(ov._q.get_nowait())
+        self.assertIsNone(ov._reserved)
+        self.assertEqual(ov._render.call_count, 2)
+
     def test_voice_answer_then_clear_returns_to_card(self):
         ov = self.overlay()
         offer = Offer("Close it?", context="risk")
@@ -542,6 +587,18 @@ class PanelRenderingTests(unittest.TestCase):
         self.assertEqual(ov._card_win.geometry.call_args.args[0], f"+{1200 - 24 - w}+{900 - 24 - h}")
         self.assertEqual(ov._offer_win.geometry.call_args.args[0], f"+{left}+{top - 12 - 420}")
         self.assertFalse(ov._offer_has_bear)
+
+    def test_call_reservation_puts_the_bear_below_the_card_above_the_call(self):
+        ov = self.overlay()
+        ov._bear_image = Mock(return_value=Mock(width=lambda: 140, height=lambda: 140))
+        ov.set_reserved((804, 524, 1184, 884))
+        ov._handle(ov._q.get_nowait())
+        ov.show_card("Priya closed that page for you.", kind="done")
+        ov._handle(ov._q.get_nowait())
+        width, height = ov._tk.Canvas.return_value.configure.call_args.kwargs.values()
+        self.assertLessEqual(width, 440)
+        self.assertEqual(ov._card_win.geometry.call_args.args[0], f"+{1184 - width}+{max(0, 524 - 12 - height)}")
+        ov._tk.Canvas.return_value.create_image.assert_called_with(width, height, anchor="se", image=ov._bear_image.return_value)
 
     def test_question_takes_the_bear_when_the_card_goes(self):
         ov = self.overlay()

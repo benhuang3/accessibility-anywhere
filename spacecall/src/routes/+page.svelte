@@ -44,6 +44,7 @@
   $: callEnded = ended || $incidentStore?.status === 'ended';
   $: elderCall = elderCallPresentation($incidentStore?.status, helperName, callEnded);
   $: elderRinging = link?.role === 'elder' && elderCall.state === 'ringing';
+  $: elderConnected = link?.role === 'elder' && elderCall.state === 'connected';
   $: unanswered = noAnswerNote(elderCall.state, helperName, openedAt, now);
   $: if (link?.role === 'elder') {
     document.documentElement.dataset.allyCall = elderCall.state;
@@ -256,20 +257,11 @@
     <img class="remote-video" src={$remoteVideoUrl} alt={isHelper ? 'Live video of your family member' : `Live video of ${helperName}`} />
   {/if}
 
-  {#if !elderRinging}
+  {#if !elderRinging && !elderConnected}
   <header class="glass topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">a</span> Ally Call</div>
     <p class="status" role="status" aria-live="polite">{link ? status : 'A familiar face, right here'}</p>
   </header>
-  {/if}
-
-  {#if link && !isHelper && !callEnded && !elderRinging}
-    <section class="glass sharing-banner" aria-label="Screen sharing">
-      <p role="status">{sharingOn ? `${helperName} can see your screen` : 'Screen sharing is off'}</p>
-      <button class="secondary" onclick={toggleScreenSharing} disabled={!$incidentStore || sharingBusy || !sharingAvailable}>
-        {!sharingAvailable ? 'Start a new call from Ally to share' : sharingOn ? 'Stop sharing' : 'Share my screen again'}
-      </button>
-    </section>
   {/if}
 
   {#if !link}
@@ -299,6 +291,36 @@
         <p class="ringing-note" role="alert">{message || $connectionError || $mediaError}</p>
       {/if}
     </section>
+  {:else if elderConnected}
+    {#if !$remoteVideoUrl}
+      <section class="mini-waiting" aria-label="Waiting for video">
+        <span class="ringing-portrait" aria-hidden="true">{helperName.charAt(0).toUpperCase()}</span>
+        <h1 role="status">{elderCall.label}</h1>
+      </section>
+    {/if}
+    <span class="mini-name">{helperName}</span>
+    <div class="mini-bottom">
+      {#if $audioNeedsTap}<button class="audio-unlock" onclick={resumeCallAudio}>Tap to hear</button>{/if}
+      {#if message || $connectionError || $mediaError}
+        <p class="mini-note" role="alert">{message || $connectionError || $mediaError}</p>
+      {:else if $connectionSlow}<p class="mini-note" role="status">Connection is slow.</p>{/if}
+      <nav class="mini-controls" aria-label="Call controls">
+        <button class="mini-mute" class:muted={$muted} onclick={toggleMute} aria-pressed={$muted}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>{#if $muted}<path d="m3 3 18 18"/>{/if}</svg>
+          {$muted ? 'Unmute' : 'Mute'}
+        </button>
+        <button class="end-call" onclick={endCall}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 16v-4c5-5 13-5 18 0v4h-5v-4M8 12v4H3"/></svg>
+          End call
+        </button>
+      </nav>
+      <div class="mini-sharing" aria-label="Screen sharing">
+        <p role="status">{sharingOn ? `${helperName} can see your screen` : 'Screen sharing is off'}</p>
+        <button onclick={toggleScreenSharing} disabled={!$incidentStore || sharingBusy || !sharingAvailable}>
+          {sharingOn ? 'Stop' : 'Share again'}
+        </button>
+      </div>
+    </div>
   {:else if isHelper && !joined}
     <section class="center-card glass invitation">
       <p class="eyebrow"><span class="caution-dot" aria-hidden="true"></span> A moment for family</p>
@@ -344,17 +366,6 @@
           </button>
         </div>
       {/if}
-    {:else}
-      {@render selfView()}
-      {@render callNotices()}
-      {@render callControls()}
-    {/if}
-    {#if !$remoteVideoUrl && !isHelper}
-      <section class="waiting" aria-label="Waiting for video">
-        <span class="portrait" aria-hidden="true">{isHelper ? 'a' : helperName.charAt(0).toUpperCase()}</span>
-        <h1>{isHelper ? 'You are close by.' : 'A familiar face is on the way.'}</h1>
-        <p>{isHelper ? 'Your family member will appear here.' : `${helperName} will appear here.`}</p>
-      </section>
     {/if}
 
   {/if}
@@ -370,5 +381,5 @@
       <p>One-way estimate: {$callStats.delayMs === null ? 'unavailable (no server timestamp)' : `${$callStats.delayMs.toFixed(0)} ms (server → here; clocks may differ)`}</p>
     </aside>
   {/if}
-  <footer><a href="https://github.com/Lethalchip/SpaceChatDB" target="_blank" rel="noreferrer noopener">Built on SpaceChatDB</a></footer>
+  {#if !elderRinging && !elderConnected}<footer><a href="https://github.com/Lethalchip/SpaceChatDB" target="_blank" rel="noreferrer noopener">Built on SpaceChatDB</a></footer>{/if}
 </main>

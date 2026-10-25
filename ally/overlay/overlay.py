@@ -144,7 +144,7 @@ def _raise_without_focus(win) -> bool:
         return False
 
 
-def _windows_work_area() -> tuple[int, int, int, int] | None:
+def _windows_work_area(reserved=None) -> tuple[int, int, int, int] | None:
     """The screen minus the taskbar, in physical pixels."""
     if sys.platform != "win32":
         return None
@@ -152,6 +152,23 @@ def _windows_work_area() -> tuple[int, int, int, int] | None:
         import ctypes
         from ctypes import wintypes
 
+        if reserved is not None:
+            class MonitorInfo(ctypes.Structure):
+                _fields_ = [("size", wintypes.DWORD), ("monitor", wintypes.RECT),
+                            ("work", wintypes.RECT), ("flags", wintypes.DWORD)]
+
+            user32 = ctypes.windll.user32
+            user32.MonitorFromRect.argtypes = [ctypes.POINTER(wintypes.RECT), wintypes.DWORD]
+            user32.MonitorFromRect.restype = wintypes.HANDLE
+            user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
+            user32.GetMonitorInfoW.restype = wintypes.BOOL
+            call_rect = wintypes.RECT(*reserved)
+            monitor = user32.MonitorFromRect(ctypes.byref(call_rect), 2)  # nearest monitor
+            info = MonitorInfo()
+            info.size = ctypes.sizeof(info)
+            if monitor and user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                rect = info.work
+                return rect.left, rect.top, rect.right, rect.bottom
         rect = wintypes.RECT()
         if ctypes.windll.user32.SystemParametersInfoW(_SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
             return rect.left, rect.top, rect.right, rect.bottom
@@ -176,6 +193,7 @@ class Overlay:
         self._card_key = None
         self._bubble_key = None
         self._focused_offer = None
+        self._reserved = None
         self._thread: threading.Thread | None = None
         self._root = None
         self._running = False
@@ -215,6 +233,9 @@ class Overlay:
         finally:
             self._running = False
             self._root = None
+
+    def set_reserved(self, rect) -> None:
+        self._q.put(("reserved", rect))
 
     def highlight(self, box) -> None:
         self._q.put(make_highlight_command(box))
@@ -302,11 +323,20 @@ class Overlay:
             if self._root is not None:
                 self._root.quit()
             return
+        if kind == "reserved":
+            if self._reserved != cmd[1]:
+                self._reserved = cmd[1]
+                self._force_render()
+            return
         if kind == "clear":
             self._clear_highlight()
             current = self._panel.current_offer
             if current is not None:
-                self._offers.pop(current.id, None)
+                offer = self._offers.pop(current.id, None)
+                if offer is not None and offer.choice == "dismissed" and offer.answered_by == "call":
+                    self._panel.answer(current.id)
+                    self._state.clear_card()
+                self._extra_done.pop(current.id, None)
             self._panel.clear()
             self._render()
             return
@@ -329,6 +359,13 @@ class Overlay:
             offer = self._offers.get(offer_id)
             if current is None or current.id != offer_id or offer is None or offer.done:
                 self._extra_done.pop(offer_id, None)
+                if (current is not None and current.id == offer_id and offer is not None
+                        and offer.choice == "dismissed" and offer.answered_by == "call"):
+                    self._panel.answer(offer_id)
+                    self._offers.pop(offer_id, None)
+                    self._state.clear_card()
+                    self._clear_highlight()
+                    self._render()
                 return
             self._extra_done[offer_id] = note
             self._force_render()
@@ -357,7 +394,7 @@ class Overlay:
         return self._root.winfo_screenwidth(), self._root.winfo_screenheight()
 
     def _work_area(self) -> tuple[int, int, int, int]:
-        area = _windows_work_area()
+        area = _windows_work_area(self._reserved)
         if area is not None:
             return area
         sw, sh = self._screen_size()
@@ -568,13 +605,15 @@ class Overlay:
         card_h = top_pad + _int(inner.winfo_reqheight(), px(300)) + bottom_pad
         bear = self._bear_image(tone.bear) if with_bear else None
         bear_w, bear_h = (_int(bear.width(), 0), _int(bear.height(), 0)) if bear is not None else (0, 0)
-        width = card_w + (px(BEAR_GAP) + bear_w if bear is not None else 0)
-        height = max(card_h, bear_h)
-        card_top = height - card_h
+        stacked = self._reserved is not None and bear is not None
+        width = max(card_w, bear_w) if stacked else card_w + (px(BEAR_GAP) + bear_w if bear is not None else 0)
+        height = card_h + px(BEAR_GAP) + bear_h if stacked else max(card_h, bear_h)
+        card_top = 0 if stacked else height - card_h
+        card_bottom = card_top + card_h
         canvas.configure(width=width, height=height)
         # One white surface. The 1px edge stands in for the mock's soft shadow, which Tk can't draw.
         r, tight = px(20), px(4)
-        canvas.create_polygon(rounded_rect(0, card_top, card_w - 1, height - 1, (r, r, tight if bear else r, r)),
+        canvas.create_polygon(rounded_rect(0, card_top, card_w - 1, card_bottom - 1, (r, r, tight if bear else r, r)),
                               fill=CARD_BG, outline=CARD_EDGE, width=1)
         canvas.create_window(pad, card_top + top_pad, anchor="nw", window=inner, width=inner_w)
         if bear is not None:
@@ -582,7 +621,7 @@ class Overlay:
         if card is None:
             self._offer_has_bear = bear is not None
 
-        x, y = corner_origin(self._work_area(), width, height, px(EDGE_MARGIN))
+        x, y = corner_origin(self._work_area(), width, height, px(EDGE_MARGIN), self._reserved)
         if card is None and self._card_win is not None:
             left, top = self._card_box
             x, y = left, top - px(STACK_GAP) - height
