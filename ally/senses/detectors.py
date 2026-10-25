@@ -388,21 +388,6 @@ class GeometricSquintDetector(_RawHeld):
         return self._held_signal(t, 1.0, valid, {"geometry": True})
 
 
-class HybridSquintDetector(GeometricSquintDetector):
-    def feed(self, sig, t, base):
-        signal = super().feed(sig, t, base)
-        if signal is None:
-            return None
-        stats = _feature_stats(base)
-        median = _median(stats, "eyeSquint", 0.0)
-        spread = max(_mad(stats, "eyeSquint", 0.02), PERSONAL_NOISE_FLOOR)
-        relative_vote = (sig.get("eyeSquint", 0.0) - median) / spread >= 2.0
-        au_vote = _au_vote(sig, stats)
-        if relative_vote or au_vote:
-            return signal
-        return None
-
-
 def _feature_stats(base):
     if isinstance(base, dict):
         return base
@@ -514,11 +499,23 @@ class PersonalSquintDetector(_RawHeld):
 class HybridPersonalSquintDetector(PersonalSquintDetector):
     """Require a personal score plus either relative blendshape or AU7 evidence."""
 
+    def __init__(self, tune):
+        super().__init__(tune)
+        self.legacy_geometric = GeometricSquintDetector(tune)
+
     def feed(self, sig, t, base):
+        stats = _feature_stats(base)
+        if "personal_model" not in stats:
+            signal = self.legacy_geometric.feed(sig, t, base)
+            if signal is None:
+                return None
+            median = _median(stats, "eyeSquint", 0.0)
+            if sig.get("eyeSquint", 0.0) - median >= 0.08:
+                return signal
+            return None
         signal = super().feed(sig, t, base)
         if signal is None:
             return None
-        stats = _feature_stats(base)
         value = sig.get("eyeSquint", 0.0)
         median = _median(stats, "eyeSquint", value)
         spread = max(_mad(stats, "eyeSquint", 0.02), PERSONAL_NOISE_FLOOR)
@@ -528,6 +525,10 @@ class HybridPersonalSquintDetector(PersonalSquintDetector):
         if self.points and self.points[-1][1] >= self.strong_threshold * 1.5:
             return signal
         return None
+
+
+class HybridSquintDetector(HybridPersonalSquintDetector):
+    """Named hybrid method retained for config and benchmark comparisons."""
 
 
 def _part_samples(parts, name):
@@ -604,25 +605,47 @@ def _standard_deviation(values):
 
 
 class DistanceLeanDetector(LeanDetector):
-    def feed(self,sig,t,base):
-        ratio=sig.get("head_distance",0)
-        stats=base if isinstance(base,dict) else base.feature_stats
-        b=stats.get("head_distance",{}).get("median",0)
-        width=base.width if isinstance(base,Baseline) else base.get("face_width",{}).get("median",.3)
-        if not ratio or not b: return super().feed(sig,t,base if isinstance(base,Baseline) else Baseline(.1,width))
-        s=dict(sig); s["width"]=width*ratio/b
-        return super().feed(s,t,base if isinstance(base,Baseline) else Baseline(.1,width))
+    def feed(self, sig, t, base):
+        stats = _feature_stats(base)
+        baseline_distance = _median(stats, "head_distance", 0.0)
+        current_distance = sig.get("head_distance", 0.0)
+        if baseline_distance <= 0 or current_distance <= 0:
+            return super().feed(sig, t, base)
+        distance_ratio = baseline_distance / current_distance
+        return self._feed_ratio(sig, t, distance_ratio)
+
+    def _feed_ratio(self, sig, t, ratio):
+        if not _pose_ok(sig, self.tune):
+            self.since = None
+            return None
+        virtual_signal = dict(sig)
+        virtual_signal.update(width=ratio, yaw=sig.get("head_yaw", 0.0),
+                              pitch=sig.get("head_pitch", 0.0))
+        return super().feed(virtual_signal, t, Baseline(0.1, 1.0))
 
 
 class HybridLeanDetector(DistanceLeanDetector):
-    def feed(self,sig,t,base):
-        stats=base if isinstance(base,dict) else base.feature_stats
-        bdist=stats.get("head_distance",{}).get("median",0)
-        dw=sig.get("head_distance",0)/bdist if bdist else 1.0
-        wr=sig.get("width",0)/(base.width if isinstance(base,Baseline) else base.get("face_width",{}).get("median",1))
-        width=base.width if isinstance(base,Baseline) else base.get("face_width",{}).get("median",.3)
-        s=dict(sig); s["width"]=statistics.median((dw,wr))*width
-        return super(DistanceLeanDetector,self).feed(s,t,base if isinstance(base,Baseline) else Baseline(.1,width))
+    def feed(self, sig, t, base):
+        stats = _feature_stats(base)
+        baseline_distance = _median(stats, "head_distance", 0.0)
+        current_distance = sig.get("head_distance", 0.0)
+        baseline_iris = _median(stats, "iris_diameter", 0.0)
+        current_iris = sig.get("iris_diameter", 0.0)
+        ratios = []
+        if baseline_distance > 0 and current_distance > 0:
+            ratios.append(baseline_distance / current_distance)
+        if baseline_iris > 0 and current_iris > 0:
+            ratios.append(current_iris / baseline_iris)
+        if not ratios:
+            return super().feed(sig, t, base)
+        ratio = statistics.median(ratios)
+        baseline_width = _median(stats, "face_width", 0.0)
+        current_width = sig.get("face_width", sig.get("width", 0.0))
+        if baseline_width > 0 and current_width > 0:
+            width_ratio = current_width / baseline_width
+            if len(ratios) == 1:
+                ratio = statistics.median((ratio, width_ratio))
+        return self._feed_ratio(sig, t, ratio)
 
 
 # --------------------------------------------------------------------------- mouse and keyboard

@@ -81,8 +81,8 @@ class BenchTests(unittest.TestCase):
         base=Baseline(.1,.3)
         width={"width":.39,"yaw":0,"pitch":0}
         self.assertTrue(self._fire(HybridLeanDetector(Tuning()),base,[width]*40))
-        dbase={"head_distance":{"median":40},"face_width":{"median":.3}}
-        close={"head_distance":52,"width":.3,"yaw":0,"pitch":0}
+        dbase={"head_distance":{"median":52},"face_width":{"median":.3}}
+        close={"head_distance":40,"width":.3,"yaw":0,"pitch":0}
         self.assertTrue(self._fire(DistanceLeanDetector(Tuning()),dbase,[close]*40))
         self.assertFalse(self._fire(HybridLeanDetector(Tuning()),base,[{**width,"yaw":30}]*40))
 

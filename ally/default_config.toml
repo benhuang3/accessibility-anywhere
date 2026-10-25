@@ -134,7 +134,7 @@ cooldown_seconds = 30      # quiet time after reporting a struggle
 decline_seconds = 90       # quiet time for declined signal kinds
 post_url = ""              # optional struggle event endpoint; empty disables posting
 min_confidence = 0.5
-squint_method = "v1"       # v1 | relative | geometric | hybrid; candidates need raw face numbers
+squint_method = "v1"       # v1 | relative | geometric | personal | hybrid; v1 stays default
 lean_method = "v1"         # v1 | distance | hybrid; candidates need raw face numbers
 # Starting thresholds (unverified on real faces; tune them live with: python run.py tool senses_hud)
 squint_delta = 0.20        # squint score above your baseline for a strong squint...

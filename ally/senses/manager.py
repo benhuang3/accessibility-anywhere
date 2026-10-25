@@ -27,7 +27,7 @@ from ..registry import ToolError
 from ..state import atomic_write
 from .detectors import (Baseline, HesitationDetector, LeanDetector, RageClickDetector, RetypeDetector, Signal,
                         SquintDetector, Tuning, gate, RelativeSquintDetector, GeometricSquintDetector,
-                        HybridSquintDetector, DistanceLeanDetector, HybridLeanDetector)
+                        PersonalSquintDetector, HybridSquintDetector, DistanceLeanDetector, HybridLeanDetector)
 from .fusion import Fuser, Struggle
 from .contract import validate_struggle
 from .features import extract as extract_face_features
@@ -88,7 +88,9 @@ class Senses:
         self.tune = Tuning.from_config(cfg)
         self._methods = (cfg.get("squint_method", "v1"), cfg.get("lean_method", "v1"))
         self.squint = {"relative": RelativeSquintDetector, "geometric": GeometricSquintDetector,
-                       "hybrid": HybridSquintDetector}.get(cfg.get("squint_method"), SquintDetector)(self.tune)
+                       "personal": PersonalSquintDetector, "hybrid": HybridSquintDetector}.get(
+                           cfg.get("squint_method"), SquintDetector
+                       )(self.tune)
         self.lean = {"distance": DistanceLeanDetector, "hybrid": HybridLeanDetector}.get(
             cfg.get("lean_method"), LeanDetector)(self.tune)
         self.rage, self.retype = RageClickDetector(self.tune), RetypeDetector(self.tune)
