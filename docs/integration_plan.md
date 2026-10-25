@@ -104,3 +104,48 @@ delegated at freeze.
   + `proactive.py` land. That is Ben H's first move after the design decision.
 - **Tier B text replacement** waits on Ganesh's overlay.
 - **Windows text + magnify** waits on VM validation.
+
+## Change log (everyone: add an entry here with every push)
+
+Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
+to know or do. Agents: read the newest entries before starting work.
+
+### Oct 24, 18:35 PT — Hayden (via Claude Code) — branch `hayden/bus-fixes`, commit `58b388b`
+
+**Changed:** `ally/senses/manager.py` `Senses.target()`, plus a test in `tests/test_senses.py`.
+- **Problem:** senses sent `None` for an unknown site, app or window, and `contracts.Target.from_dict`
+  turns `None` into the text `"None"`.
+- **Effect, reproduced on `main` `6966696`:** with VS Code in front, the coordinator saw
+  `site="None"`, treated it as a browser and offered "make this page bigger" (`set_page_zoom`).
+  Habits would have been stored under the site "None".
+- **Fix:** senses now send `""` for unknown values, the program name as `app` and the window title
+  as `window` (split like `Agent.proactive_context()`), so habits are per app.
+- **Tests:** 359 pass on this branch.
+
+**For Ben H (contracts, proactive, agent wiring; not changed here, your call):**
+1. **Guard in `Target.from_dict`:** `str(d.get("app") or "")` (same for site and window), so any
+   sender's `None` stays empty.
+2. **Two confidence gates:**
+   - **Senses:** already require two agreeing signals and send one `fused` struggle when the fused
+     confidence is ≥ 0.5 (`[senses] min_confidence`).
+   - **Coordinator:** fuses again and needs ≥ 0.6 (`[proactive] min_confidence`).
+   - **Result:** the weakest real pairs (about 0.35 + 0.35, fused about 0.58) are dropped without a
+     trace.
+   - **Suggestion:** pick one gate, e.g. let `fused` struggles from the senses through as they are.
+3. **"No" feedback to senses:** the coordinator never calls `agent.senses.answer(struggle, choice)`,
+   so the senses' 90 s per-signal pause after a "no" never happens. A few lines in `agent.py` would
+   fix it: subscribe to `offer_result` and, when `offer.reason` is a `Struggle`, call
+   `self.senses.answer(offer.reason.to_dict(), offer.choice)`.
+4. **FYI, offers can't be answered yet:** `main` has no overlay and no dashboard Proactive panel, and
+   the coordinator uses `NullVoice` (speaks, can't listen). Every offer times out after 8 s until
+   Ben W's `ask_yes_no` or Ganesh's overlay is wired in.
+
+**Coming from Hayden (local, not pushed yet):**
+- **Branch `hayden/eye-tracker`:** eye tracker v2 with calibration that's checked on targets it
+  wasn't fit on, a 5-dot re-tune, and click correction.
+- **New tools:** `where_am_i_looking`, `check_eye_tracker` and `choose_by_looking`.
+- **Plan for the bus:**
+  - Put the gaze point into `Struggle.target.x/y`.
+  - Let `choose_by_looking` answer an `Offer` (`offer.resolve(choice, by="eyes")`).
+- **Merge with `main`:** conflicts only in `ally/doctor.py`.
+- **Spec:** `docs/eye-tracker-plan.md`.
