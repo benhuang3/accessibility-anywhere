@@ -110,6 +110,29 @@ delegated at freeze.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 19:20 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `0f78362`
+
+**Fixed:** the eye tracker's 5-dot re-tune and click correction measured drift from predictions that
+were already clamped to the screen. After a head move the estimate can sit about 1000 px off
+screen, so the clamp hid most of the shift. `gaze_model.predict(..., clamp=False)` now feeds the
+re-tune and the click correction; what Ally uses is still clamped. Only `ally/gaze_model.py` and its
+tests changed. 410 tests pass.
+
+**Real sessions, v1 model, error after drift and a 5-dot re-tune:**
+
+| Session | Before the fix | After |
+| --- | --- | --- |
+| Hayden, session 1 | 128 px | 128 px |
+| Hayden, session 2 | 638 px | **125 px** |
+| New person (p3) | 607 px | **130 px** |
+| Person 2 (head turned during calibration) | 814 px | 427 px |
+
+- **Right after calibration:** p3 got 129 px with all 5 regions right, so 2 of the 4 sessions meet
+  the bar.
+- **Click correction:** p3's real clicks alone brought their drift from 773 px down to 349 px.
+
+**For others:** nothing to change.
+
 ### Oct 24, 19:05 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `4d3f365`
 
 **Pushed:** eye tracker v2, built on current `main` (includes `hayden/bus-fixes`). **Not merged.**
