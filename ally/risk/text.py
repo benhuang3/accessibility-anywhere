@@ -29,7 +29,9 @@ _RULES = (
      "a payment request"),
 )
 _ALLOW = ("microsoft.com", "learn.microsoft.com", "support.microsoft.com", "ftc.gov",
-          "consumer.ftc.gov", "fbi.gov", "ic3.gov", "cisa.gov", "aarp.org")
+          "consumer.ftc.gov", "fbi.gov", "ic3.gov", "cisa.gov", "aarp.org", "wikipedia.org")
+# Only governments and universities can register these endings, so scam pages are never on them.
+_ALLOW_SUFFIXES = (".gov", ".mil", ".edu")
 
 
 def _phone_matches(text: str) -> list[tuple[str, bool]]:
@@ -74,6 +76,8 @@ def is_allowlisted(url: str, extra_allow: tuple[str, ...] = ()) -> bool:
     host = _hostname(url)
     if not host:
         return False
+    if host.endswith(_ALLOW_SUFFIXES):
+        return True
     return any(domain and (host == domain or host.endswith("." + domain))
                for domain in (_hostname(item) for item in _ALLOW + extra_allow))
 
@@ -111,7 +115,8 @@ def score_text(text: str, url: str = "", overlay_text: str = "", fullscreen: boo
         if (score >= 7 and "phone" in signals and "alarm" in signals
                 and ("brand" in signals or "fullscreen" in signals or overlay_hit)):
             severity = "high"
-        elif score >= 4:
+        elif score >= 4 and len(signals) >= 2:
+            # One signal alone (a contact number on a help page) is not a scam.
             severity = "medium"
     evidence = "Page signals: " + ", ".join(phrases) + "." if phrases else "No page signals."
     return TextScore(score, severity, tuple(signals), evidence, allowed)

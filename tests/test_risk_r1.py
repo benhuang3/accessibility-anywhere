@@ -47,10 +47,11 @@ class TextScoreTests(unittest.TestCase):
         self.assertEqual(body.signals, ("phone", "brand", "alarm", "action", "payment"))
         self.check_score(text, 16, "high", overlay_text=text + " " + text)
         self.check_score("", 3, None, has_tel_link=True)
+        # A phone number alone never flags (a contact page has one), even inside an overlay.
         for fixture, points in (("212-555-0100", 3), ("Windows", 2), ("Virus", 2),
                                 ("Call now", 2), ("bitcoin", 1)):
             with self.subTest(fixture=fixture):
-                self.check_score("", points + 1, "medium" if points + 1 >= 4 else None,
+                self.check_score("", points + 1, "medium" if points + 1 >= 4 and fixture != "212-555-0100" else None,
                                  overlay_text=fixture)
 
     def test_high_requires_phone_and_alarm(self):
@@ -63,12 +64,13 @@ class TextScoreTests(unittest.TestCase):
             self.assertTrue(result.allowlisted)
         self.check_score(CLASSIC, 10, "high", url="https://unknown.test")
         for host in ("https://ftc.gov@evil.example/", "https://ftc.gov.evil.example",
-                     "https://notftc.gov", "https://windows.microsoft.com.evil.example", "",
+                     "https://windows.microsoft.com.evil.example", "",
                      "garbage input", "https://[broken", "https://"):
             with self.subTest(host=host):
                 self.assertFalse(is_allowlisted(host))
         for host in ("https://MICROSOFT.COM./x", "consumer.ftc.gov:443", "microsoft.com",
-                     "https://sub.cisa.gov", "fbi.gov", "ic3.gov", "aarp.org", "learn.microsoft.com"):
+                     "https://sub.cisa.gov", "fbi.gov", "ic3.gov", "aarp.org", "learn.microsoft.com",
+                     "https://www.irs.gov/help", "https://en.wikipedia.org/wiki/X", "https://www.mit.edu"):
             self.assertTrue(is_allowlisted(host), host)
         for host in ("examplebank.test", "https://help.examplebank.test"):
             self.assertTrue(is_allowlisted(host, ("examplebank.test",)))
@@ -87,7 +89,8 @@ class TextScoreTests(unittest.TestCase):
 
     def test_phone_bonus_once_and_area_codes(self):
         for area in ("800", "833", "844", "855", "866", "877", "888"):
-            self.check_score(f"1-{area}-555-0100 1-{area}-555-0101", 4, "medium")
+            self.check_score(f"1-{area}-555-0100 1-{area}-555-0101", 4, None)   # one signal: a contact page
+            self.check_score(f"Virus. Call 1-{area}-555-0100", 6, "medium")
         self.check_score("212.555.0100", 3, None)
         self.check_score("x2125550100x", 0, None)
 
