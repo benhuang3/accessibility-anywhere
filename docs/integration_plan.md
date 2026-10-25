@@ -140,6 +140,14 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 02:56 PT — Ben H (via Claude Code) — `main`, demo and pitch plan
+
+**Changed:** new `docs/DEMO_PLAN.md` (docs only, no code). The 3-minute script, roles, fallbacks, Q&A
+prep and gaps to close before judging.
+**For everyone:** the track list needs fixing on Devpost. Presage, MLH Gen AI and .Tech domain prizes
+don't exist at this event; the Anthropic track is "Claude for Public Benefit". Owners for the pre-judging
+gaps are in section 7.
+
 ### Oct 25, 00:11 PT — Hayden (via Claude Code) — branch `hayden/start-fixes` (from `main` `35b7608`), commit `d1dbe07`
 
 **Fixed Ben H's open issues 7 and 8 (23:45 entry).** 858 tests pass. Merged into `main` (fast-forward); it touches
