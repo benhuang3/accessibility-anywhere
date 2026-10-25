@@ -140,6 +140,12 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 07:35 PT — Ben H (via Claude Code) — `main`
+
+**Pushed to `main`:** `README.md` rewritten for the current project (page steps and simple mode, pictures, click by
+voice, tabs, eye scrolling, face setup, the bear and voice captions, scam protection and Ally Call, demo sites,
+hotkeys, tool table, file map, testing). Docs only. **Everyone:** skim it and fix anything in your area that's off.
+
 ### Oct 25, 07:20 PT — Ganesh (via Claude Code) — `main`, merge of `risk-branch` (`3a63185` and earlier)
 
 **Changed:**
