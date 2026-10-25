@@ -337,6 +337,44 @@ function scrollPage(direction, amount) {
 
 // ---------------------------------------------------------------- actions (called by the agent)
 
+// Ally Call (spacecall) opens as a narrow window on the right edge so the browser, which the
+// helper's phone sees through the shared screen, stays visible. Returns null to use the old behavior.
+async function openDockedCall(url) {
+  try {
+    const browser = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
+    if (!browser || browser.type !== "normal" || browser.state === "minimized" || browser.state === "fullscreen") return null;
+    let area = null;
+    if (chrome.system && chrome.system.display) {
+      const displays = await chrome.system.display.getInfo();
+      const cx = browser.left + browser.width / 2, cy = browser.top + browser.height / 2;
+      const d = displays.find(x => cx >= x.bounds.left && cx < x.bounds.left + x.bounds.width
+        && cy >= x.bounds.top && cy < x.bounds.top + x.bounds.height) || displays[0];
+      if (d) area = { left: d.workArea.left, top: d.workArea.top, width: d.workArea.width, height: d.workArea.height };
+    }
+    if (!area) {
+      // No display permission: a maximized window fills the work area (Windows reports a few hidden border pixels).
+      if (browser.state !== "maximized") return null;
+      const b = browser.left < 0 ? 8 : 0;
+      area = { left: Math.max(0, browser.left), top: Math.max(0, browser.top), width: browser.width - 2 * b, height: browser.height - b };
+    }
+    if (!(area.width >= 800 && area.height >= 500)) return null;
+    const width = Math.round(Math.min(520, Math.max(380, area.width * 0.3)));
+    const left = area.left + area.width - width;
+    const win = await chrome.windows.create({ url, type: "popup", focused: true, left, top: area.top, width, height: area.height });
+    try {
+      // Move the browser out from under the call window, keeping the page fully visible.
+      await chrome.windows.update(browser.id, {
+        state: "normal", left: area.left, top: area.top, width: left - area.left, height: area.height,
+      });
+    } catch {
+      // The call window is still usable if the browser could not be resized.
+    }
+    return win;
+  } catch {
+    return null;
+  }
+}
+
 const ACTIONS = {
   async getTab() {
     return await tabInfo();
@@ -481,7 +519,8 @@ const ACTIONS = {
     }
     // Info requests and load events wait until the new popup's identity is saved.
     const opening = callCreation.then(async () => {
-      const win = await chrome.windows.create({ url, type: "popup", state: "maximized", focused: true });
+      const docked = service === "spacecall" ? await openDockedCall(url) : null;
+      const win = docked || await chrome.windows.create({ url, type: "popup", state: "maximized", focused: true });
       const tab = win.tabs && win.tabs[0];
       try {
         if (!tab || typeof tab.id !== "number") throw new Error("The call tab did not open.");

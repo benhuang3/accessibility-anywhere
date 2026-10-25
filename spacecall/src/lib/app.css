@@ -77,6 +77,25 @@ footer a:hover { text-decoration: underline; }
 .elder-call footer { grid-row: 6; }
 .elder-call .self-view { top: 280px; }
 
+/* Narrow, tall call window docked beside the browser: one column, face on top. */
+@media (max-width: 900px) {
+  .elder-call { grid-template-rows: auto minmax(200px, 1fr) auto auto auto auto; padding: 12px 14px; gap: 10px; }
+  .elder-call .topbar { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 10px 16px; width: 100%; }
+  .elder-call .brand { font-size: 20px; }
+  .elder-call .status { font-size: 20px; }
+  .elder-call .remote-video, .elder-call .waiting { grid-row: 2; border-radius: 22px; }
+  .elder-call .sharing-banner { grid-row: 3; width: 100%; padding: 12px 16px; flex-direction: column; align-items: stretch; gap: 10px; text-align: center; }
+  .elder-call .sharing-banner p { font-size: 24px; }
+  .elder-call .sharing-banner button { width: 100%; min-height: 64px; }
+  .elder-call .self-view { position: relative; inset: auto; grid-row: 4; width: 150px; justify-self: center; }
+  .elder-call .notices { grid-row: 5; width: 100%; margin: 0; }
+  .elder-call .controls { grid-row: 6; width: 100%; flex-wrap: wrap; }
+  .elder-call .controls button { flex: 1 1 100%; }
+  .elder-call .controls button:not(.end-call) { min-height: 64px; }
+  .elder-call .controls .end-call { min-width: 0; min-height: 88px; font-size: 26px; }
+  .elder-call footer { display: none; }
+}
+
 .helper-call { width: 100%; height: 100dvh; min-height: 0; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); gap: 12px; }
 .helper-call .topbar { flex: none; width: auto; max-width: 100%; margin: 0 auto; padding: 8px 18px; border-radius: 30px; text-align: center; font-size: 16px; }
 .helper-call .brand, .helper-call footer { display: none; }
