@@ -21,8 +21,8 @@ class BenchTests(unittest.TestCase):
         return out
 
     def test_relative_detector_scales_with_personal_baseline(self):
-        for rest in (.25,.45):
-            base={"eyeSquint":{"median":rest,"mad":.02},"aperture":{"median":.3}}
+        for rest, aperture in ((.25,.30),(.45,.18)):
+            base={"eyeSquint":{"median":rest,"mad":.02},"aperture":{"median":aperture}}
             frames=[{"eyeSquint":rest+.2,"eyeSquintLeft":rest+.2,"eyeSquintRight":rest+.2,
                      "head_yaw":0,"head_pitch":0,"eyeBlink":0,"mouthSmile":0}]*40
             self.assertTrue(self._fire(RelativeSquintDetector(Tuning()),base,frames))
@@ -30,6 +30,30 @@ class BenchTests(unittest.TestCase):
                "eyeBlink":0,"mouthSmile":0,"eyeLookDown":.9}]*40
         self.assertFalse(self._fire(RelativeSquintDetector(Tuning()),
                                     {"eyeSquint":{"median":.25,"mad":.02}},down))
+
+    def test_all_raw_squint_candidates_reject_common_non_squint_frames(self):
+        base={"eyeSquint":{"median":.25,"mad":.02},"aperture":{"median":.3},
+              "aperture_l":{"median":.3},"aperture_r":{"median":.3},
+              "lower_height":{"median":.1},"lower_height_l":{"median":.1},
+              "lower_height_r":{"median":.1},"upper_height":{"median":.1}}
+        positive={"eyeSquint":.55,"eyeSquintLeft":.55,"eyeSquintRight":.55,
+            "aperture":.2,"aperture_l":.2,"aperture_r":.2,"lower_height":.15,
+            "lower_height_l":.15,"lower_height_r":.15,"upper_height":.1,"iris_vertical":.5,
+            "eyeBlink":0,"mouthSmile":0,"cheekSquint":0,"jawOpen":0,"eyeLookDown":0,
+            "head_yaw":0,"head_pitch":0}
+        negatives=(
+            {"eyeLookDown":.9,"iris_vertical":.9,"upper_height":.05,"lower_height":.1},
+            {"eyeBlink":.95,"aperture":0,"aperture_l":0,"aperture_r":0},
+            {"mouthSmile":.8,"cheekSquint":.8},
+            {"jawOpen":.9,"mouthSmile":.8,"cheekSquint":.8},
+            {"aperture_l":.1,"lower_height_l":.2,"aperture_r":.3,"lower_height_r":.1,
+             "eyeSquintLeft":.8,"eyeSquintRight":.25,"eyeSquint":.525},
+            {"head_yaw":30},
+        )
+        for cls in (RelativeSquintDetector,GeometricSquintDetector,HybridSquintDetector):
+            for changes in negatives:
+                with self.subTest(detector=cls.__name__, negative=changes):
+                    self.assertFalse(self._fire(cls(Tuning()),base,[{**positive,**changes}]*40))
 
     def test_geometric_requires_bilateral_aperture_and_lower_lid(self):
         base={"aperture_l":{"median":.3},"aperture_r":{"median":.3},
