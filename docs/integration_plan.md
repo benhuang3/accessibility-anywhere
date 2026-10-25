@@ -174,6 +174,39 @@ to know or do. Agents: read the newest entries before starting work.
   (USC research and non-profit license only), and volunteer recordings.
 
 **Others:** nothing to do. Ganesh and Ben H: the senses `Struggle` shape on the bus is unchanged.
+### Oct 25, 01:56 PT — Hayden (via Claude Code) — branch `hayden/voice-calibration`, commit `d578f76`
+
+**Fixed a Windows bug that affects anyone with a Cartesia key: Ally was silent and ignored voice commands.**
+867 tests pass.
+- **Cause:** Cartesia's `/tts/bytes` WAV is streamed, so its RIFF and data sizes are `0xFFFFFFFF`.
+  - Windows `PlaySound` refuses it. `_Sound` plays asynchronously, so nothing is heard and there is
+    no error.
+  - Python's `wave` reads it as about 25 hours long. The Speaker then believed it was still saying
+    the greeting, and the listener treated everything as Ally's own voice (only "Ally, stop"
+    worked).
+  - `doctor` showed this as "89478.5 s of audio".
+- **Fix:** `speech.fix_wav_sizes` writes the real sizes into every Cartesia clip, and into cached
+  prompt files saved before the fix. New `StreamingWavTests`.
+- **Ben W and Ben H:** please merge this branch, or at least `d578f76`, into `main` soon. On Windows
+  with `CARTESIA_API_KEY` set, voice is broken without it. Delete `state/voice_cache` once if you
+  like; the old files are repaired on read either way.
+
+### Oct 25, 01:31 PT — Hayden (via Claude Code) — branch `hayden/voice-calibration` (from `main` `77dd943`), commit `bc5b13f`
+
+**Fixed:** the eye-tracker setup's spoken prompts no longer get cut off mid-word. 865 tests pass.
+- **Queued prompts:** setup prompts queue behind the sentence already playing
+  (`speaker.say(text, interrupt=False)`).
+- **Quiet during setup:** while a calibration or check is on screen, and for 5 s after, the "position
+  changed" re-tune line is held, and the senses report no lean or squint. The setup asks people to
+  lean in and sit back, so no offer talks over it.
+- **Pacing:** each head-position round starts only after its prompt has had 2.5 s to be said.
+- **Results spoken:** calibration and quick calibrate now say their result. `agent.handle_text`
+  skips the reply once a tool has spoken, so voice requests never heard it.
+
+**Others:**
+- **Ben H and Ben W:** `GazeManager.busy()` says when the setup is on screen, if voice or offers should
+  hold too.
+- **Ben W:** there are no changes to `speech.py`. It already queues with `interrupt=False`.
 
 ### Oct 25, 00:11 PT — Hayden (via Claude Code) — branch `hayden/start-fixes` (from `main` `35b7608`), commit `d1dbe07`
 

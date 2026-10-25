@@ -495,6 +495,12 @@ class Senses:
         return target
 
     def _emit(self, struggle: Struggle) -> dict:
+        gaze = getattr(self.agent, "gaze", None)
+        if gaze is not None and callable(getattr(gaze, "busy", None)) and gaze.busy():
+            # The eye-tracker setup asks people to lean in and sit back: that is not a struggle,
+            # and an offer would talk over the setup's spoken prompts.
+            log.info("eye-tracker setup on screen; not reporting %s", struggle.kind)
+            return None
         struggle.target = self.target(struggle)
         d = struggle.to_dict()
         problems = validate_struggle(d)

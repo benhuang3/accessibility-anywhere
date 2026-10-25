@@ -39,6 +39,9 @@ FIXATION_RADIUS = 150
 UNSURE_OFFER_AFTER = 10.0
 RETUNE_OFFER_EVERY = 300.0
 RETUNE_OFFER = "Your position changed. Say check my eye tracker to re-tune it."
+# During a setup or check, and this long after it, Ally keeps its other voices quiet: the person is
+# moving on purpose (sit back, lean in), and an offer or a re-tune line would talk over the setup.
+SETUP_QUIET_AFTER = 5.0
 
 FACE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/"
                   "float16/latest/face_landmarker.task")
@@ -165,6 +168,8 @@ class GazeManager:
         self.screen = (1920, 1080)
         self._unsure_since: float | None = None
         self._retune_offer_at = 0.0
+        self.setting_up = False  # a calibration or check is on screen
+        self._setup_ended = -1e9
         self._view_sent = None  # last "view LEVEL LEFT TOP" sent to the camera helper
 
     @property
@@ -571,6 +576,8 @@ class GazeManager:
             return
         if now - self._unsure_since < UNSURE_OFFER_AFTER:
             return
+        if self.busy():
+            return
         if now - self._retune_offer_at < RETUNE_OFFER_EVERY:
             return
         self._retune_offer_at = now
@@ -662,14 +669,29 @@ class GazeManager:
         except (TypeError, ValueError):
             return 250.0
 
+    def busy(self) -> bool:
+        """True while a setup or check is on screen, and for a few seconds after it."""
+        return self.setting_up or time.monotonic() - self._setup_ended < SETUP_QUIET_AFTER
+
     def _speak(self, text: str) -> None:
+        """Say a setup prompt. It waits for the sentence already playing instead of cutting it off."""
         speaker = getattr(self.agent, "speaker", None)
         if speaker is None or not text:
             return
         try:
-            speaker.say(text)
+            try:
+                speaker.say(text, interrupt=False)
+            except TypeError:  # a speaker without the interrupt option
+                speaker.say(text)
         except Exception:
             log.debug("couldn't say the eye-tracker prompt", exc_info=True)
+
+    def _setup_on(self) -> None:
+        self.setting_up = True
+
+    def _setup_off(self) -> None:
+        self.setting_up = False
+        self._setup_ended = time.monotonic()
 
     def calibrate(self, timeout: float = 180) -> dict:
         """Show the dots and wait for the result: {"calibrated": bool, "error_px" or "why"}."""
@@ -683,10 +705,14 @@ class GazeManager:
         self._calib_done.clear()
         self._calib_result = None
         count = pose_count(self.cfg.get("calibration_poses", 3))
-        if not self.send(f"calibrate {count}"):
-            raise ToolError("The eye tracker stopped. Try again in a few seconds.")
-        if not self._calib_done.wait(timeout):
-            raise ToolError("Calibration took too long.")
+        self._setup_on()
+        try:
+            if not self.send(f"calibrate {count}"):
+                raise ToolError("The eye tracker stopped. Try again in a few seconds.")
+            if not self._calib_done.wait(timeout):
+                raise ToolError("Calibration took too long.")
+        finally:
+            self._setup_off()
         return self._calib_result or {"calibrated": False, "why": "the eye tracker stopped"}
 
     def check(self, timeout: float = 40) -> dict:
@@ -700,10 +726,14 @@ class GazeManager:
             time.sleep(0.2)
         self._calib_done.clear()
         self._calib_result = None
-        if not self.send("check"):
-            raise ToolError("The eye tracker stopped. Try again in a few seconds.")
-        if not self._calib_done.wait(timeout):
-            raise ToolError("The eye tracker check took too long.")
+        self._setup_on()
+        try:
+            if not self.send("check"):
+                raise ToolError("The eye tracker stopped. Try again in a few seconds.")
+            if not self._calib_done.wait(timeout):
+                raise ToolError("The eye tracker check took too long.")
+        finally:
+            self._setup_off()
         return self._calib_result or {"calibrated": False, "why": "the eye tracker stopped"}
 
     def choose(self, options, timeout: float = 8.0, hold: float = 0.8, clock=None, sleep=None, stop=None):

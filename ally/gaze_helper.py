@@ -72,6 +72,8 @@ VAL_COUNT = 5
 # A dot keeps collecting up to CHECK_MAX until it has CHECK_MIN_GOOD frames, for slow cameras.
 CHECK_COLLECT, CHECK_MAX, CHECK_MIN_GOOD = 0.6, 1.5, 6
 MIN_GOOD = 10  # fewer good frames than this, and that dot is shown once more
+# A new head position's spoken prompt ("Sit back a little") gets this long before its dots start.
+PROMPT_SECONDS = 2.5
 HEAD_MOVE_DEG = 3.0  # yaw or pitch change that means the head turned instead of the eyes
 WIDTH_STEADY = 0.05  # relative face-width change; 40 cm to 32 cm is much larger than this
 EYES_ONLY = "Move only your eyes, keep your head still."
@@ -1121,8 +1123,11 @@ class Setup:
 
     def _settle(self, now: float, face, wall: float) -> str:
         """Wait until the new head position holds still, then collect that round."""
-        if not self._update_steady(now, face):
-            return "running"
+        steady = self._update_steady(now, face)
+        if self._settle_since is None:
+            self._settle_since = now
+        if not steady or now - self._settle_since < PROMPT_SECONDS:
+            return "running"  # the prompt is still being said, or the head is still moving
         name = getattr(self, "_settle_pose", "")
         prompt = getattr(self, "_settle_prompt", "")
         points = getattr(self, "_settle_points", [])
@@ -1139,6 +1144,7 @@ class Setup:
         self._settle_pose = pose
         self._settle_prompt = prompt
         self._settle_points = list(points)
+        self._settle_since = None
         self.t0 = None
         self._steady_ref = None
         self._steady_since = None

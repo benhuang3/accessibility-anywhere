@@ -22,6 +22,21 @@ def _quality(result: dict) -> tuple[str, list[str]]:
     return grade, [str(line) for line in lines if line]
 
 
+def say_result(ctx, text: str) -> None:
+    """Say a setup's result after anything still playing. The agent skips its own reply once a
+    tool has spoken (the setup's opening instructions count), so the result has to be said here."""
+    speaker = getattr(getattr(ctx, "agent", None), "speaker", None)
+    if speaker is None or not text:
+        return
+    try:
+        try:
+            speaker.say(text, interrupt=False)
+        except TypeError:  # a speaker without the interrupt option
+            speaker.say(text)
+    except Exception:
+        pass
+
+
 def calibration_words(result: dict) -> str:
     """Plain result for a full setup, from the held-out validation numbers."""
     if not result.get("calibrated"):
@@ -190,7 +205,9 @@ def calibrate_eye_tracker(ctx):
     finally:
         if level > 1.0:
             p.magnify(level)
-    return calibration_words(result)
+    words = calibration_words(result)
+    say_result(ctx, words)
+    return words
 
 
 @tool(timeout=60)
@@ -211,7 +228,9 @@ def check_eye_tracker(ctx):
     finally:
         if level > 1.0:
             p.magnify(level)
-    return check_words(_save_check_retune(ctx, result))
+    words = check_words(_save_check_retune(ctx, result))
+    say_result(ctx, words)
+    return words
 
 
 @tool(timeout=60)

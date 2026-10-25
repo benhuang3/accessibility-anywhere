@@ -141,6 +141,37 @@ def tts_body(text: str, voice_id: str, model: str, speed: float = 1.0, language:
     }
 
 
+# Spoken spellings. Voices read the name Ally like Allie (AL-ee); it is said like the word ally (AL-eye).
+PRONOUNCE = {"Ally": "Al-eye", "ALLY": "Al-eye"}
+_PRONOUNCE_RE = re.compile(r"\b(" + "|".join(map(re.escape, PRONOUNCE)) + r")\b")
+
+
+def pronounce(text: str) -> str:
+    """Respell words the voices say wrong. Only the capitalized name, so the word "ally" is untouched."""
+    return _PRONOUNCE_RE.sub(lambda m: PRONOUNCE[m.group(1)], text or "")
+
+
+def fix_wav_sizes(data: bytes) -> bytes:
+    """Put the real sizes in a WAV header.
+
+    Cartesia sends WAV as a stream, with the RIFF and data sizes set to 0xFFFFFFFF (unknown).
+    Windows' PlaySound refuses such a file, so nothing is heard, and the wave module reads it as
+    about 25 hours long, so Ally believed it was still talking and ignored what it heard.
+    """
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return data
+    out = bytearray(data)
+    out[4:8] = struct.pack("<I", len(data) - 8)
+    pos = 12
+    while pos + 8 <= len(out):
+        chunk, size = bytes(out[pos:pos + 4]), struct.unpack("<I", out[pos + 4:pos + 8])[0]
+        if chunk == b"data":
+            out[pos + 4:pos + 8] = struct.pack("<I", len(out) - pos - 8)
+            break
+        pos += 8 + size + (size & 1)  # chunks are padded to an even length
+    return bytes(out)
+
+
 def cartesia_tts(text: str, voice_id: str, model: str = "sonic-3.6", speed: float = 1.0,
                  language: str = "en", timeout: float = 20, emotion: str = "", volume: float = 1.0) -> bytes:
     """One sentence (or a few) as WAV bytes. If the request is rejected only because of the
@@ -151,15 +182,15 @@ def cartesia_tts(text: str, voice_id: str, model: str = "sonic-3.6", speed: floa
                             "(python run.py voices lists them, or copy one from https://play.cartesia.ai).",
                             status=400)
     try:
-        return _cartesia_request("POST", "/tts/bytes",
-                                 tts_body(text, voice_id, model, speed, language, emotion, volume), timeout)
+        return fix_wav_sizes(_cartesia_request("POST", "/tts/bytes",
+                             tts_body(text, voice_id, model, speed, language, emotion, volume), timeout))
     except CartesiaError as e:
         plain = strip_ssml(text)
         if not (e.bad_request and (emotion or plain != text.strip())) or "model" in str(e).lower():
             raise
         log.info("Cartesia rejected the styled request (%s); retrying without emotion/SSML", e)
-        return _cartesia_request("POST", "/tts/bytes",
-                                 tts_body(plain, voice_id, model, speed, language, "", volume), timeout)
+        return fix_wav_sizes(_cartesia_request("POST", "/tts/bytes",
+                             tts_body(plain, voice_id, model, speed, language, "", volume), timeout))
 
 
 def cartesia_voices(language: str = "en", q: str = "", gender: str = "", limit: int = 100,
@@ -256,7 +287,7 @@ class PromptCache:
         if hit is not None or self.folder is None:
             return hit
         try:
-            data = (self.folder / f"{key}.wav").read_bytes()
+            data = fix_wav_sizes((self.folder / f"{key}.wav").read_bytes())  # older files kept 0xFFFFFFFF
         except OSError:
             return None
         with self._lock:
@@ -353,7 +384,7 @@ class Speaker:
     def say(self, text: str, interrupt: bool = True, wait: bool = False, style: dict | None = None) -> bool:
         cfg = self.settings()
         engine = self.engine(cfg)
-        text = (text or "").strip()
+        text = pronounce((text or "").strip())
         if engine == "off" or not strip_ssml(text):
             return False
         limit = int(cfg.get("max_chars", 4000))
@@ -432,6 +463,7 @@ class Speaker:
         when no Cartesia audio can be had, so the caller falls back to the OS voice."""
         cfg = cfg or self.settings()
         style = style or {}
+        text = pronounce(text)
         speed, emotion, volume = self._style_values(cfg, style)
         voice = cfg.get("cartesia_voice_id", "")  # the configured value keys the cache (works offline)
         cacheable = bool(style.get("cache")) and bool(cfg.get("cache_prompts", True))
