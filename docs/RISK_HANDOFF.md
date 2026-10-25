@@ -158,6 +158,32 @@ ancestor at least 60% of viewport width and between 0 and 200px high. Labels can
 sign-in and host admission still depend on Meet. On script errors or no join/leave control within 30 seconds, Ally restores plain
 Meet and keeps End call. The leave control remains callable from JavaScript when its bar is hidden.
 
+### Ally Call (Spacecall)
+
+Set `[risk] call_service = "spacecall"` and `spacecall_url = "https://ganeshkar1.github.io/ally-call/"` to use Ally Call.
+The base URL must use HTTPS, without user info, a port, whitespace or `#`. The default service is `"meet"` and the default base
+URL is empty. A missing or unusable Spacecall base falls back to `contact_call_url`, then to Tell if no valid standing link exists.
+Invalid nonempty bases are also rejected by config validation.
+
+Each Call tap or automatic high-warning alert creates a fresh 22-character room ID. The PC opens the elder URL in a maximized
+popup; the phone's ntfy Click and Join action use the helper URL. An automatic alert and its later Call taps reuse the same room
+and successful push. Automatic Spacecall alerts open the PC call before sending the push; Meet automatic alerts keep their existing
+push-only behavior. The page handles SpacetimeDB; Ally makes no database calls. Spacecall receives no Meet skin or `call.css`.
+Room IDs stay out of logs and bus events; `risk_contact` adds only `service: "spacecall"` to the existing fields.
+
+**Call-ended integration remains blocked on `ally/bridge.py` (not edited in this task).** Closing a remembered popup sends
+`{type: "event", name: "risk_call_ended", service: "meet" | "spacecall"}`. `attach` installs `bridge.on_call_ended`, which publishes
+only the service to the bus, but the bridge currently drops this event. Add these exact three lines at the start of `_handle`'s
+`elif kind == "event":` branch to connect it:
+
+```python
+            if msg.get("name") == "risk_call_ended" and callable(getattr(self, "on_call_ended", None)):
+                self.on_call_ended(msg)
+                return
+```
+
+These changes have unit and mocked-extension coverage in `test_risk_spacecall`; the live call app and phone flow are not tested here.
+
 ## 6. Changes to files owned by Ben H (please review)
 
 All small, all on `risk-branch`, all covered by tests:
@@ -170,6 +196,7 @@ All small, all on `risk-branch`, all covered by tests:
 | `ally/default_config.toml` | `[risk]` section (above), off by default | Opt-in screen review |
 | `ally/config.py`, `ally/default_config.toml` | `config.toml` keys `[risk] trusted_contact`, `contact_topic`, `contact_call_url`: validation and empty defaults | Configure the helper's name, ntfy delivery and optional standing call; `screen_review` stays false by default |
 | `ally/config.py`, `ally/default_config.toml` | `[risk] auto_alert`: boolean validation, default false | Opt in to automatic high-warning contact pushes, globally limited to one attempt per five minutes |
+| `ally/config.py`, `ally/default_config.toml` | `[risk] call_service`: `meet` (default) or `spacecall`; `spacecall_url`: empty default, HTTPS base validation | Select Ally Call with per-incident rooms, retaining the standing-call and Tell fallbacks |
 
 No changes to `proactive.py` or `contracts.py`. The coordinator's `handle_risk` already calls `warning_for`, which now exists.
 

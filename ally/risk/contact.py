@@ -4,6 +4,7 @@ Delivery is an ntfy.sh push notification: free, no account, the helper installs 
 private topic. The message never contains the web address, page text or anything typed, only what kind of risk it was.
 """
 
+import posixpath
 import re
 import urllib.parse
 import urllib.request
@@ -27,24 +28,44 @@ def message_for(kind: str) -> str:
 CALL_HOSTS = ("meet.google.com", "zoom.us", "whereby.com", "teams.microsoft.com", "teams.live.com", "meet.jit.si")
 
 
-def valid_call_url(url) -> bool:
-    if not isinstance(url, str) or len(url) > 300 or re.search(r"[\s\x00-\x1f\x7f-\x9f]", url):
-        return False
+def _https_parts(url):
+    if not isinstance(url, str) or re.search(r"[\s\x00-\x1f\x7f-\x9f\\]", url):
+        return None
     try:
         parts = urllib.parse.urlsplit(url)
-        if parts.username is not None or ":" in parts.netloc:
-            return False
-        host = (parts.hostname or "").lower()
+        if (parts.scheme != "https" or not parts.hostname
+                or parts.username is not None or ":" in parts.netloc):
+            return None
     except ValueError:
+        return None
+    return parts
+
+
+def valid_spacecall_url(url) -> bool:
+    return _https_parts(url) is not None and "#" not in url
+
+
+def valid_call_url(url, spacecall_url: str = "") -> bool:
+    parts = _https_parts(url)
+    if parts is None:
         return False
-    return parts.scheme == "https" and any(host == h or host.endswith("." + h) for h in CALL_HOSTS)
+    host = parts.hostname.lower()
+    if len(url) <= 300 and any(host == h or host.endswith("." + h) for h in CALL_HOSTS):
+        return True
+    if not valid_spacecall_url(spacecall_url):
+        return False
+    base = urllib.parse.urlsplit(spacecall_url)
+    path = posixpath.normpath(urllib.parse.unquote(parts.path) or "/")
+    prefix = posixpath.normpath(urllib.parse.unquote(base.path) or "/").rstrip("/")
+    return host == base.hostname.lower() and (path == prefix or path.startswith(prefix + "/"))
 
 
 def valid_topic(topic) -> bool:
     return isinstance(topic, str) and bool(_TOPIC.match(topic))
 
 
-def ntfy_sender(topic: str, server: str = "https://ntfy.sh", timeout: float = 4.0):
+def ntfy_sender(topic: str, server: str = "https://ntfy.sh", timeout: float = 4.0,
+                spacecall_url: str = ""):
     """A send(text) -> bool function for one private topic, or None when the topic is not usable."""
     if not valid_topic(topic):
         return None
@@ -52,7 +73,7 @@ def ntfy_sender(topic: str, server: str = "https://ntfy.sh", timeout: float = 4.
 
     def send(text: str, join_url: str = "") -> bool:
         headers = {"Title": "Ally safety alert", "Priority": "high", "Tags": "warning"}
-        if valid_call_url(join_url):  # tapping the alert (or its button) joins the video call
+        if valid_call_url(join_url, spacecall_url):  # tapping the alert (or its button) joins the video call
             headers.update({"Click": join_url, "Actions": f"view, Join the call, {join_url}, clear=true"})
         try:
             req = urllib.request.Request(url, data=text.encode("utf-8"), method="POST", headers=headers)

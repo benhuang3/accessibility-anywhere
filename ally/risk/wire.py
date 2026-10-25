@@ -2,8 +2,10 @@
 
 import logging
 import re
+import secrets
 import threading
 import time
+import urllib.parse
 
 from ally.contracts import EventBus, Offer, Risk
 from . import actions, behavior, contact, domains, fakescan, fields, joined, process, soft, text
@@ -128,7 +130,7 @@ class RiskWire:
                  poll_seconds=10.0, clock=time.time, deduper=None, ask=None, call=None,
                  broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None,
                  overlay_active=None, review_timeout_s=10.0, contact=None, notify=None, say=None):
-        self.contact = contact  # (name, send(text) -> bool) for "Tell <name>" on high warnings, or None
+        self.contact = contact  # (name, send, Meet URL, auto_alert, service, Spacecall URL), or None
         self.auto_alert = bool(contact and len(contact) > 3 and contact[3])
         self._last_auto_alert = None
         self.bus = bus
@@ -279,8 +281,70 @@ class RiskWire:
         return ok, fallback
 
     def _call_url(self) -> str:
+        spacecall_url = self._spacecall_url()
+        if spacecall_url:
+            return spacecall_url
         url = self.contact[2] if self.contact and len(self.contact) > 2 else ""
         return url if contact.valid_call_url(url) else ""
+
+    def _spacecall_url(self) -> str:
+        if self.contact and len(self.contact) > 5 and self.contact[4] == "spacecall":
+            url = self.contact[5]
+            if contact.valid_spacecall_url(url):
+                return url
+        return ""
+
+    def _call_urls(self, risk) -> tuple[str, str]:
+        base = self._spacecall_url()
+        if not base:
+            url = self._call_url()
+            return url, url
+        room = secrets.token_urlsafe(16)
+
+        def url(role):
+            fragment = urllib.parse.urlencode({"room": room, "role": role, "name": self.contact[0],
+                                               "kind": risk.kind}, quote_via=urllib.parse.quote)
+            return base + "#" + fragment
+
+        return url("elder"), url("helper")
+
+    def _open_call(self, url) -> bool:
+        if not url:
+            return False
+        try:
+            if self.call is not None:
+                args = {"url": url, "name": self.contact[0]}
+                base = self._spacecall_url()
+                if base:
+                    parts = urllib.parse.urlsplit(base)
+                    args.update(service="spacecall", spacecallOrigin=f"https://{parts.netloc}")
+                try:
+                    result = self.call("openCall", args)
+                except Exception:
+                    result = None
+                if not isinstance(result, dict) or not result.get("opened") or result.get("error"):
+                    self.call("openUrl", {"url": url, "newTab": True})
+            else:
+                import webbrowser
+
+                webbrowser.open(url)
+            return True
+        except Exception:
+            log.debug("could not open the video call")  # exceptions can contain private room URLs
+            return False
+
+    def _publish_contact(self, risk, ok, opened, auto=False) -> None:
+        event = {"name": self.contact[0], "kind": risk.kind, "ok": ok, "call_opened": opened}
+        if auto:
+            event["auto"] = True
+        if self._spacecall_url():
+            event["service"] = "spacecall"
+        self.bus.publish("risk_contact", event)
+
+    def on_call_ended(self, msg) -> None:
+        service = msg.get("service")
+        if service in ("meet", "spacecall"):
+            self.bus.publish("risk_call_ended", {"service": service})
 
     def _contact_action(self, offer, risk, alert) -> None:
         if alert is not None and not self._call_url() and (alert["sent"] or not alert["done"].is_set()):
@@ -289,14 +353,13 @@ class RiskWire:
         verb = "Call" if self._call_url() else "Tell"
         offer.extra_action = (f"{verb} {self.contact[0]}", lambda: self._tell(risk, alert))
 
-    def _send_contact(self, risk) -> bool:
-        call_url = self._call_url()
+    def _send_contact(self, risk, call_url) -> bool:
         try:
             message = contact.message_for(risk.kind) + (" Tap to join the video call." if call_url else "")
             send = self.contact[1]
             return bool(send(message, call_url) if call_url else send(message))
         except Exception:
-            log.debug("trusted contact send failed", exc_info=True)
+            log.debug("trusted contact send failed")  # sender exceptions can contain private room URLs
             return False
 
     def _auto_alert(self, risk):
@@ -307,18 +370,19 @@ class RiskWire:
             if self._last_auto_alert is not None and now - self._last_auto_alert < 300:
                 return None
             self._last_auto_alert = now
-        alert = {"sent": False, "done": threading.Event(), "offer": None}
+        alert = {"sent": False, "done": threading.Event(), "offer": None, "call_urls": self._call_urls(risk)}
 
         def send():
             try:
-                ok = self._send_contact(risk)
+                elder_url, helper_url = alert["call_urls"]
+                opened = self._open_call(elder_url) if self._spacecall_url() else False
+                ok = self._send_contact(risk, helper_url)
                 with self._lock:
                     alert["sent"] = ok
                     alert["done"].set()
                     if alert["offer"] is not None:
                         self._contact_action(alert["offer"], risk, alert)
-                self.bus.publish("risk_contact", {"name": self.contact[0], "kind": risk.kind,
-                                                 "ok": ok, "call_opened": False, "auto": True})
+                self._publish_contact(risk, ok, opened, auto=True)
             finally:
                 alert["done"].set()
 
@@ -333,29 +397,13 @@ class RiskWire:
         """Runs in a worker when the person taps 'Call/Tell <name>'. Returns the line shown in the panel.
         With a call link: open the video call here and send the helper a push whose button joins it."""
         name = self.contact[0]
-        call_url = self._call_url()
-        opened = False
-        if call_url:
-            try:
-                if self.call is not None:
-                    try:
-                        result = self.call("openCall", {"url": call_url, "name": name})
-                    except Exception:
-                        result = None
-                    if not isinstance(result, dict) or not result.get("opened") or result.get("error"):
-                        self.call("openUrl", {"url": call_url, "newTab": True})
-                else:
-                    import webbrowser
-
-                    webbrowser.open(call_url)
-                opened = True
-            except Exception:
-                log.debug("could not open the video call", exc_info=True)
+        call_url, helper_url = alert["call_urls"] if alert is not None else self._call_urls(risk)
+        opened = self._open_call(call_url)
         if alert is not None:
             alert["done"].wait()  # the call opens immediately; only delivery waits for the pending push
         already_sent = alert is not None and alert["sent"]
-        ok = already_sent or self._send_contact(risk)
-        self.bus.publish("risk_contact", {"name": name, "kind": risk.kind, "ok": ok, "call_opened": opened})
+        ok = already_sent or self._send_contact(risk, helper_url)
+        self._publish_contact(risk, ok, opened)
         if call_url and opened and ok:
             next_step = ("Hang up on the other caller first." if risk.kind == "remote_access" else
                          "They already got the alert." if already_sent else "I've asked them to join.")
@@ -608,10 +656,12 @@ def _make_contact(agent):
     except Exception:
         return None
     name = str(cfg.get("trusted_contact", "")).strip()[:30]
-    send = contact.ntfy_sender(cfg.get("contact_topic", ""))
+    spacecall_url = cfg.get("spacecall_url", "")
+    spacecall_url = spacecall_url if contact.valid_spacecall_url(spacecall_url) else ""
+    send = contact.ntfy_sender(cfg.get("contact_topic", ""), spacecall_url=spacecall_url)
     call_url = str(cfg.get("contact_call_url", "")).strip()
     return (name, send, call_url if contact.valid_call_url(call_url) else "",
-            cfg.get("auto_alert", False) is True) if name and send else None
+            cfg.get("auto_alert", False) is True, cfg.get("call_service", "meet"), spacecall_url) if name and send else None
 
 
 def attach(agent) -> RiskWire:
@@ -642,5 +692,6 @@ def attach(agent) -> RiskWire:
                     contact=_make_contact(agent), notify=notify, say=say)
     if hasattr(bridge, "on_page"):
         bridge.on_page = wire.on_page
+        bridge.on_call_ended = wire.on_call_ended
     wire.start()
     return wire
