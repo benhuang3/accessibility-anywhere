@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Simple mode fixture</title>
+  <style>
+    body { font: 14px/1.4 Arial, sans-serif; margin: 0; }
+    nav a { margin-right: 8px; font-size: 12px; }
+    main { padding: 16px; max-width: 900px; }
+    button { font-size: 12px; padding: 2px 4px; }
+  </style>
+</head>
+<body>
+  <nav aria-label="Main">
+    <a href="simple_page.html">Home</a><a href="simple_other.html">Shop</a><a href="#news">News</a>
+    <a href="#help">Help</a><a href="#contact">Contact</a>
+  </nav>
+  <main>
+    <h1>Garden supplies</h1>
+    <p>Seeds, tools and soil for every season. Browse the shop or read the news below.</p>
+    <p><button id="spa" type="button">Show offers</button></p>
+    <section id="news"><h2>News</h2><p>Spring bulbs are in stock.</p></section>
+  </main>
+  <script>
+    document.getElementById("spa").addEventListener("click", () => {
+      history.pushState({}, "", "?view=offers");
+      document.querySelector("h1").textContent = "Offers";
+    });
+  </script>
+</body>
+</html>

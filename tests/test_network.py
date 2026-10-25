@@ -61,8 +61,12 @@ class WebSocketFrameTests(unittest.TestCase):
     def test_sizes_roundtrip(self):
         for n in (0, 1, 125, 126, 65535, 65536, 200_000):
             text = "x" * n
-            self.send_client(OP_TEXT, text.encode())
+            # Send from another thread: a big frame is larger than the socket buffer (small on macOS), so
+            # sending and receiving on one thread would wait on each other forever.
+            sender = threading.Thread(target=self.send_client, args=(OP_TEXT, text.encode()))
+            sender.start()
             self.assertEqual(self.ws.recv(), text, n)
+            sender.join(5)
 
     def test_binary_and_fragments(self):
         self.send_client(OP_BIN, b"\x00\x01")
@@ -227,3 +231,30 @@ def wait_until(fn, timeout):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BridgeRoutingTests(unittest.TestCase):
+    """A command typed in one browser's popup acts on that browser, even when another one is focused."""
+
+    class FakeWS:
+        closed = False
+
+        def __init__(self):
+            self.sent = []
+
+        def send(self, text):
+            self.sent.append(json.loads(text))
+
+    def test_asking_browser_gets_the_page_actions(self):
+        from ally.bridge import Bridge, Client
+
+        seen = {}
+        bridge = Bridge(on_command=lambda text: seen.setdefault("best", bridge.best()) and "done")
+        asking, other = Client(self.FakeWS(), "chrome-extension://a"), Client(self.FakeWS(), "chrome-extension://b")
+        other.focused, other.focus_changed = True, time.time()  # the other browser looks like the better pick
+        bridge.clients += [asking, other]
+        self.assertIs(bridge.best(), other)
+        bridge._run_command(asking, {"id": 1, "text": "simple mode"})
+        self.assertIs(seen["best"], asking)
+        self.assertIs(bridge.best(), other)  # back to normal once the command is done
+        self.assertEqual(asking.ws.sent[-1]["type"], "reply")

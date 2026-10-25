@@ -25,6 +25,7 @@ from .macros import Macros
 from .paths import Paths, load_env_file
 from .platforms import get_platform
 from .proactive import Coordinator, NullUI, NullVoice
+from .voice_bus import BusVoice
 from .registry import Outcome, PluginLoader, Registry, ToolError
 from .senses.manager import Senses
 from .server import PortBusy, start_server
@@ -79,7 +80,9 @@ class Agent:
                                     events=self.events, state=self.state, log_dir=self.paths.log_dir)
         install_voice(self.confirm)
         self.gaze = GazeManager(self)
-        self.platform.set_gaze_source(self.gaze.latest, float(self.config.data["gaze"].get("pan_speed", 1.0)))
+        g = self.config.data["gaze"]
+        self.platform.set_gaze_source(self.gaze.latest, float(g.get("pan_speed", 0.85)),
+                                      float(g.get("max_pan_speed", 0.35)))
         self.last_utterance: tuple[float, float] | None = None  # (start, end) of the last spoken request
         # ---- proactive layer (see docs/integration_plan.md): bus -> coordinator -> overlay/voice -> tools.
         # Hayden's senses feeds the bus through on_struggle(); risk and simulate feed it via /api/event.
@@ -89,6 +92,12 @@ class Agent:
         self.proactive = Coordinator(self.bus, lambda n, a, src: self.call_tool(n, a, source=src), self.habits,
                                      self.proactive_context, self.proactive_cfg,
                                      ui=NullUI(self.events), voice=NullVoice(self.speaker), events=self.events)
+        # Voice asks offers out loud and resolves them with the spoken answer, says "Done. Say undo..." after a
+        # fix and listens for "undo" (ally/voice_bus.py).
+        self.proactive.voice = BusVoice(self.confirm, self.bus, lambda n, a, src: self.call_tool(n, a, source=src),
+                                        snooze=getattr(self.proactive, "snooze", None))
+        self.gaze.attach_bus(self.bus)  # offers can be answered by looking at Yes or No ([gaze] answer_offers)
+        self.bus.subscribe("offer_result", self._offer_answered)
         self.sensors: list = []  # Hayden's senses run as self.senses; the patch's own sensors are not used
         self.overlay = None      # Ganesh's overlay plugs in here when ally/overlay lands
         self.risk = None         # ally.risk.wire attachment (page/process risk -> bus)
@@ -121,7 +130,8 @@ class Agent:
             self.senses.apply()
             self.gaze.apply()
             threading.Thread(target=self.confirm.prerender, name="voice-prerender", daemon=True).start()
-            self.platform.set_gaze_source(self.gaze.latest, float(cfg["gaze"].get("pan_speed", 1.0)))
+            self.platform.set_gaze_source(self.gaze.latest, float(cfg["gaze"].get("pan_speed", 0.85)),
+                                          float(cfg["gaze"].get("max_pan_speed", 0.35)))
             self.push_profile()
 
     def save_config(self, text: str) -> tuple[bool, list, list]:
@@ -303,7 +313,17 @@ class Agent:
         except Exception:
             pass
         app = title.rsplit(" - ", 1)[-1] if " - " in title else title  # "Inbox - Google Chrome" -> "Google Chrome"
-        return {"app": app, "site": site, "in_browser": in_browser, "window": title}
+        zoom = self.bridge.tab.get("zoom") if in_browser else None
+        return {"app": app, "site": site, "in_browser": in_browser, "window": title, "zoom": zoom}
+
+    def _offer_answered(self, offer) -> None:
+        """Tell the senses about a yes or no, so a "no" pauses those signals for a while."""
+        reason = getattr(offer, "reason", None)
+        if offer.choice in ("yes", "no") and hasattr(reason, "to_dict"):
+            try:
+                self.senses.answer(reason.to_dict(), offer.choice)
+            except Exception:
+                log.debug("senses.answer failed", exc_info=True)
 
     def on_struggle(self, data: dict) -> None:
         """Bridge: Hayden's senses calls this with a struggle dict; forward it onto the bus."""
@@ -416,6 +436,8 @@ class Agent:
         self._stop.set()
         log.info("Ally stopping (code %s)", self.exit_code)
         extra = [self.proactive.stop] + ([self.overlay.stop] if self.overlay else []) + ([self.risk.stop] if self.risk else [])
+        if hasattr(self.proactive.voice, "close"):
+            extra.append(self.proactive.voice.close)
         for step in (*extra, self.confirm.cancel, self.hotkeys.stop, self.listener.stop, self.senses.stop,
                      self.gaze.stop, self.speaker.stop, self.platform.shutdown, self.bridge.close_all):
             try:

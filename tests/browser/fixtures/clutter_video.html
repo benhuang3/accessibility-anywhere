@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clutter: video page</title>
+<style>
+  body { margin: 0; }
+  video { display: block; width: 100vw; height: 80vh; background: #000; }
+  .spin { animation: spin 2s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<video controls muted></video>
+<p><span class="spin">*</span> Video description.</p>
+</body>
+</html>

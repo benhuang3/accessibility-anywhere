@@ -27,113 +27,7 @@ from ally.voice_confirm import VoiceConfirm, classify, rephrase
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fake_cartesia import FakeCartesia  # noqa: E402
 from voice_phrases import PHRASES, evaluate, label  # noqa: E402
-
-
-# ----------------------------------------------------------------------------- fakes
-class FakeSpeaker:
-    """Records what would be said; 'speaks' for a short, fixed time."""
-
-    def __init__(self, seconds=0.05, enabled=True):
-        self.seconds, self.enabled = seconds, enabled
-        self.said: list[tuple[str, dict]] = []
-        self._gen = 0
-        self._until = 0.0
-        self.audio_started: dict = {}
-        self.rate_override = None
-        self.last_engine = "cartesia"
-        self.stops = 0
-        self.prerendered: list = []
-
-    @property
-    def speaking(self):
-        return time.monotonic() < self._until
-
-    @property
-    def generation(self):
-        return self._gen
-
-    def say(self, text, interrupt=True, wait=False, style=None):
-        if not self.enabled:
-            return False
-        self._gen += 1
-        self.said.append((text, dict(style or {})))
-        self.audio_started[self._gen] = time.perf_counter()
-        self._until = time.monotonic() + self.seconds
-        if wait:
-            time.sleep(self.seconds)
-        return True
-
-    def wait(self, timeout=None):
-        while self.speaking:
-            time.sleep(0.01)
-
-    def stop(self):
-        self.stops += 1
-        self._gen += 1
-        self._until = 0.0
-
-    def beep(self, kind="start", wait=True):
-        pass
-
-    def rate(self):
-        return self.rate_override or 1.0
-
-    def prerender(self, items):
-        self.prerendered = list(items)
-        return len(items), ""
-
-    def info(self):
-        return {"last_engine": self.last_engine}
-
-    def texts(self):
-        return [speech.strip_ssml(t) for t, _ in self.said]
-
-
-class FakeEars:
-    """Each listen gets the next session: [(delay_s, text), ...]. pcm carries the text."""
-
-    def __init__(self, sessions, in_speech=False):
-        self.sessions = list(sessions)
-        self.opened = 0
-        self.closed = 0
-        self.in_speech = in_speech
-
-    def __call__(self):
-        session = self.sessions.pop(0) if self.sessions else []
-        self.opened += 1
-        q: queue.Queue = queue.Queue()
-        stop = threading.Event()
-
-        def feed():
-            start = time.time()
-            for item in session:
-                delay, text = item[0], item[1]
-                eager = len(item) > 2 and item[2]
-                if stop.wait(delay):
-                    return
-                now = time.time()
-                q.put(Utterance(text.encode(), now - 0.4, now, False, eager=eager))
-            del start
-
-        threading.Thread(target=feed, daemon=True).start()
-
-        def close():
-            stop.set()
-            self.closed += 1
-        return q, close, "test", lambda: self.in_speech
-
-
-def settings(**confirm):
-    cfg = json.loads(json.dumps(DEFAULTS))
-    cfg["confirm"].update(dict(listen_seconds=0.6, listen_delay_ms=10, log_latency=False), **confirm)
-    return lambda: cfg
-
-
-def make(sessions=(), speaker=None, **confirm):
-    sp = speaker or FakeSpeaker()
-    ears = FakeEars(sessions)
-    vc = VoiceConfirm(sp, settings(**confirm), ears=ears, transcriber=lambda pcm: pcm.decode())
-    return vc, sp, ears
+from voice_fakes import FakeEars, FakeOffer, FakeSpeaker, make, settings, vc_prompt  # noqa: E402
 
 
 # ----------------------------------------------------------------------------- understanding answers
@@ -164,6 +58,26 @@ class ClassifyTests(unittest.TestCase):
                 self.assertTrue(r.endswith("?"), r)
                 self.assertLessEqual(len(r.split()), 10)
         self.assertEqual(rephrase("Want me to turn on high contrast?"), "Should I turn on high contrast for you?")
+
+    def test_rephrase_uses_the_last_question(self):
+        # The Coordinator's prompts can lead with a question of their own.
+        q = "Having trouble clicking? Want me to make the buttons bigger?"
+        self.assertEqual(rephrase(q), "Should I make the buttons bigger for you?")
+        self.assertEqual(vcm.action_word(q), "make")
+
+    def test_risk_answers_mean_the_protective_action(self):
+        remote = "Someone may be trying to control your computer. Disconnect them?"
+        scam = "This pop-up may be a scam. Close it?"
+        page = "This website may not be safe. Close this page?"
+        self.assertEqual(classify("Stop them!", remote, protective=True).kind, "YES")
+        self.assertEqual(classify("stop it", scam, protective=True).kind, "YES")
+        self.assertEqual(classify("get me out of here", page, protective=True).kind, "YES")
+        for unclear in ("stop", "cancel it", "go back"):  # may mean either: re-ask, never a silent no
+            with self.subTest(text=unclear):
+                self.assertEqual(classify(unclear, page, protective=True).kind, "AMBIGUOUS")
+        self.assertNotEqual(classify("don't stop it", scam, protective=True).kind, "YES")
+        self.assertEqual(classify("no", scam, protective=True).kind, "NO")
+        self.assertEqual(classify("stop it", "Want me to make this bigger?").kind, "NO")  # offers unchanged
 
 
 # ----------------------------------------------------------------------------- asking
@@ -268,6 +182,21 @@ class AskTests(unittest.TestCase):
         self.assertGreaterEqual(sp.stops, 1)
         self.assertFalse(vc.answer("no"))  # nothing open any more
 
+    def test_stopped_mid_question_does_not_listen(self):
+        vc, sp, ears = make([[(0.05, "Yes.")]], speaker=FakeSpeaker(seconds=1.0))
+        threading.Timer(0.15, sp.stop).start()  # what the listener does on "Ally, stop"
+        t0 = time.monotonic()
+        a = vc.ask("Want me to make this bigger?")
+        self.assertEqual((a.value, a.intent), ("timeout", "STOPPED"))
+        self.assertEqual(ears.opened, 0)
+        self.assertLess(time.monotonic() - t0, 0.8)
+
+    def test_other_speech_during_a_question_does_not_stop_it(self):
+        vc, sp, ears = make([[(0.05, "Yes.")]], speaker=FakeSpeaker(seconds=0.3))
+        threading.Timer(0.1, lambda: sp.say("I'll make this bigger, like last time.")).start()
+        self.assertEqual(vc.ask("Want me to make this bigger?").value, "yes")
+        self.assertEqual(ears.opened, 1)
+
     def test_voice_answer_then_button_is_ignored(self):
         vc, _, _ = make([[(0.05, "No.")]])
         a = vc.ask("Want me to make this bigger?")
@@ -331,22 +260,7 @@ class AskTests(unittest.TestCase):
         self.assertEqual(vc.info()["latency"]["last"][0]["answer"], "yes")
 
 
-def vc_prompt(name):
-    return speech.strip_ssml(vcm.PROMPTS[name])
-
-
 # ----------------------------------------------------------------------------- offers and risks
-class FakeOffer:
-    def __init__(self, prompt="Want me to make this bigger?"):
-        self.prompt, self.timeout, self.answer, self.by = prompt, 20, None, None
-
-    def resolve(self, answer, by):
-        if self.answer is None:
-            self.answer, self.by = answer, by
-            return True
-        return False
-
-
 class OfferAndRiskTests(unittest.TestCase):
     def test_offer_resolved_by_voice(self):
         vc, _, _ = make([[(0.05, "Sure.")]])
@@ -363,6 +277,17 @@ class OfferAndRiskTests(unittest.TestCase):
         t.join(3)
         self.assertEqual((offer.answer, offer.by), ("yes", "button"))
         self.assertLess(time.monotonic() - t0, 1.0)
+
+    def test_button_answer_resolves_the_offer(self):
+        vc, _, _ = make([[(1.5, "No.")]], listen_seconds=3)
+        offer = FakeOffer()
+        threading.Timer(0.2, lambda: vc.answer("yes", by="cli")).start()  # run.py answer yes
+        a = vc.confirm_offer(offer)
+        self.assertEqual((a.by, offer.answer, offer.by), ("cli", "yes", "cli"))
+
+    def test_spoken_stop_them_answers_a_risk_question(self):
+        vc, _, _ = make([[(0.05, "Stop them!")]])
+        self.assertEqual(vc.warn({"kind": "remote_access", "severity": "high"}).value, "yes")
 
     def test_offer_as_dict_and_silence(self):
         vc, _, _ = make([[]])
@@ -459,6 +384,7 @@ class CartesiaSpeechTests(unittest.TestCase):
         self.fake.set(tts="ok", stt="ok", reject_models=[], reject_emotion=False, tts_latency=0)
         self.fake.reset()
         speech._voice_names.clear()
+        speech._voice_misses.clear()
 
     def speaker(self, cache=None, **cfg):
         c = json.loads(json.dumps(DEFAULTS["speech"]))
@@ -549,6 +475,60 @@ class CartesiaSpeechTests(unittest.TestCase):
         with self.assertRaises(speech.CartesiaError):
             speech.resolve_voice("Nobody")
         self.assertEqual(speech.resolve_voice("leo"), "22222222-2222-4222-8222-222222222222")
+
+    def test_not_interrupting_waits_for_the_current_sound(self):
+        events = []
+
+        class Slow(_Done):
+            def __init__(self, text):
+                self.text, self.end = text, time.monotonic() + 0.2
+                events.append(("start", text))
+
+            def wait(self, timeout=None):
+                while time.monotonic() < self.end:
+                    time.sleep(0.01)
+                events.append(("end", self.text))
+                return 0
+
+        plat = RecPlatform()
+        plat.tts_start = lambda text, rate, voice: Slow(text)
+        c = json.loads(json.dumps(DEFAULTS["speech"]))
+        c["engine"] = "system"
+        s = speech.Speaker(plat, lambda: c)
+        s.say("Sure. Here it is.")
+        s.say("The letter says your statement is ready.", interrupt=False, wait=True)
+        self.assertEqual(events, [("start", "Sure. Here it is."), ("end", "Sure. Here it is."),
+                                  ("start", "The letter says your statement is ready."),
+                                  ("end", "The letter says your statement is ready.")])
+        events.clear()
+        s.say("One.")
+        s.say("Two.", interrupt=False)
+        time.sleep(0.05)
+        s.stop()  # stops what plays and what waits
+        time.sleep(0.4)
+        self.assertNotIn(("start", "Two."), events)
+
+    def test_unknown_voice_name_is_not_looked_up_every_sentence(self):
+        before = self.fake.voice_requests
+        for _ in range(3):
+            with self.assertRaises(speech.CartesiaError):
+                speech.resolve_voice("Nobody")
+        self.assertEqual(self.fake.voice_requests - before, 1)
+
+    def test_partial_fallback_keeps_the_style_speed(self):
+        s, plat = self.speaker()
+        calls = []
+        real = s.render
+
+        def render(piece, cfg=None, style=None):
+            calls.append(piece)
+            if len(calls) > 1:
+                raise speech.CartesiaError("Can't reach Cartesia")
+            return real(piece, cfg, style)
+        s.render = render
+        s.say("First sentence here. " + "word " * 120 + "end.", wait=True, style={"speed": 0.8})
+        self.assertEqual(len(plat.wavs), 1)
+        self.assertEqual(plat.tts[0][1], 0.8)
 
     def test_voice_list(self):
         names = [v["name"] for v in speech.cartesia_voices()]
@@ -687,6 +667,130 @@ class AgentVoiceTests(unittest.TestCase):
         ai = {t["name"] for t in self.agent.tools_info() if t.get("ai")}
         self.assertIn("ask_yes_no", ai)
         self.assertNotIn("warn_risk", ai)
+
+
+# ----------------------------------------------------------------------------- Offers from the proactive layer
+class ChoiceAndRiskOfferTests(unittest.TestCase):
+    """Offers as the Coordinator and RiskWire (risk-branch) create them."""
+
+    OPTIONS = ("Close it", "Keep it open")
+    SURE = "Are you sure? Scammers often say it's safe to continue."
+
+    def test_classify_choices(self):
+        cases = {"Close it.": "YES", "Yes, close it.": "YES", "Keep it open.": "NO", "Leave it open.": "NO",
+                 "Yes.": "AMBIGUOUS", "I'm sure.": "AMBIGUOUS", "Yes, I'm sure.": "AMBIGUOUS",
+                 "Don't close it.": "AMBIGUOUS", "No, keep it open.": "AMBIGUOUS", "What?": "REPEAT"}
+        for text, want in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(vcm.classify_options(text, self.OPTIONS, protective=True).kind, want)
+
+    def test_choice_question_drops_the_yes_no_question(self):
+        q = speech.strip_ssml(vcm.option_question(self.SURE, self.OPTIONS))
+        self.assertEqual(q, "Scammers often say it's safe to continue. Should I close it, or keep it open?")
+
+    def test_are_you_sure_offer_needs_a_choice(self):
+        from ally.contracts import Offer
+
+        vc, sp, _ = make([[(0.05, "Yes, I'm sure.")], [(0.05, "Keep it open.")]], listen_seconds=1)
+        offer = Offer(self.SURE, options=self.OPTIONS, context="risk", timeout=20)
+        a = vc.confirm_offer(offer)
+        self.assertEqual((a.value, offer.choice, offer.answered_by), ("no", "no", "voice"))
+        self.assertTrue(sp.texts()[0].endswith("Should I close it, or keep it open?"))
+        self.assertIn("close it, or keep it open", sp.texts()[1])  # the re-ask names the choices again
+        time.sleep(0.05)
+        self.assertNotIn(vc_prompt("no_reply"), sp.texts())  # risk questions get no "No problem."
+
+    def test_risk_offer_is_calm_slow_and_protective(self):
+        from ally.contracts import Offer
+
+        vc, sp, _ = make([[(0.05, "Stop it!")]])
+        offer = Offer("Close this page?", context="risk", timeout=20)
+        a = vc.confirm_offer(offer, lead="This website may not be safe.")
+        self.assertEqual((a.value, offer.choice), ("yes", "yes"))
+        raw, style = sp.said[0]
+        self.assertEqual(speech.strip_ssml(raw), "This website may not be safe. Close this page?")
+        self.assertLess(style["speed"], 0.9)
+
+    def test_no_waits_until_the_pause_is_over(self):
+        from ally.contracts import Offer
+
+        vc, sp, _ = make([[(0.05, "No.")], [(0.7, "No.")]], listen_seconds=1.5)
+        offer = Offer("Close the remote tool?", context="risk", timeout=20)
+        offer.pause_seconds = 0.5
+        a = vc.confirm_offer(offer)
+        self.assertEqual((a.value, a.attempts), ("no", 2))
+        self.assertIn(vc_prompt("think"), sp.texts()[1])
+
+    def test_no_reask_that_cannot_finish_in_time(self):
+        from ally.contracts import Offer
+
+        vc, sp, ears = make([[(0.05, "Maybe.")]])
+        offer = Offer("Want me to make this bigger?", timeout=2.5)
+        a = vc.confirm_offer(offer)
+        self.assertEqual(a.value, "timeout")
+        self.assertEqual((ears.opened, len(sp.said)), (1, 1))  # asked once, no re-ask or button hint
+        self.assertIsNone(offer.choice)  # the Offer's own timer decides
+
+    def test_stop_asking_is_its_own_no(self):
+        vc, _, _ = make([[(0.05, "Please stop asking me.")]])
+        a = vc.ask("Want me to make this bigger?")
+        self.assertEqual((a.value, a.intent), ("no", "STOP_ASKING"))
+
+    def test_warn_with_the_callers_words(self):
+        vc, sp, ears = make([[(0.05, "Close it.")]])
+        self.assertIsNone(vc.warn({"kind": "scam_popup", "severity": "high"}, spoken="Ganesh's words."))
+        time.sleep(0.05)
+        self.assertEqual(sp.texts(), ["Ganesh's words."])
+        self.assertEqual(ears.opened, 0)  # spoken copy without a question asks nothing
+        a = vc.warn({"kind": "scam_popup", "severity": "high"}, spoken="Ganesh's words.", question="Close it?")
+        self.assertEqual(a.value, "yes")
+
+    def test_slower_stops_where_cartesia_does(self):
+        vc, sp, _ = make()
+        sp.rate_override = 0.9
+        self.assertEqual(vc.slow_down(), 0.84)  # 0.84 * 0.85 (warning) * 0.85 (slow re-ask) >= 0.6
+        self.assertEqual(vc.slow_down(), 0.84)
+
+
+class ShortListenTests(unittest.TestCase):
+    def test_hears_undo(self):
+        vc, _, _ = make([[(0.05, "Undo that.")]])
+        self.assertEqual(vc.listen_for({"UNDO"}, 1).kind, "UNDO")
+
+    def test_other_requests_go_to_the_listener(self):
+        handled = []
+
+        class Listener:
+            claim_eager = None
+
+            def handle(self, utt):
+                handled.append(utt.pcm.decode())
+        vc, _, _ = make([[(0.05, "Ally, make it bigger.")]])
+        vc.listener = Listener()
+        self.assertIsNone(vc.listen_for({"UNDO"}, 0.4))
+        time.sleep(0.05)
+        self.assertEqual(handled, ["Ally, make it bigger."])
+
+    def test_a_question_replaces_it_and_buttons_ignore_it(self):
+        vc, _, _ = make([[(1.5, "Undo.")], [(0.05, "Yes.")]], listen_seconds=2)
+        got = {}
+        t = threading.Thread(target=lambda: got.update(i=vc.listen_for({"UNDO"}, 2)))
+        t.start()
+        time.sleep(0.2)
+        self.assertTrue(vc.busy)
+        self.assertFalse(vc.asking)
+        self.assertFalse(vc.answer("yes"))  # nothing to answer during a short listen
+        self.assertEqual(vc.ask("Want me to read this to you?").value, "yes")
+        t.join(3)
+        self.assertIsNone(got["i"])
+
+    def test_never_replaces_a_question(self):
+        vc, _, _ = make([[(0.4, "Yes.")]], listen_seconds=1)
+        t = threading.Thread(target=lambda: vc.ask("Want me to make this bigger?"))
+        t.start()
+        time.sleep(0.1)
+        self.assertIsNone(vc.listen_for({"UNDO"}, 1))
+        t.join(3)
 
 
 if __name__ == "__main__":

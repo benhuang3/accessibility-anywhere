@@ -72,3 +72,38 @@ $("dashboard").addEventListener("click", (e) => {
 
 refresh();
 $("text").focus();
+
+// ---- Simple mode (extension/steps/simple.js). ?tab=<id> picks a tab when popup.html is opened in a tab.
+const simpleTabId = Number(new URLSearchParams(location.search).get("tab")) || undefined;
+const askSimple = (msg) => chrome.runtime.sendMessage({ kind: "ally-simple", tabId: simpleTabId, ...msg });
+
+async function refreshSimple() {
+  const s = await askSimple({ op: "status" }).catch(() => null);
+  if (!s || !s.ok) return;
+  $("simple").hidden = false;
+  $("simple-on").checked = !!(s.remembered || s.active);
+  $("simple-on").disabled = !s.allowed;
+  $("simple-host").textContent = s.host ? ` (${s.host})` : "";
+  if (!s.allowed) $("simple-msg").textContent = "Simple mode works on normal websites only.";
+  $("simple-forget").hidden = !s.count;
+}
+
+$("simple-on").addEventListener("change", async () => {
+  const on = $("simple-on").checked;
+  $("simple-on").disabled = true;
+  $("simple-msg").textContent = on ? "Simplifying…" : "Turning off…";
+  const r = await askSimple({ op: "toggle", on }).catch((e) => ({ ok: false, error: e.message }));
+  $("simple-on").disabled = false;
+  await refreshSimple();
+  $("simple-msg").textContent = r.ok ? (on ? "Simple mode is on. Ally will keep this site simple." : "Simple mode is off.") : r.error;
+});
+
+$("simple-forget").addEventListener("click", async (e) => {
+  e.preventDefault();
+  const r = await askSimple({ op: "forgetAll" }).catch(() => null);
+  await refreshSimple();
+  if (r && r.ok) $("simple-msg").textContent = "Ally forgot all simple sites.";
+});
+
+refreshSimple();
+// ---- /Simple mode

@@ -6,6 +6,7 @@ import importlib.util
 import os
 import platform
 import sys
+import time
 
 from . import __version__, autostart
 from .claude import Claude, ClaudeError
@@ -37,6 +38,71 @@ def importable(module: str) -> tuple[bool, str]:
         return True, "installed"
     except Exception as e:
         return False, f"installed but won't load: {type(e).__name__}: {e}"[:200]
+
+
+def _ago(created: float, now: float) -> str:
+    age = max(0, int(now - created))
+    if age < 90:
+        return "just now"
+    if age < 3600:
+        minutes = max(1, age // 60)
+        return "1 minute ago" if minutes == 1 else f"{minutes} minutes ago"
+    if age < 48 * 3600:
+        hours = max(1, age // 3600)
+        return "1 hour ago" if hours == 1 else f"{hours} hours ago"
+    days = max(1, age // 86400)
+    return "1 day ago" if days == 1 else f"{days} days ago"
+
+
+def describe_calibration(model, camera, features="v1", now=None) -> tuple[str, str]:
+    """(status, detail) for a saved calibration: age, check, feature set, and camera.
+
+    The camera check is the same one the camera helper uses. This does not open the camera.
+    """
+    from .gaze_helper import kept_model, result_grade
+
+    known = ("v1", "v2", "v3", "v4", "v5")
+    features = features if features in known else "v1"
+    if not model:
+        return "warn", f'not calibrated yet: say "Ally, calibrate my eyes" (features {features})'
+    if kept_model(model, camera) is None:
+        return "warn", (f"saved for camera {model.get('camera')}, but gaze.camera is {camera}. "
+                        'Say "Ally, calibrate my eyes".')
+    now = time.time() if now is None else float(now)
+    created = model.get("created")
+    if isinstance(created, (int, float)) and not isinstance(created, bool):
+        lead = f"calibrated {_ago(float(created), now)}"
+    else:
+        lead = "calibrated"
+    val = model.get("validation") if isinstance(model.get("validation"), dict) else {}
+    err, hits, total = val.get("error_px"), val.get("region_hits"), val.get("region_total")
+    if err is not None and total:
+        check = f"check about {err} px, {int(hits or 0)} of {int(total)} areas"
+        grade = result_grade({"error_px": err, "region_hits": int(hits or 0), "region_total": int(total)})
+        status = "ok" if grade in ("good", "okay") else "warn"
+    else:
+        check = "no held-out check saved"
+        status = "ok"
+    feat = model.get("features") if model.get("features") in known else features
+    cam = model.get("camera")
+    cam_bit = f"camera {cam}" if cam is not None else f"camera {camera}"
+    return status, f"{lead}; {check}; features {feat}; {cam_bit}"
+
+
+def describe_gaze_cnn(state_dir) -> tuple[str, str, str]:
+    """Whether the v5 model file is present and onnxruntime imports. Does not open the camera."""
+    from .gaze_helper import cnn_readiness
+
+    ready = cnn_readiness(state_dir)
+    if ready["file"] and ready["onnxruntime"]:
+        return "ok", "Gaze model", "mobileone_s0_gaze.onnx is present, and onnxruntime imports"
+    missing = []
+    if not ready["file"]:
+        missing.append("mobileone_s0_gaze.onnx is missing")
+    if not ready["onnxruntime"]:
+        missing.append("onnxruntime is not installed")
+    return "warn", "Gaze model", (
+        "; ".join(missing) + ". Fix: python scripts/get_gaze_models.py, pip install onnxruntime")
 
 
 def voice_checks(cfg: dict, online: bool = True) -> list[tuple[str, str, str]]:
@@ -171,18 +237,22 @@ def run_checks(home=None, online: bool = True) -> list[tuple[str, str, str]]:
                     f"(offline speech-to-text {v.get('whisper_model', 'base.en')}; the model downloads once)"))
     else:
         out.append(("warn", "Always listening", "needs offline speech-to-text: pip install faster-whisper"))
-    if not cm.data["gaze"].get("enabled"):
+    gaze_cfg = cm.data["gaze"]
+    if not gaze_cfg.get("enabled"):
         out.append(("ok", "Eye tracking", "off (gaze.enabled = false)"))
-    elif not has_gaze_packages():
-        out.append(("warn", "Eye tracking", "pip install mediapipe opencv-python"))
     else:
-        from . import gaze_model
+        if not has_gaze_packages():
+            out.append(("warn", "Eye tracking", "pip install mediapipe opencv-python"))
+        else:
+            from . import gaze_model
 
-        calibrated = gaze_model.load(paths.state_dir / "gaze_calibration.json") is not None
-        model = (paths.state_dir / "models" / "face_landmarker.task").exists()
-        out.append(("ok" if calibrated else "warn", "Eye tracking",
-                    ("calibrated" if calibrated else "not calibrated yet: say \"Ally, calibrate my eyes\"")
-                    + ("" if model else "; the face model (3.7 MB) downloads on first start")))
+            loaded = gaze_model.load(paths.state_dir / "gaze_calibration.json")
+            status, detail = describe_calibration(loaded, int(gaze_cfg.get("camera", 0)),
+                                                  str(gaze_cfg.get("features", "v5")))
+            if loaded is None and not (paths.state_dir / "models" / "face_landmarker.task").exists():
+                detail += "; the face model (3.7 MB) downloads on first start"
+            out.append((status, "Eye tracking", detail))
+        out.append(describe_gaze_cnn(paths.state_dir))
     s = cm.data["senses"]
     if not s.get("vision"):
         out.append(("ok", "Face sensing", "off (senses.vision = false)"))

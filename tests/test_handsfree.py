@@ -173,7 +173,7 @@ class GazeModelTests(unittest.TestCase):
         """Fake eye features that depend on the target in a curved way, plus head wobble."""
         rnd = np.random.default_rng(seed)
         screen = (1920, 1080)
-        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.1, 0.5, 0.9) for fx in (0.08, 0.5, 0.92)]
+        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.06, 0.5, 0.94) for fx in (0.08, 0.5, 0.92)]
         samples = []
         for tx, ty in dots:
             for _ in range(n_per_dot):
@@ -283,7 +283,9 @@ class GazeToolTests(unittest.TestCase):
         os_ = types.SimpleNamespace(view=lambda: (2.0, 100, 50), last_magnify=2.0,
                                     magnify_at=lambda *a, **k: calls.append((a, k)) or "ok")
         ctx = types.SimpleNamespace(agent=types.SimpleNamespace(gaze=types.SimpleNamespace(
-            point_for_request=lambda: (960, 540), last_point=None)), os=os_, event=lambda *a, **k: None)
+            target=lambda t0=None, t1=None: {"x": 960, "y": 540, "radius_px": 40, "confidence": 0.8,
+                                              "region": "middle", "source": "eyes", "why": ""},
+            last_point=None)), os=os_, event=lambda *a, **k: None)
         magnify_where_i_look(ctx)
         (level, cx, cy), kw = calls[0]
         self.assertEqual((level, cx, cy, kw["follow"]), (2.0, 580.0, 320.0, "eyes"))  # 100 + 960/2, 50 + 540/2
@@ -294,9 +296,12 @@ class HandsFreeConfigTests(unittest.TestCase):
         for s in ("I want what I'm looking at magnified", "Zoom in on what I am looking at", "magnify here"):
             self.assertEqual(rules.match(s).actions, [("magnify_where_i_look", {})], s)
         self.assertEqual(rules.match("calibrate my eyes").actions, [("calibrate_eye_tracker", {})])
+        self.assertEqual(rules.match("set up my eyes").actions, [("calibrate_eye_tracker", {})])
+        self.assertEqual(rules.match("what am I looking at").actions, [("where_am_i_looking", {})])
+        self.assertEqual(rules.match("check my eye tracker").actions, [("check_eye_tracker", {})])
         self.assertEqual(rules.match("turn off the camera").actions, [("eye_tracking", {"on": False})])
         self.assertEqual(rules.match("follow my eyes").actions, [("magnifier_follow", {"target": "eyes"})])
-        self.assertEqual(rules.match("make it bigger").actions, [("zoom_in", {})])
+        self.assertEqual(rules.match("make it bigger").actions, [("enlarge_text", {"goal": "bigger"})])
 
     def test_settings(self):
         errors, _w = config_mod.validate(config_mod.merge({"voice": {"wake_words": []}}))

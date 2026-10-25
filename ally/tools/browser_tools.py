@@ -14,10 +14,10 @@ def _styles(cfg: dict) -> list[str]:
 
 @tool
 def set_page_zoom(ctx, zoom: Annotated[float, "Zoom factor: 1.0 = normal (100%), 1.5 = 150%, 2.0 = double. 0.25 to 5."]):
-    """Zoom the current web page in Chrome so text and images get bigger or smaller.
+    """Zoom the current web page in Chrome to an exact level, only when the user asks to zoom ("zoom to 150 percent").
 
-    Use when the user says a web page or its text is too small or too big. Chrome remembers the
-    zoom for each website. Only affects the active Chrome tab, not other apps.
+    For "bigger", "too small" or "I can't read this" use enlarge_text instead: it makes the text itself
+    bigger without zooming. Chrome remembers the zoom for each website. Only affects the active tab.
     """
     z = max(0.25, min(5.0, float(zoom)))
     got = ctx.browser.call("setZoom", factor=z)

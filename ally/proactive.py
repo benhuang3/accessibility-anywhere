@@ -25,21 +25,58 @@ from .habits import HabitMemory, context_key
 log = logging.getLogger("ally")
 
 DEFAULTS = {
-    "enabled": True, "offer_timeout_seconds": 8.0, "cooldown_seconds": 30.0, "fusion_window_seconds": 4.0,
+    "enabled": True, "offer_timeout_seconds": 20.0, "cooldown_seconds": 30.0, "fusion_window_seconds": 4.0,
     "min_confidence": 0.6, "auto_apply_after": 2, "voice_confirm": True, "overlay": True,
     "senses_behavior": True, "senses_vision": False, "camera_index": 0, "context_poll_seconds": 1.5,
 }
 
 
 # ---------------------------------------------------------------- what to do about each struggle
-def pick_accommodation(kind: str, in_browser: bool) -> Accommodation:
+SEEING = ("squint", "lean", "retype")
+CLICKING = ("rage_click",)
+# Page-step fixes measure and verify the page, so replaying them on every switch back to Chrome would be
+# slow; and Chrome already remembers the zoom per site.
+PAGE_TOOLS = ("enlarge_text", "enlarge_buttons", "simplified_mode")
+SIMPLE_OFFER = Accommodation("simple_site", "make this site simpler", "simplified_mode", {})
+SIMPLE_WINDOW_SECONDS = 300
+SIMPLE_OFFER_EVERY_SECONDS = 24 * 3600
+REPLAY_EVERY_SECONDS = 600
+
+
+def trusted_source(s: Struggle) -> bool:
+    """Struggles that already passed the senses' own confidence gate ("senses", "senses.vision", ...,
+    and the senses' own simulator, "simulated")."""
+    src = s.source or ""
+    return src == "senses" or src.startswith("senses.") or src == "simulated"
+
+
+def fused_kinds(s: Struggle | None) -> set[str]:
+    """The signal kinds behind a struggle: a "fused" one lists them in detail["signals"]."""
+    if s is None:
+        return set()
+    kinds = {p.get("kind") for p in (s.detail or {}).get("signals", []) if isinstance(p, dict)}
+    kinds.discard(None)
+    return kinds or {s.kind}
+
+
+def pick_accommodation(kind: str, in_browser: bool, signals=()) -> Accommodation:
     """Map a struggle to one concrete Ally tool call. Edit freely, the keys feed habit memory."""
+    if in_browser and kind in ("squint", "lean", "fused", "rage_click", "retype"):
+        kinds = set(signals) or {kind}
+        seeing, clicking = bool(kinds & set(SEEING)), bool(kinds & set(CLICKING))
+        if kind == "fused" and not (seeing or clicking):
+            seeing = True
+        if seeing and clicking:
+            return Accommodation("easier_both", "make this page bigger and easier to click", "enlarge_text",
+                                 {"goal": "bigger", "buttons": True, "in_browser": True})
+        if clicking:
+            return Accommodation("easier_clicking", "make the buttons bigger", "enlarge_buttons", {})
+        return Accommodation("easier_reading", "make this page easier to read", "enlarge_text",
+                             {"goal": "bigger", "in_browser": True})
     if kind in ("squint", "lean", "fused"):
-        return (Accommodation("page_zoom_150", "make this page bigger", "set_page_zoom", {"zoom": 1.5})
-                if in_browser else
-                Accommodation("magnify_2x", "magnify the screen", "magnify_screen", {"level": 2.0}))
+        return Accommodation("magnify_2x", "magnify the screen", "magnify_screen", {"level": 2.0})
     if kind == "rage_click":
-        return (Accommodation("page_zoom_150", "make the buttons bigger", "set_page_zoom", {"zoom": 1.5})
+        return (Accommodation("easier_clicking", "make the buttons bigger", "enlarge_buttons", {})
                 if in_browser else
                 Accommodation("magnify_2x", "make things bigger so they're easier to click",
                               "magnify_screen", {"level": 2.0}))
@@ -49,10 +86,18 @@ def pick_accommodation(kind: str, in_browser: bool) -> Accommodation:
                 Accommodation("describe_screen", "tell you what's on the screen", "describe_screen",
                               {"question": "Briefly explain what is on screen and what the user can do next."}))
     if kind == "retype":
-        return (Accommodation("min_font_20", "make the text larger", "set_min_font_size", {"px": 20})
-                if in_browser else
-                Accommodation("magnify_150", "make the screen a bit bigger", "magnify_screen", {"level": 1.5}))
+        return Accommodation("magnify_150", "make the screen a bit bigger", "magnify_screen", {"level": 1.5})
     raise ValueError(kind)
+
+
+def known_keys() -> set[str]:
+    """Every habit key the current code can produce; habits stored under other keys are old and skipped."""
+    keys = {SIMPLE_OFFER.key}
+    for kind in ("squint", "lean", "fused", "rage_click", "hesitation", "retype"):
+        for in_browser in (True, False):
+            for signals in ((), ("squint", "rage_click")):
+                keys.add(pick_accommodation(kind, in_browser, signals).key)
+    return keys
 
 
 OFFER_PROMPTS = {
@@ -62,6 +107,7 @@ OFFER_PROMPTS = {
     "rage_click": "Having trouble clicking? Want me to {label}?",
     "hesitation": "Want me to {label}?",
     "retype": "Want me to {label}?",
+    "simple": "This site looks hard to use. Want me to {label}?",
 }
 
 
@@ -132,6 +178,11 @@ class Coordinator:
         self._q: queue.Queue = queue.Queue()
         self._recent: collections.deque = collections.deque(maxlen=50)
         self._last_offer_at: dict[str, float] = {}
+        self._site_history: dict[str, collections.deque] = {}  # per context: (ts, kind); offers don't clear it
+        self._simple_offered_at: dict[str, float] = {}
+        self._replayed_at: dict[str, float] = {}
+        self._snoozed_until: dict[str, float] = {}
+        self._known = known_keys()
         self.pending: Offer | None = None
         self.history: collections.deque = collections.deque(maxlen=30)
         self._stop = threading.Event()
@@ -220,7 +271,9 @@ class Coordinator:
         kinds = {e.kind for e in recent}
         self._log("struggle", f"{s.kind} {s.confidence:.2f} (fused {score:.2f} from {', '.join(sorted(kinds))})",
                   source=s.source)
-        if score < float(self.cfg("min_confidence")):
+        # One gate, not two: the senses already require two agreeing signals (or a strong solo one) before
+        # they send a struggle, so theirs pass as they are; other senders (run.py simulate, the API) are fused here.
+        if not trusted_source(s) and score < float(self.cfg("min_confidence")):
             return
         if self.pending is not None:
             return
@@ -229,11 +282,20 @@ class Coordinator:
             return
         # vision signals (squint/lean) say "hard to see"; use the strongest kind to pick the fix
         lead = max(recent, key=lambda e: e.confidence).kind if len(kinds) > 1 else s.kind
-        acc = pick_accommodation(lead, in_browser)
+        signals = set().union(*(fused_kinds(e) for e in recent))
+        hist = self._site_history.setdefault(ctx, collections.deque(maxlen=50))
+        hist.extend((now, k) for k in signals)
+        acc = pick_accommodation(lead, in_browser, signals)
+        if in_browser and self._wants_simple(ctx, now):
+            acc, lead = SIMPLE_OFFER, "simple"
+            self._simple_offered_at[ctx] = now
         self._recent.clear()
         self._last_offer_at[ctx] = now
 
-        if any(a.key == acc.key for a in self.memory.auto_apply(ctx)):
+        if self.snoozed(ctx):
+            self._log("proactive", f"skipped offer on {ctx}: snoozed after a reset")
+            return
+        if any(a.key == acc.key for a in self._habits(ctx)):
             self.apply(acc, ctx, why="habit")
             self.voice.say(f"I'll {acc.label}, like last time.")
             return
@@ -311,12 +373,49 @@ class Coordinator:
             return
         self._ctx_key = ctx
         self.bus.publish("context", ctx)
-        accs = self.memory.auto_apply(ctx)
+        accs = self._habits(ctx)
+        now = time.time()
+        if accs and (self.snoozed(ctx) or now - self._replayed_at.get(ctx, 0) < REPLAY_EVERY_SECONDS):
+            return  # just came back to this site, or the user reset it: don't redo the work every Alt+Tab
+        if accs and any(a.tool in PAGE_TOOLS for a in accs) and self._already_enlarged():
+            accs = [a for a in accs if a.tool not in PAGE_TOOLS]
+        if accs:
+            self._replayed_at[ctx] = now
         for acc in accs:
             self.apply(acc, ctx, why="habit")
         if accs:
             self.voice.say(f"I'll {accs[0].label}, like last time." if len(accs) == 1
                            else "I've set things up the way you like here.")
+
+    # -------------------------------------------------------- helpers for habits and Simplified mode
+    def _habits(self, ctx: str) -> list[Accommodation]:
+        """Habits to auto-apply here: only keys the current code makes, and never Simplified mode (that needs
+        an explicit "every time" yes, which the extension remembers)."""
+        return [a for a in self.memory.auto_apply(ctx) if a.key in self._known and a.key != SIMPLE_OFFER.key]
+
+    def _wants_simple(self, ctx: str, now: float) -> bool:
+        """Two or more different kinds of struggle on this site within a few minutes, at most once a day."""
+        if ctx == "unknown" or now - self._simple_offered_at.get(ctx, 0) < SIMPLE_OFFER_EVERY_SECONDS:
+            return False
+        kinds = {k for t, k in self._site_history.get(ctx, ()) if now - t <= SIMPLE_WINDOW_SECONDS}
+        return len(kinds) >= 2
+
+    def _already_enlarged(self) -> bool:
+        try:
+            c = self.context_fn() or {}
+        except Exception:
+            return False
+        zoom = c.get("zoom")
+        return isinstance(zoom, (int, float)) and abs(zoom - 1.0) > 0.01
+
+    def snooze(self, ctx: str | None = None, seconds: float = 1800) -> str:
+        """After a reset: no habits or offers on this app/site for a while, so the reset sticks."""
+        ctx = ctx or self._context()[0]
+        self._snoozed_until[ctx] = time.time() + seconds
+        return ctx
+
+    def snoozed(self, ctx: str) -> bool:
+        return time.time() < self._snoozed_until.get(ctx, 0)
 
     def _watch_context(self):
         while not self._stop.wait(float(self.cfg("context_poll_seconds"))):

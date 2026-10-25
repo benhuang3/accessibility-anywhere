@@ -545,6 +545,25 @@ class SensesManagerTests(unittest.TestCase):
         self.assertLessEqual(got[0]["ts"] - onset, 3.0,
                              "FN count for rage clicks plus squint after 3 seconds: 1")
 
+    def test_desktop_struggle_reaches_the_bus_as_a_desktop_app(self):
+        # A struggle in Word, with Chrome not in front: unknown text must be "", not None (the shared
+        # contract turned None into "None", so the coordinator picked the web-page fix).
+        from ally.contracts import Struggle as BusStruggle
+        from ally.proactive import pick_accommodation
+
+        agent, got = fake_agent()
+        agent.platform.frontmost_app = lambda: "Report.docx - Word"
+        agent.bridge.chrome_focused = False
+        s = Senses(agent)
+        s.simulate("squint", tier="weak")
+        d = s.simulate("lean", tier="weak")
+        self.assertEqual((d["target"]["app"], d["target"]["site"], d["target"]["window"]),
+                         ("Word", "", "Report.docx - Word"))
+        self.assertEqual(validate_struggle(d), [])
+        bus = BusStruggle.from_dict(d)
+        self.assertEqual((bus.target.app, bus.target.site), ("Word", ""))
+        self.assertEqual(pick_accommodation(bus.kind, bool(bus.target.site)).tool, "magnify_screen")
+
     def test_simulated_demo_reaches_the_brain(self):
         agent, got = fake_agent()
         s = Senses(agent)
@@ -737,7 +756,10 @@ class PrivacyTests(unittest.TestCase):
     BANNED_NAMES = {"imwrite", "VideoWriter", "imencode", "VideoWriter_fourcc"}
 
     def files(self):
-        return sorted((ROOT / "ally" / "senses").glob("*.py")) + [ROOT / "ally" / "gaze_helper.py"]
+        # Everything that sees camera frames or face numbers: senses, the camera helper, and the eye
+        # tracker's model, recorder and evaluator.
+        gaze = ("gaze_helper.py", "gaze_model.py", "gaze_record.py", "gaze_eval.py", "gaze_dot.py", "gaze_cnn.py")
+        return sorted((ROOT / "ally" / "senses").glob("*.py")) + [ROOT / "ally" / name for name in gaze]
 
     def test_no_network_or_image_writing(self):
         for path in self.files():

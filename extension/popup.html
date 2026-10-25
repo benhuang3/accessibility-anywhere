@@ -29,6 +29,18 @@
     <button data-action="resetPage">Reset</button>
   </div>
 
+  <!-- Simple mode (extension/steps/simple.js) -->
+  <section id="simple" class="simple" hidden>
+    <label class="switch-row" for="simple-on">
+      <span>Simple mode on this site<span id="simple-host" class="simple-host"></span></span>
+      <input id="simple-on" type="checkbox" role="switch">
+      <span class="switch" aria-hidden="true"></span>
+    </label>
+    <p id="simple-msg" class="hint" aria-live="polite"></p>
+    <p><a id="simple-forget" href="#" hidden>Forget all simple sites</a></p>
+  </section>
+  <!-- /Simple mode -->
+
   <details>
     <summary>Settings</summary>
     <label for="port">Agent port</label>

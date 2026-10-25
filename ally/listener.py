@@ -1,7 +1,8 @@
 """Always-on voice: say "Ally, ..." and the rest of the sentence is handled as a request.
 
 The microphone is cut into utterances (by loudness, against an adaptive noise floor) and each
-one is transcribed on this computer with faster-whisper; audio never leaves the computer.
+one is transcribed on this computer with faster-whisper. The exception is an answer to a spoken
+yes/no question: voice_confirm transcribes it with Cartesia first when CARTESIA_API_KEY is set.
 Utterances that don't start or end with the wake word are dropped, except right after "Ally" on
 its own and during a short follow-up window after Ally answers ("a bit bigger").
 While Ally is talking, only "Ally, stop" works, so Ally never answers its own voice.

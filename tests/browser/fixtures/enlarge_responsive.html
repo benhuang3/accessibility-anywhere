@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enlarge fixture</title>
+<style>
+  body { font: 15px/1.4 sans-serif; margin: 0; }
+  header { position: sticky; top: 0; background: #eee; padding: 8px 16px; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  .row { display: flex; gap: 0; }
+  .row button { padding: 2px 6px; font-size: 13px; }
+  .fixed-img { max-width: 100%; height: auto; }
+  small { font-size: 11px; }
+</style>
+</head>
+<body>
+<header><a href="#a">Home</a> <a href="#b">News</a> <button id="menu">Menu</button></header>
+<main>
+  <h1>Garden club newsletter</h1>
+  <p>Our spring meeting is on Tuesday. Bring seeds to swap and a cup for tea. Everyone is welcome, new members too.</p>
+  <p>Averyveryverylongwordwithoutanyspacesthatwouldnormallyoverflowanarrowcolumnwhenthepageiszoomedin.</p>
+  <img class="fixed-img" alt="flowers" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='300'%3E%3Crect width='1200' height='300' fill='%2399cc99'/%3E%3C/svg%3E">
+  <div class="row"><button id="b1">Yes</button><button id="b2">No</button><button id="b3">Later</button></div>
+  <form><label>Name <input id="name" type="text"></label> <select id="sel"><option>One</option></select>
+    <textarea id="ta"></textarea> <input id="go" type="submit" value="Send"></form>
+  <p><small>Fine print in small letters about the club rules.</small></p>
+</main>
+</body>
+</html>

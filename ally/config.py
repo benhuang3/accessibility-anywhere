@@ -50,7 +50,9 @@ SPEC = {
     "voice": {"engine": ("auto", "cartesia", "whisper", "off"), "max_seconds": NUM, "silence_seconds": NUM,
               "language": str, "beep": bool, "always_listen": bool, "wake_words": list, "follow_up_seconds": NUM,
               "whisper_model": str},
-    "gaze": {"enabled": bool, "camera": int, "fps": int, "pan_speed": NUM},
+    "gaze": {"enabled": bool, "camera": int, "fps": int, "pan_speed": NUM, "max_pan_speed": NUM, "show_dot": bool,
+             "features": ("v1", "v2", "v3", "v4", "v5"), "calibration_poses": int,
+             "click_learning": bool, "max_radius_px": NUM, "answer_offers": bool},
     "senses": {"vision": bool, "input": bool, "fps": int, "calibrate_seconds": NUM, "solo": list,
                "window_seconds": NUM, "cooldown_seconds": NUM, "min_confidence": NUM, "decline_seconds": NUM,
                "squint_delta": NUM, "squint_weak": NUM, "squint_hold": NUM, "squint_window": NUM, "wink_max": NUM,
@@ -67,6 +69,9 @@ SPEC = {
              "contact_topic": str, "contact_call_url": str, "auto_alert": bool},
     "profile": {"page_zoom": NUM, "min_font_px": int, "page_styles": list, "screen_magnify": NUM,
                 "color_filter": ("none", "invert", "grayscale", "high_contrast")},
+    "page_enlarge": {"text_goal_px": NUM, "target_goal_px": NUM, "max_zoom": NUM, "max_text_scale": NUM,
+                     "sticky_budget": NUM,
+                     "ai_check": bool, "ai_background": bool},
     "tools": {"disabled": list, "timeout_seconds": NUM},
     "plugins": {"folder": str},
     "security": {"allowed_extension_ids": list},
@@ -80,7 +85,8 @@ RANGES = {
     ("confirm", "max_answer_seconds"): (1, 15), ("confirm", "speed"): (0.6, 1.5),
     ("confirm", "warning_speed"): (0.6, 1.5), ("voice", "max_seconds"): (1, 60),
     ("voice", "silence_seconds"): (0.3, 5), ("voice", "follow_up_seconds"): (0, 60), ("gaze", "camera"): (0, 9),
-    ("gaze", "fps"): (5, 30), ("gaze", "pan_speed"): (0.1, 5),
+    ("gaze", "fps"): (5, 30), ("gaze", "pan_speed"): (0.1, 2.0), ("gaze", "max_pan_speed"): (0.05, 2.0), ("gaze", "max_radius_px"): (20, 4000),
+    ("gaze", "calibration_poses"): (1, 3),
     ("senses", "fps"): (2, 30), ("senses", "calibrate_seconds"): (5, 60), ("senses", "window_seconds"): (1, 30),
     ("senses", "cooldown_seconds"): (0, 600), ("senses", "min_confidence"): (0, 1),
     ("senses", "decline_seconds"): (30, 600),
@@ -92,6 +98,9 @@ RANGES = {
     ("risk", "daily_calls"): (1, 500), ("risk", "hourly_calls"): (1, 100),
     ("proactive", "min_confidence"): (0, 1), ("proactive", "offer_timeout_seconds"): (2, 60),
     ("proactive", "context_poll_seconds"): (0.5, 30),
+    ("page_enlarge", "text_goal_px"): (12, 48), ("page_enlarge", "target_goal_px"): (24, 96),
+    ("page_enlarge", "max_zoom"): (1, 5), ("page_enlarge", "sticky_budget"): (0, 1),
+    ("page_enlarge", "max_text_scale"): (1, 3),
 }
 
 
@@ -183,6 +192,12 @@ def validate(cfg: dict, known_tools: set[str] | None = None) -> tuple[list[str],
                 rng = RANGES.get((section, key))
                 if rng and not (rng[0] <= v <= rng[1]):
                     errors.append(f"{section}.{key} = {v} is outside {rng[0]}..{rng[1]}")
+
+    gaze = cfg.get("gaze")
+    if isinstance(gaze, dict):
+        poses = gaze.get("calibration_poses", 3)
+        if isinstance(poses, int) and not isinstance(poses, bool) and poses not in (1, 3):
+            errors.append("gaze.calibration_poses should be 1 or 3")
 
     styles = cfg.get("page_styles", {})
     if not isinstance(styles, dict):

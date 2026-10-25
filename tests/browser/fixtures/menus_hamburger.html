@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hamburger menu</title>
+<style>
+  body { font: 14px Arial, sans-serif; margin: 0; }
+  header { display: flex; justify-content: space-between; padding: 8px; background: #eee; }
+  #drawer[hidden] { display: none; }
+  #acct-sub[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <strong>Town council</strong>
+  <button id="burger" class="hamburger" aria-label="Open menu" aria-expanded="false" aria-controls="drawer">=</button>
+  <nav aria-label="Account">
+    <ul>
+      <li><button id="acct" aria-expanded="false" aria-controls="acct-sub">My account</button>
+        <ul id="acct-sub" hidden>
+          <li><a href="/account/profile">Profile</a></li>
+          <li><a href="/account/bills">Bills</a></li>
+        </ul>
+      </li>
+    </ul>
+  </nav>
+</header>
+<div id="drawer" hidden></div>
+<main><h1>News</h1><p>Some news.</p></main>
+<p id="log"></p>
+<script>
+  const burger = document.getElementById("burger");
+  const drawer = document.getElementById("drawer");
+  let clicks = 0;
+  burger.addEventListener("click", () => {
+    clicks++;
+    document.getElementById("log").textContent = "burger clicks: " + clicks;
+    const open = burger.getAttribute("aria-expanded") === "true";
+    if (open) {
+      burger.setAttribute("aria-expanded", "false");
+      drawer.hidden = true;
+      drawer.replaceChildren();
+    } else {
+      burger.setAttribute("aria-expanded", "true");
+      drawer.hidden = false;
+      drawer.innerHTML = '<nav aria-label="Site"><ul><li><a href="/bins">Bins and recycling</a></li>' +
+        '<li><a href="/parking">Parking</a></li><li><a href="/council-tax">Council tax</a></li></ul></nav>';
+    }
+  });
+  const acct = document.getElementById("acct");
+  acct.addEventListener("click", () => {
+    const open = acct.getAttribute("aria-expanded") === "true";
+    acct.setAttribute("aria-expanded", String(!open));
+    document.getElementById("acct-sub").hidden = open;
+  });
+</script>
+</body>
+</html>

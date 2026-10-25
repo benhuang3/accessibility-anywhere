@@ -18,5 +18,10 @@ faster-whisper>=1.0
 # opencv-python, install mediapipe with --no-deps plus: absl-py flatbuffers protobuf matplotlib
 mediapipe>=0.10.20
 
+# v5 eye tracking runs MobileGaze (mobileone_s0) on each frame, in memory. The picture is not saved.
+# Download the model once with: python scripts/get_gaze_models.py
+# Without onnxruntime, eye tracking stays on v4.
+onnxruntime>=1.16
+
 # Windows UI Automation: read and edit the text/bounds of elements in native apps (ally/platforms/win_uia.py).
 comtypes>=1.2      # Windows-only; COM bridge to the UIAutomationCore type library

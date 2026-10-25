@@ -7,6 +7,7 @@ from typing import Annotated
 
 from ..platforms.base import next_level
 from ..registry import ToolError, tool
+from .ui_text_tools import undo_native_rewrites
 
 
 def zoom_target(ctx) -> str:
@@ -67,6 +68,7 @@ def reset_all(ctx):
         p.clear_text_overlays()
     except ToolError as e:
         problems.append(str(e))
+    problems += undo_native_rewrites(ctx)
     try:
         if p.magnify_level > 1.0:
             p.magnify(1.0)
@@ -79,6 +81,9 @@ def reset_all(ctx):
             done.append("text size")
     except ToolError as e:
         problems.append(str(e))
+    proactive = getattr(getattr(ctx, "agent", None), "proactive", None)
+    if proactive is not None:
+        proactive.snooze()  # habits and offers stay away from this site for a while, so the reset sticks
     if problems and not done:
         raise ToolError("Couldn't reset: " + problems[0])
     return "Everything is back to normal." if not problems else "Reset what I could. " + problems[0]

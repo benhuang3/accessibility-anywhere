@@ -104,22 +104,62 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
 
 ### Eye tracking
 
-1. Say **"Ally, calibrate my eyes"**. Dots appear on the screen one at a time; look at each one until
-   it moves (about 20 seconds; Esc cancels). Do this again if you move your laptop or chair a lot.
-2. Say **"Ally, I want what I'm looking at magnified"** (or "magnify what I'm looking at", "zoom in
-   here"), or press `<mod>+G`. The whole screen zooms around where your eyes were while you spoke.
-3. While zoomed in, the view follows your eyes: look near an edge and it pans that way; the middle
-   stays still for reading. Move the mouse and it follows the mouse again. Say "follow my eyes" /
-   "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
+1. Say **"Ally, set up my eyes"** (or "calibrate my eyes"). About 45 seconds: Ally checks
+   that it can see your face, shows 9 dots, then asks you to sit back a little and lean in a little
+   (5 dots each, so head movement is part of the setup), then 5 check dots it did not train on.
+   Esc cancels. `[gaze] calibration_poses = 1` is the 9 dots only, about 30 seconds. Do this
+   again if you move your laptop or chair a lot.
+2. Say **"Ally, what am I looking at"** for the area of the screen. On Windows, Ally also names the
+   button, link, or text under that spot. **"this"**, **"that"**, and **"here"** use the same tool.
+3. Say **"Ally, magnify what I'm looking at"** (or "magnify here"), or press `<mod>+G`. The screen
+   zooms around where you looked (1.5x unless you name a level) and becomes a reading aid: as you read
+   along a line, the view glides right at your pace and keeps the words you are reading near the
+   middle. At the end of the line, look back to the left and it returns to where the line began
+   (and brings the next line toward the middle). Looking around without reading leaves it still,
+   and looking near an edge pans that way, calmly, after a moment. "Ally, help me read this" does the
+   same. Say **"follow my eyes slower"** or **"follow my eyes faster"** to change how eagerly it
+   moves (saved as `[gaze] pan_speed`, default 0.85). It never pans faster than
+   `[gaze] max_pan_speed` (default 0.35 screen widths a second), and looking near an edge waits
+   about half a second first. Move the mouse and the view follows the mouse again. Say
+   "follow my eyes" / "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
+   Say **"show where I am looking"** for a soft circle on the spot the tracker is using (click-through;
+   it does not get in the way), and **"hide the eye dot"** to remove it. `[gaze] show_dot` remembers
+   that, and it is off until you ask.
+4. A yes or no can be answered by looking. Ally shows the choices as large cards (two choices: the
+   left half and the right half). Look at one for a moment. That look teaches the tracker, using the
+   centre of the card you chose.
+5. Say **"Ally, quick calibrate"** (or "check my eye tracker") when it is off: 5 quick dots, about 6 seconds,
+   re-tune your saved setup. A full setup is needed only once, or after a new screen or camera.
 
-- Needs `pip install mediapipe opencv-python` and a webcam. The face model downloads once (3.7 MB). Video
-  is processed on your computer and never saved; only the calibration (a few numbers) is kept, in `state/`.
+The check uses plain words:
+
+- **Good**: about 150 pixels or less, and the areas of the screen were right (8 of 9 on a full grid;
+  with 5 dots, all 5).
+- **Okay**: the area is right often enough to trust left, right, or the 3x3 grid, not an exact spot.
+- **Poor**: too many areas were wrong. The next sentence is the likely cause (light, distance, or
+  glasses glare).
+
+If the eyes aren't set up, Ally can't see your face, your look doesn't settle, or the estimate is
+too unsure, Ally uses the mouse pointer and says so.
+
+- Needs `pip install mediapipe opencv-python` and a webcam. v5 also needs `pip install onnxruntime` and
+  one download, `python scripts/get_gaze_models.py`, which puts `mobileone_s0_gaze.onnx` in `state/models`.
+  The face model downloads once (3.7 MB). Video is processed on your computer and never saved; only the
+  calibration (a few numbers) is kept, in `state/`. Mouse clicks can quietly improve the estimate
+  (`gaze.click_learning`, on by default). What they teach is saved next to the calibration and
+  restored when Ally starts. A new setup starts fresh. The file is feature numbers, screen points,
+  and times, not pictures. The click stays on this computer.
+- `[gaze] features` defaults to `v5`: the v4 head model plus MobileGaze yaw and pitch from `mobileone_s0`.
+  If that file or onnxruntime is missing, setup and tracking use v4 and say so. A new setup uses whichever
+  you set. `max_radius_px` (default 250) is when Ally stops trusting the eyes and uses the pointer.
 - The camera stays on while Ally runs. Say "Ally, turn off eye tracking" (until Ally restarts), or set
   `gaze.enabled = false`.
-- A webcam is far less precise than a dedicated eye tracker: expect it to land within a few centimeters,
-  which is plenty for magnifying, plus edge panning for the rest. Light on your face helps.
+- A webcam is far less precise than a dedicated eye tracker. Areas of the screen are the useful part.
+  Light on your face helps. `python run.py doctor` reports how old the calibration is, the check, the
+  feature set, the camera index, and whether `mobileone_s0_gaze.onnx` and onnxruntime are ready.
 - Exact centering and following the eyes are Windows features. On macOS and Linux, Ally moves the
-  pointer to where you look and zooms there, since those magnifiers follow the pointer.
+  pointer to where you look and zooms there, since those magnifiers follow the pointer. The control
+  name under the gaze point is Windows-only; other systems get the screen area.
 
 ### Noticing struggle (senses)
 
@@ -377,7 +417,9 @@ Logs: `logs/ally.log` and `logs/supervisor.log`.
   rebinding) and the Origin; the WebSocket only accepts Chrome extensions (lock it to your extension ID
   with `security.allowed_extension_ids`).
 - Claude only gets: your request, a short context (tab title and site, the app in front, current zoom),
-  page text or a screenshot only when a tool asks for it. Turn off `share_tab_info` / `include_active_app`
+  page text or a screenshot only when a tool asks for it. After Ally makes a web page bigger or simpler, it
+  sends Claude a small screenshot of the visible tab from before and after, to check the result (never on
+  sign-in, payment or bank pages). Turn this off with `ai_check = false` under `[page_enlarge]`. Turn off `share_tab_info` / `include_active_app`
   in `[brain]` if you prefer.
 - Claude can only run registered tools. It can't type arbitrary shell commands; `shell` steps are fixed in your config.
 - The dashboard's mic button uses Chrome's speech recognition, which sends audio to Google.

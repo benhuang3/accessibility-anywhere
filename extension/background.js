@@ -16,6 +16,16 @@ const callKey = (tabId) => `allyCall:${tabId}`;
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
+// Page steps (docs/page_steps.md). Each file is loaded on its own so one broken step can't stop the extension.
+for (const file of ["steps/core.js", "steps/classify.js", "steps/clutter.js", "steps/menus.js", "steps/enlarge.js",
+  "steps/simple.js", "steps/fix.js"]) {
+  try {
+    importScripts(file);
+  } catch (e) {
+    console.warn(`Ally: couldn't load ${file}:`, e);
+  }
+}
+
 // ---------------------------------------------------------------- connection
 
 async function getPort() {
@@ -31,16 +41,24 @@ function isOpen() {
   return !!ws && ws.readyState === WebSocket.OPEN;
 }
 
+let connecting = false;
+
 async function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  // Startup fires connect() from several places at once; without this flag each one passes the check
+  // above during the await below and opens its own socket, leaving orphans the agent still talks to.
+  if (connecting) return;
+  connecting = true;
   clearTimeout(reconnectTimer);
-  const port = await getPort();
   let sock;
   try {
+    const port = await getPort();
     sock = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   } catch {
     scheduleReconnect();
     return;
+  } finally {
+    connecting = false;
   }
   ws = sock;
   sock.onopen = async () => {
@@ -404,8 +422,10 @@ const ACTIONS = {
     return await removeStyleFrom(t.id, String(name));
   },
   async clearStyles() {
+    // The user's styles only: Ally's page-step layers (ally_*) have their own off switches.
     const t = await activeTab();
-    await clearStylesFrom(t.id);
+    const applied = await docStyles(t.id);
+    for (const name of Object.keys(applied)) if (!/^ally_/.test(name)) await removeStyleFrom(t.id, name);
     return true;
   },
   async getText({ maxChars = 8000, selectionOnly = false }) {
@@ -413,8 +433,13 @@ const ACTIONS = {
     const [r] = await chrome.scripting.executeScript({ target: { tabId: t.id }, func: pageText, args: [Number(maxChars) || 8000, !!selectionOnly] });
     return r ? r.result : null;
   },
-  async reader({ on = true, fontPx = 26 }) {
+  async reader({ on = true, fontPx = 26, withStrip = false }) {
     const t = await activeTab();
+    if (typeof STEPS !== "undefined" && STEPS.reader) {
+      // The structured reader (headings, links and lists kept); falls back to the plain one below.
+      await withTab(t.id, () => (on ? STEPS.reader.on(t.id, { fontPx, withStrip }) : STEPS.reader.off(t.id)));
+      return !!on;
+    }
     await chrome.scripting.executeScript({ target: { tabId: t.id }, func: toggleReader, args: [!!on, Number(fontPx) || 26] });
     return !!on;
   },
@@ -491,6 +516,7 @@ const ACTIONS = {
   async resetPage() {
     const t = await activeTab();
     await chrome.tabs.setZoom(t.id, 0);
+    if (typeof pageTeardown === "function") await withTab(t.id, () => pageTeardown(t.id)).catch(() => {});
     await clearStylesFrom(t.id).catch(() => {});
     await chrome.scripting.executeScript({ target: { tabId: t.id }, func: toggleReader, args: [false, 26] }).catch(() => {});
     const { profile = {} } = await chrome.storage.local.get("profile");
@@ -554,6 +580,74 @@ const ACTIONS = {
   async stopSpeaking() {
     chrome.tts.stop();
     return true;
+  },
+
+  // ---- page steps (docs/page_steps.md). Every page-changing action runs in the tab's queue.
+  async pageInfo(args = {}) {
+    return await pageInfo(await resolveTab(args));
+  },
+  async pageBaseline(args = {}) {
+    const tab = await resolveTab(args);
+    const zoom = await chrome.tabs.getZoom(tab.id);
+    return await withTab(tab.id, async () => {
+      const b = await inPage(tab.id, "baseline", { zoom, force: !!args.force });
+      return { tabId: tab.id, href: b.href, zoom: b.zoom, metrics: b.metrics };
+    });
+  },
+  async auditAtZooms(args = {}) {
+    if (typeof auditAtZooms !== "function") throw new Error("The enlarge step isn't loaded.");
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, () => auditAtZooms(tab, args));
+  },
+  async setZoomSettled(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, () => setZoomSettled(tab.id, Number(args.zoom) || 1));
+  },
+  async stepOn(args = {}) {
+    const tab = await resolveTab(args);
+    const step = STEPS[args.step];
+    if (!step) throw new Error(`Unknown page step: ${args.step}`);
+    return await withTab(tab.id, async () => ({ tabId: tab.id, step: args.step, ...(await step.on(tab.id, args.opts || {})) }));
+  },
+  async stepOff(args = {}) {
+    const tab = await resolveTab(args);
+    const step = STEPS[args.step];
+    if (!step) throw new Error(`Unknown page step: ${args.step}`);
+    return await withTab(tab.id, async () => ({ tabId: tab.id, step: args.step, ...(await step.off(tab.id, args.opts || {})) }));
+  },
+  async pageVerify(args = {}) {
+    const tab = await resolveTab(args);
+    const zoom = await chrome.tabs.getZoom(tab.id);
+    return await withTab(tab.id, async () => {
+      const v = await inPage(tab.id, "verify", { zoom, stickyBudget: args.stickyBudget });
+      return { tabId: tab.id, zoom, ok: v.ok, checks: v.checks };
+    });
+  },
+  async pageTeardown(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, () => pageTeardown(tab.id));
+  },
+  // For the AI checker and fixer (steps/fix.js): what the user sees, and what's on the page.
+  async pageScreenshot(args = {}) {
+    const tab = await resolveTab(args);
+    return { tabId: tab.id, mediaType: "image/jpeg", data: await captureTab(tab, args.quality || 60) };
+  },
+  async pageOutline(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, () => inPage(tab.id, "fix.outline", {}));
+  },
+  // Simplified mode's remembered sites (steps/simple.js keeps them under the "simpleSites" key).
+  async simpleRemember(args = {}) {
+    return await simpleRemember(args.origin || (await resolveTab(args)).url, args.steps || []);
+  },
+  async simpleForget(args = {}) {
+    return await simpleForget(args.origin || (await resolveTab(args)).url);
+  },
+  async simpleForgetAll() {
+    return await simpleForgetAll();
+  },
+  async simpleList() {
+    return await simpleList();
   },
 };
 

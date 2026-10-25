@@ -271,6 +271,7 @@ class Senses:
                 if e == "c":
                     self.hesitation.click(t, x, y)
                     sig = self.rage.click(t, x, y)
+                    self._forward_click(t, x, y)
                 else:
                     self.hesitation.move(t, x, y)
             elif e == "r":
@@ -280,6 +281,16 @@ class Senses:
                 sig = self.retype.key(t, e == "b")
         if sig is not None:
             self._signal(sig)
+
+    def _forward_click(self, t: float, x: int, y: int) -> None:
+        """The eye tracker learns from clicks. Nothing about the click is sent off this computer."""
+        gaze = getattr(self.agent, "gaze", None)
+        if gaze is None or not hasattr(gaze, "on_click"):
+            return
+        try:
+            gaze.on_click(t, x, y)
+        except Exception:
+            log.debug("couldn't forward a click to the eye tracker", exc_info=True)
 
     def tick(self, t: float | None = None) -> None:
         """Called about once a second (hesitation needs a clock, not just events)."""
@@ -328,21 +339,36 @@ class Senses:
         return self._emit(struggle)
 
     def target(self, struggle: Struggle) -> dict:
-        """Where it happened: the app in front, the website (if Chrome is in front), the pointer."""
-        target = {"app": None, "site": None, "window": None, "x": None, "y": None, "box": None}
+        """Where it happened: the app in front, the website (if Chrome is in front), the pointer.
+
+        Unknown text is "" (ally.contracts.Target turns None into the text "None", which made the
+        coordinator treat every struggle as a web page). "app" is the program's name and "window"
+        its title, split as Agent.proactive_context does, so habits are kept per app, not per window.
+        """
+        target = {"app": "", "site": "", "window": "", "x": None, "y": None, "box": None}
         try:
-            target["app"] = self.agent.platform.frontmost_app()
+            title = self.agent.platform.frontmost_app() or ""
         except Exception:
-            pass
+            title = ""
+        target["app"] = title.rsplit(" - ", 1)[-1] if " - " in title else title  # "Inbox - Google Chrome"
+        target["window"] = title
         bridge = getattr(self.agent, "bridge", None)
         try:
             if bridge is not None and bridge.chrome_focused:
                 url = str(bridge.tab.get("url") or "")
-                target["site"] = urllib.parse.urlsplit(url).hostname or None
-                target["window"] = bridge.tab.get("title") or None
+                target["site"] = urllib.parse.urlsplit(url).hostname or ""
+                target["window"] = bridge.tab.get("title") or title
         except Exception:
             pass
         x, y = struggle.target.get("x"), struggle.target.get("y")
+        if x is None:  # face signals: where the eyes are, when the eye tracker is sure; else the pointer
+            gaze = getattr(self.agent, "gaze", None)
+            try:
+                seen = gaze.target() if gaze is not None and hasattr(gaze, "target") else None
+            except Exception:
+                seen = None
+            if seen and seen.get("source") == "eyes":
+                x, y = seen["x"], seen["y"]
         if x is None and self.pointer:
             x, y = self.pointer
         target["x"], target["y"] = x, y

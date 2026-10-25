@@ -1,6 +1,6 @@
 """Labeled spoken answers to "Want me to make this bigger?" (as speech-to-text writes them).
 
-Labels: YES, NO, UNDO, REPEAT, SLOWER, UNCLEAR (AMBIGUOUS or EMPTY: re-ask, never act).
+Labels: YES, NO, UNDO, REPEAT, SLOWER, STOP_ASKING, UNCLEAR (AMBIGUOUS or EMPTY: re-ask, never act).
 The policy behind the labels comes from Research: Voice > Yes/no and listening rules: never act
 on silence or ambiguity, "no problem" is yes, "yeah no" is unclear, "uh-huh" is a weak yes.
 
@@ -43,6 +43,10 @@ PHRASES: list[tuple[str, str]] = [
     ("What?", "REPEAT"), ("What was that?", "REPEAT"), ("Sorry?", "REPEAT"), ("Pardon?", "REPEAT"),
     ("Say that again.", "REPEAT"), ("Can you repeat that?", "REPEAT"), ("Huh?", "REPEAT"),
     ("I didn't catch that.", "REPEAT"), ("Excuse me?", "REPEAT"), ("Come again?", "REPEAT"),
+    # --- stop asking (a no that also means: back off for longer)
+    ("Stop asking me.", "STOP_ASKING"), ("Please stop asking.", "STOP_ASKING"), ("Leave me alone.", "STOP_ASKING"),
+    ("Don't ask me again.", "STOP_ASKING"), ("No more questions.", "STOP_ASKING"), ("Quit asking.", "STOP_ASKING"),
+    ("No, stop asking me.", "STOP_ASKING"), ("Yes, stop asking.", "UNCLEAR"),
     ("Slower, please.", "SLOWER"), ("Too fast.", "SLOWER"), ("Slow down.", "SLOWER"),
     ("Can you say it slower?", "SLOWER"), ("Could you talk slower?", "SLOWER"),
     # --- unclear: must never be acted on

@@ -31,10 +31,14 @@ class FakePlatform(base.Platform):
     name = "linux"
     label = "this test"
 
-    def __init__(self, box=None, overlay_ok=True):
+    def __init__(self, box=None, overlay_ok=True, editable=None, restore_ok=True):
         super().__init__()
         self._box = box
         self.overlay_ok = overlay_ok
+        self.editable = editable  # {"bounds": ..., "old": ...} for a focused box that can be rewritten
+        self.restore_ok = restore_ok
+        self.replaced = []
+        self.restored = []
         self.magnify_calls = []
         self.magnify_at_calls = []
         self.overlay_calls = []
@@ -61,6 +65,16 @@ class FakePlatform(base.Platform):
 
     def clear_text_overlays(self):
         self.cleared += 1
+
+    def replace_focused_text(self, text):
+        if not self.editable:
+            return None
+        self.replaced.append(text)
+        return dict(self.editable)
+
+    def restore_text_at(self, bounds, old):
+        self.restored.append((tuple(bounds), old))
+        return self.restore_ok
 
 
 class FakeState:
@@ -93,15 +107,15 @@ def make_registry():
 
 
 class EnlargeTextTests(unittest.TestCase):
-    def test_chrome_in_front_bigger_uses_zoom_tier(self):
+    def test_chrome_bigger_never_zooms_even_on_an_older_extension(self):
+        # FakeBrowser doesn't know pageInfo (returns None), like an extension without the page steps.
         r = make_registry()
         browser = FakeBrowser(connected=True, focused=True)
         ctx = FakeCtx(browser, FakePlatform())
         out = r.call("enlarge_text", {"goal": "bigger"}, ctx=ctx)
-        self.assertTrue(out.ok, out.error)
-        self.assertEqual(out.value["tier"], "chrome-zoom")
-        self.assertEqual(browser.calls, [("zoomStep", {"direction": "in"})])
-        self.assertEqual(ctx.state.get("ui_text_edits"), [{"tier": "chrome-zoom"}])
+        self.assertFalse(out.ok)
+        self.assertIn("extension", out.error)
+        self.assertEqual(browser.calls, [("pageInfo", {})])  # no zoomStep
 
     def test_chrome_rewrite_sets_tab_title(self):
         r = make_registry()
@@ -155,6 +169,54 @@ class EnlargeTextTests(unittest.TestCase):
         self.assertIn("isn't supported", out.error)
 
 
+class NativeRewriteTests(unittest.TestCase):
+    def test_editable_box_is_rewritten_in_place(self):
+        r = make_registry()
+        plat = FakePlatform(box=(0, 0, 10, 10), editable={"bounds": (5, 6, 70, 20), "old": "Untitled"})
+        ctx = FakeCtx(FakeBrowser(connected=False, focused=False), plat)
+        out = r.call("enlarge_text", {"goal": "Please sign here"}, ctx=ctx)
+        self.assertTrue(out.ok, out.error)
+        self.assertEqual(out.value["tier"], "native-rewrite")
+        self.assertEqual(plat.replaced, ["Please sign here"])
+        self.assertEqual(plat.overlay_calls, [])
+        self.assertEqual(ctx.state.get("ui_text_edits"),
+                         [{"tier": "native-rewrite", "bounds": [5, 6, 70, 20], "old": "Untitled"}])
+
+    def test_restore_puts_old_text_back_newest_first(self):
+        r = make_registry()
+        plat = FakePlatform()
+        ctx = FakeCtx(FakeBrowser(connected=False, focused=False), plat)
+        ctx.state.set("ui_text_edits", [
+            {"tier": "native-rewrite", "bounds": [1, 1, 10, 10], "old": "first"},
+            {"tier": "overlay"},
+            {"tier": "native-rewrite", "bounds": [1, 1, 10, 10], "old": "second"},
+        ])
+        out = r.call("restore_ui_text", {}, ctx=ctx)
+        self.assertTrue(out.ok, out.error)
+        self.assertEqual([old for _b, old in plat.restored], ["second", "first"])
+        self.assertEqual(ctx.state.get("ui_text_edits"), [])
+
+    def test_failed_restore_is_kept_for_later(self):
+        r = make_registry()
+        plat = FakePlatform(restore_ok=False)
+        ctx = FakeCtx(FakeBrowser(connected=False, focused=False), plat)
+        edit = {"tier": "native-rewrite", "bounds": [1, 1, 10, 10], "old": "x"}
+        ctx.state.set("ui_text_edits", [edit, {"tier": "overlay"}])
+        out = r.call("restore_ui_text", {}, ctx=ctx)
+        self.assertTrue(out.ok, out.error)  # the reading cards were still cleared
+        self.assertIn("Couldn't put back", out.value)
+        self.assertEqual(ctx.state.get("ui_text_edits"), [edit])
+
+    def test_reset_all_undoes_native_rewrites(self):
+        r = make_registry()
+        plat = FakePlatform()
+        ctx = FakeCtx(FakeBrowser(connected=False, focused=False), plat)
+        ctx.state.set("ui_text_edits", [{"tier": "native-rewrite", "bounds": [1, 1, 10, 10], "old": "x"}])
+        out = r.call("reset_all", {}, ctx=ctx)
+        self.assertTrue(out.ok, out.error)
+        self.assertEqual(plat.restored, [((1, 1, 10, 10), "x")])
+
+
 class RestoreTests(unittest.TestCase):
     def test_restore_ui_text_restores_and_clears(self):
         r = make_registry()
@@ -191,11 +253,17 @@ class RuleTests(unittest.TestCase):
             self.assertIsNotNone(m, phrase)
             self.assertEqual(m.actions, [("enlarge_text", {"goal": "bigger"})], phrase)
 
-    def test_zoom_in_phrases_are_not_clobbered(self):
-        for phrase in ("bigger", "zoom in", "enlarge", "make this bigger", "make the text bigger"):
+    def test_only_zoom_phrases_zoom(self):
+        for phrase in ("zoom in", "zoom", "zoom in more"):
+            self.assertEqual(rules.match(phrase, strict=True).rule, "zoom_in", phrase)
+        self.assertEqual(rules.match("zoom out", strict=True).rule, "zoom_out")
+        for phrase in ("bigger", "enlarge", "make this bigger", "make the text bigger", "too small",
+                       "i can't read this", "bigger text"):
             m = rules.match(phrase, strict=True)
             self.assertIsNotNone(m, phrase)
-            self.assertEqual(m.rule, "zoom_in", f"{phrase} -> {m.rule}")
+            self.assertEqual(m.actions, [("enlarge_text", {"goal": "bigger"})], f"{phrase} -> {m.rule}")
+        for phrase in ("smaller", "too big", "make the text smaller"):
+            self.assertEqual(rules.match(phrase, strict=True).actions, [("enlarge_text", {"goal": "smaller"})], phrase)
 
 
 if __name__ == "__main__":

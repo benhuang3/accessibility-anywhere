@@ -42,18 +42,41 @@ RULES = [
          full=r"(reset|reset (all|everything|it|this|the page|the screen)|undo( (all|everything|that|it))?|"
               r"back to normal|go back to normal|turn (it|everything) off|normal( view| size)?|panic)",
          loose=r"\b(reset|back to normal|undo (everything|all))\b"),
+    # The gaze dot comes before look_magnify, which would otherwise take "show me where I'm looking".
+    Rule("show_dot", [("show_gaze", {"on": True})],
+         full=r"(?:please )?(?:show|display|turn on|put up|bring up)(?: me)? (?:where (?:i'm|i am|im) (?:looking|staring|gazing)(?: at)?|(?:the |my |an |a )?(?:eye|eyes|gaze|eye tracking|eye tracker|looking) (?:dot|circle|marker|pointer|cursor|spot))(?: please)?"),
+    Rule("hide_dot", [("show_gaze", {"on": False})],
+         full=r"(?:please )?(?:hide|turn off|remove|get rid of|stop showing|don't show|do not show)(?: me)? "
+              r"(?:where (?:i'm|i am|im) (?:looking|staring|gazing)(?: at)?|(?:the |my |an |a )?(?:eye|eyes|gaze|eye tracking|eye tracker|looking) (?:dot|circle|marker|pointer|cursor|spot))(?: please)?"),
+    Rule("follow_slower", [("eye_follow_speed", {"speed": "slower"})],
+         full=r"(?:follow|track|pan|move)(?: (?:my eyes|me|the view|the zoom|the screen))?(?: (?:a bit|a little|much))? (?:slower|more slowly)|slow (?:down )?(?:the )?(?:eye )?(?:following|follow|panning|pan|view)"),
+    Rule("follow_faster", [("eye_follow_speed", {"speed": "faster"})],
+         full=r"(?:follow|track|pan|move)(?: (?:my eyes|me|the view|the zoom|the screen))?(?: (?:a bit|a little|much))? (?:faster|more quickly|quicker)|speed up (?:the )?(?:eye )?(?:following|follow|panning|pan|view)"),
     Rule("look_magnify", [("magnify_where_i_look", {})],
          full=r"(?:i want |i'd like |let me see |show me )?(?:to )?(?:(?:magnify|enlarge|blow up|zoom(?: in)?(?: on)?|"
               r"make bigger) )?(?:what |where |the (?:thing|part|spot|area|text|word|words) (?:that )?)"
               r"(?:i'm|i am|im) (?:looking|staring|gazing)(?: at)?(?: magnified| bigger| larger| enlarged| zoomed(?: in)?)?|"
               r"(?:magnify|enlarge|zoom(?: in)?(?: on)?) (?:here|right here|this spot|there|where i look)|"
-              r"make (?:what|where) (?:i'm|i am|im) looking at (?:bigger|larger)",
+              r"make (?:what|where) (?:i'm|i am|im) looking at (?:bigger|larger)|"
+              r"help me read(?: (?:this|that|it|the (?:text|page|screen)))?",
          loose=r"\b(?:i'm|i am|im) (?:looking|staring|gazing)\b|\bwhere i look\b|\b(?:magnify|zoom(?: in)?) here\b"),
+    # Quick calibrate comes before calibrate, whose loose pattern would take any "calibrate".
+    Rule("quick_calibrate", [("check_eye_tracker", {})],
+         full=r"(?:do a )?(?:quick|quickly|fast)(?: re)? ?(?:calibrat(?:e|ion)|check|setup|set up)(?: (?:my|the))?"
+              r"(?: eyes?| eye ?track(?:er|ing)| gaze(?: tracking)?)?|"
+              r"re ?calibrate(?: (?:my|the))?(?: eyes?| eye ?track(?:er|ing))? (?:quickly|fast)",
+         loose=r"\b(?:quick|quickly|fast) ?(?:re ?)?calibrat|\brecalibrate (?:\w+ )*(?:quickly|fast)\b"),
     Rule("calibrate", [("calibrate_eye_tracker", {})],
          full=r"(?:re)?calibrate(?: the| my)?(?: eyes?| eye ?track(?:er|ing)| gaze(?: tracking)?)?|"
               r"(?:set up|setup)(?: the| my)? (?:eyes|eye ?track(?:er|ing)|gaze(?: tracking)?)|"
               r"(?:eye ?track(?:er|ing)|gaze) (?:calibration|setup|set up)",
          loose=r"\bcalibrat"),
+    Rule("where_looking", [("where_am_i_looking", {})],
+         full=r"what am i looking at",
+         loose=r"\bwhat am i looking at\b"),
+    Rule("check_eyes", [("check_eye_tracker", {})],
+         full=r"check (?:my |the )?(?:eye ?track(?:er|ing)|eyes)",
+         loose=r"\bcheck (?:my |the )?(?:eye ?track(?:er|ing)|eyes)\b"),
     Rule("follow_eyes", [("magnifier_follow", {"target": "eyes"})],
          full=r"(?:follow|track) (?:my )?(?:eyes|gaze)|(?:magnifier|zoom) (?:should )?follows? (?:my )?(?:eyes|gaze)"),
     Rule("follow_mouse", [("magnifier_follow", {"target": "mouse"})],
@@ -65,19 +88,56 @@ RULES = [
     Rule("eyes_on", [("eye_tracking", {"on": True})],
          full=r"(?:turn on|start|enable|resume) (?:the )?(?:eye ?track(?:er|ing)|camera|webcam|gaze(?: tracking)?)|"
               r"(?:eye ?track(?:er|ing)|camera|webcam) on"),
+    # Page steps (docs/page_steps.md). Before zoom_in and reader so "bigger buttons" and "simplify this
+    # site" don't fall into their loose patterns.
+    Rule("simple_off_all", [("simplified_mode", {"on": False, "everywhere": True})],
+         full=r"(turn off |stop )?simple mode off (everywhere|on (all|every) sites?)|"
+              r"(turn off|stop) simple mode (everywhere|on (all|every) sites?)",
+         loose=r"\bsimple mode off (everywhere|on (all|every) sites?)\b"),
+    Rule("simple_off", [("simplified_mode", {"on": False})],
+         full=r"(simple|simplified) mode off|(turn off|stop|exit|leave|end) (the )?(simple|simplified) mode|normal mode",
+         loose=r"\b((simple|simplified) mode off|(turn off|stop|exit) (simple|simplified) mode)\b"),
+    Rule("simple_on", [("simplified_mode", {"on": True})],
+         full=r"(turn on |start )?(simple|simplified) mode( on)?|simplify (this|the) (site|website)|"
+              r"make (this|the) (site|website) (simple|simpler|easier)|this (site|website|page) is (too busy|confusing)",
+         loose=r"\b((simple|simplified) mode|simplify (this|the) (site|website)|"
+               r"make (this|the) (site|website) (simple|simpler))\b"),
+    Rule("buttons", [("enlarge_buttons", {"on": True})],
+         full=r"make (the )?buttons (bigger|larger)|bigger buttons|enlarge (the )?buttons|"
+              r"(the )?buttons are too small|i keep missing (the )?buttons",
+         loose=r"\b(bigger buttons|buttons (are )?too small|make the buttons (bigger|larger)|enlarge (the )?buttons)\b"),
+    Rule("clutter_off", [("hide_clutter", {"on": False})],
+         full=r"show (the )?(clutter|pop[- ]?ups|ads)( again)?|bring back (the )?(pop[- ]?ups|ads)"),
+    Rule("clutter", [("hide_clutter", {"on": True})],
+         full=r"(hide|remove|get rid of|block|close) (the |all )?(clutter|pop[- ]?ups|ads|adverts|cookie (banners?|notices?))|"
+              r"declutter( (this|the) page)?|too many (pop[- ]?ups|ads)|clean up (this|the) page",
+         loose=r"\b(declutter|(hide|get rid of) (the |all )?(clutter|pop[- ]?ups|ads)|too many (pop[- ]?ups|ads))\b"),
+    Rule("menus_off", [("simplify_menus", {"on": False})],
+         full=r"close (the )?(ally |big |simple )menu"),
+    Rule("menus", [("simplify_menus", {"on": True})],
+         full=r"simplify (the |this )?menus?|(i )?can'?t use (this|the) menu|(the )?menu keeps (closing|disappearing)|"
+              r"(open |show )?(the )?(ally|big|simple) menu",
+         loose=r"\b(simplify (the |this )?menus?|can'?t use (this|the) menu|menu keeps (closing|disappearing))\b"),
+    Rule("check_layout", [("check_page_layout", {})],
+         full=r"check (the )?(page|layout|page layout)|does (this|the) page look (right|ok|okay)|is (anything|something) cut off",
+         loose=r"\b(check (the )?(page )?layout|is (anything|something) cut off)\b"),
+    # Only an explicit "zoom" zooms; "bigger", "too small" and the like make the text itself bigger.
     Rule("zoom_in", [("zoom_in", {})],
-         full=r"(zoom in|zoom|bigger|larger|enlarge|increase|make (it|this|that|the text|text|things|everything) "
-              r"(bigger|larger)|bigger please|i can't (see|read)( (this|that|it))?|too small|it's too small)",
-         loose=r"\b(bigger|larger|zoom in|enlarge|too (small|tiny)|tiny|can't (see|read)|hard to (see|read))\b"),
+         full=r"zoom( in)?( please)?|zoom in (more|again)",
+         loose=r"\bzoom in\b"),
     Rule("zoom_out", [("zoom_out", {})],
-         full=r"(zoom out|smaller|shrink|make (it|this|that|the text|text|things|everything) smaller|too big|"
-              r"it's too big)",
-         loose=r"\b(smaller|zoom out|too big|shrink)\b"),
-    Rule("enlarge_this", [("enlarge_text", {"goal": "bigger"})],
-         full=r"(enlarge|blow up) (this|this text|the text)( here| please)?|"
-              r"make (this text|the words?) (bigger|larger)|"
-              r"make (this|the text) (bigger|larger) (here|in front( of me)?)",
-         loose=r"\b(enlarge this|make (this|the text) bigger here)\b"),
+         full=r"zoom out( please)?|zoom out (more|again)",
+         loose=r"\bzoom out\b"),
+    Rule("text_bigger", [("enlarge_text", {"goal": "bigger"})],
+         full=r"(bigger|larger|enlarge|increase|make (it|this|that|the text|text|things|everything|the words?|this text) "
+              r"(bigger|larger)( here| please| in front( of me)?)?|bigger please|i can't (see|read)( (this|that|it))?|"
+              r"too small|it's too small|(enlarge|blow up) (this|this text|the text)( here| please)?|"
+              r"(bigger|larger) (text|font|letters|writing))",
+         loose=r"\b(bigger|larger|enlarge|too (small|tiny)|tiny|can't (see|read)|hard to (see|read))\b"),
+    Rule("text_smaller", [("enlarge_text", {"goal": "smaller"})],
+         full=r"(smaller|shrink|make (it|this|that|the text|text|things|everything) smaller|too big|it's too big|"
+              r"smaller (text|font))",
+         loose=r"\b(smaller|too big|shrink)\b"),
     Rule("read_selection", [("read_selection", {})],
          full=r"read (the |my )?(selection|selected( text)?|highlighted( text)?|this text)( to me| aloud| out loud)?",
          loose=r"\bread\b.*\b(selection|selected|highlighted)\b"),
@@ -96,8 +156,8 @@ RULES = [
     Rule("dyslexia", [("restyle_page", {"style": "dyslexia"})],
          full=r"dyslexi[ac]( mode| font)?( on)?", loose=r"\bdyslexi"),
     Rule("reader", [("reader_view", {"on": True})],
-         full=r"(reader( mode| view)?|simplify( (this|the) page)?|declutter|clean (it |this )?up)( on)?",
-         loose=r"\b(reader (mode|view)|simplify|declutter)\b"),
+         full=r"(reader( mode| view)?|simplify( (this|the) page)?|clean (it |this )?up)( on)?",
+         loose=r"\b(reader (mode|view)|simplify)\b"),
     Rule("reader_off", [("reader_view", {"on": False})],
          full=r"(close|exit|leave|turn off) (the )?reader( mode| view)?|reader( mode| view)? off"),
     Rule("invert", [("color_filter", {"kind": "invert"})],
@@ -159,5 +219,8 @@ def match(text: str, strict: bool = True) -> Match | None:
 
 
 HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the selection, stop, high contrast, "
-             "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, calibrate my eyes, "
-             "invert colors, scroll down, go back, or ask anything when you're online.")
+             "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, "
+             "what am I looking at, check my eye tracker, set up my eyes, "
+             "follow my eyes slower, follow my eyes faster, show where I am looking, hide the eye dot, "
+             "invert colors, scroll down, go back, simple mode, bigger buttons, hide pop-ups, simplify the menu, "
+             "check the page, or ask anything when you're online.")
