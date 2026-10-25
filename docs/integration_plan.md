@@ -110,6 +110,15 @@ delegated at freeze.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 23:20 PT — Ben H (via Claude Code) — branch `worktree-voice`, streaming speech-to-text (unwired)
+
+**Changed:** new `ally/ws_client.py` (stdlib WebSocket client, ws:// and wss://), new `ally/stt_stream.py`
+(`StreamingSTT`, `transcribe_blocks`: Cartesia ink-2 turn detection over
+`wss://api.cartesia.ai/stt/turns/websocket`, `X-API-Key` header), new `tests/fake_cartesia_ws.py` and
+`tests/test_stt_stream.py` (28 tests). Built by a helper agent, reviewed here.
+**For everyone:** nothing uses it yet; voice still uses the batch `/stt` call. Unverified without a real
+key: how a bad key is refused, whether `close` always ends an open turn, real TLS to Cartesia.
+
 ### Oct 24, 22:50 PT — Ben H (via Claude Code) — branch `worktree-voice`, speech queueing
 
 **Changed:** `ally/speech.py`, `tests/test_voice_confirm.py`. `say(..., interrupt=False)` now waits for
