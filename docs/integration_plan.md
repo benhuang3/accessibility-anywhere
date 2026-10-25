@@ -140,6 +140,16 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 01:45 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `dece59e`
+
+**Pushed to `benh/os-layer` (not yet on `main`).** "Bigger" now makes a clear difference (Ben H: at least 30%).
+Text: the smallest step is 1.3x (was 1.15x; "smaller" can still go to 1.15x). Buttons: labels 1.3x (at least
++3 px, up to 32 px), links styled as buttons (`a[role=button]`, `a.btn`, `a.button`) now grow too, and button
+boxes grow 1.15x per side (min height 44 px). Measured in the VM: usa.gov text 130%, button area 1.33-1.77x;
+Wikipedia text 150%, buttons 1.34x+. Still on hold: small toggles in lists/menus, already-big buttons. Known
+bug, not fixed yet: "reset" / "simple mode off" don't cancel a background AI check still running, which can
+re-apply changes. Reload the extension and open tabs after pulling.
+
 ### Oct 25, 01:15 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `52873ea`
 
 **Pushed to `benh/os-layer`.** Bug found in manual testing: "zoom in" typed in the extension popup turned on
