@@ -113,6 +113,8 @@ class RiskWire:
                  broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None,
                  overlay_active=None, review_timeout_s=10.0, contact=None):
         self.contact = contact  # (name, send(text) -> bool) for "Tell <name>" on high warnings, or None
+        self.auto_alert = bool(contact and len(contact) > 3 and contact[3])
+        self._last_auto_alert = None
         self.bus = bus
         self.overlay_active = overlay_active or (lambda: False)  # the in-page banner only stands in for it
         self.guardian = guardian        # second opinion from a vision model (consent and budget live inside it)
@@ -145,6 +147,7 @@ class RiskWire:
             risk = Risk.from_dict(msg["risk"])
         except Exception:
             return
+        alert = self._auto_alert(risk)
         if self.broadcast is not None and risk.url:
             try:
                 self.broadcast("exitFullscreen", {"url": risk.url})
@@ -174,9 +177,10 @@ class RiskWire:
                     offer.pause_seconds = PAUSE_SECONDS
                     offer.timeout = 20.0 + PAUSE_SECONDS
                 if self.contact and risk.severity == "high":
-                    name = self.contact[0]
-                    verb = "Call" if self._call_url() else "Tell"
-                    offer.extra_action = (f"{verb} {name}", lambda r=risk: self._tell(r))
+                    with self._lock:
+                        if alert is not None:
+                            alert["offer"] = offer
+                        self._contact_action(offer, risk, alert)
                 if self.ask(offer) == "yes" and not self._stop.is_set():
                     ok = actions.perform(action_id, risk, self.call,
                                          snapshot=self.snapshot_fn, kill=self.kill, tab_id=tab_id)
@@ -198,16 +202,68 @@ class RiskWire:
         url = self.contact[2] if self.contact and len(self.contact) > 2 else ""
         return url if contact.valid_call_url(url) else ""
 
-    def _tell(self, risk) -> str:
+    def _contact_action(self, offer, risk, alert) -> None:
+        if alert is not None and not self._call_url() and (alert["sent"] or not alert["done"].is_set()):
+            offer.extra_action = None
+            return
+        verb = "Call" if self._call_url() else "Tell"
+        offer.extra_action = (f"{verb} {self.contact[0]}", lambda: self._tell(risk, alert))
+
+    def _send_contact(self, risk) -> bool:
+        call_url = self._call_url()
+        try:
+            message = contact.message_for(risk.kind) + (" Tap to join the video call." if call_url else "")
+            send = self.contact[1]
+            return bool(send(message, call_url) if call_url else send(message))
+        except Exception:
+            log.debug("trusted contact send failed", exc_info=True)
+            return False
+
+    def _auto_alert(self, risk):
+        if not self.contact or not self.auto_alert or risk.severity != "high":
+            return None
+        with self._lock:
+            now = self.clock()
+            if self._last_auto_alert is not None and now - self._last_auto_alert < 300:
+                return None
+            self._last_auto_alert = now
+        alert = {"sent": False, "done": threading.Event(), "offer": None}
+
+        def send():
+            try:
+                ok = self._send_contact(risk)
+                with self._lock:
+                    alert["sent"] = ok
+                    alert["done"].set()
+                    if alert["offer"] is not None:
+                        self._contact_action(alert["offer"], risk, alert)
+                self.bus.publish("risk_contact", {"name": self.contact[0], "kind": risk.kind,
+                                                 "ok": ok, "call_opened": False, "auto": True})
+            finally:
+                alert["done"].set()
+
+        try:
+            threading.Thread(target=send, name="risk-auto-alert", daemon=True).start()
+        except Exception:
+            log.debug("trusted contact worker failed", exc_info=True)
+            alert["done"].set()
+        return alert
+
+    def _tell(self, risk, alert=None) -> str:
         """Runs in a worker when the person taps 'Call/Tell <name>'. Returns the line shown in the panel.
         With a call link: open the video call here and send the helper a push whose button joins it."""
-        name, send = self.contact[0], self.contact[1]
+        name = self.contact[0]
         call_url = self._call_url()
         opened = False
         if call_url:
             try:
                 if self.call is not None:
-                    self.call("openUrl", {"url": call_url, "newTab": True})
+                    try:
+                        result = self.call("openCall", {"url": call_url, "name": name})
+                    except Exception:
+                        result = None
+                    if not isinstance(result, dict) or not result.get("opened") or result.get("error"):
+                        self.call("openUrl", {"url": call_url, "newTab": True})
                 else:
                     import webbrowser
 
@@ -215,15 +271,14 @@ class RiskWire:
                 opened = True
             except Exception:
                 log.debug("could not open the video call", exc_info=True)
-        ok = False
-        try:
-            text = contact.message_for(risk.kind) + (" Tap to join the video call." if call_url else "")
-            ok = bool(send(text, call_url) if call_url else send(text))
-        except Exception:
-            log.debug("trusted contact send failed", exc_info=True)
+        if alert is not None:
+            alert["done"].wait()  # the call opens immediately; only delivery waits for the pending push
+        already_sent = alert is not None and alert["sent"]
+        ok = already_sent or self._send_contact(risk)
         self.bus.publish("risk_contact", {"name": name, "kind": risk.kind, "ok": ok, "call_opened": opened})
         if call_url and opened and ok:
-            next_step = "Hang up on the other caller first." if risk.kind == "remote_access" else "I've asked them to join."
+            next_step = ("Hang up on the other caller first." if risk.kind == "remote_access" else
+                         "They already got the alert." if already_sent else "I've asked them to join.")
             return f"Opening a call with {name}. {next_step}"
         return f"I've sent {name} a message." if ok else f"I couldn't reach {name}. Please give them a call."
 
@@ -451,7 +506,8 @@ def _make_contact(agent):
     name = str(cfg.get("trusted_contact", "")).strip()[:30]
     send = contact.ntfy_sender(cfg.get("contact_topic", ""))
     call_url = str(cfg.get("contact_call_url", "")).strip()
-    return (name, send, call_url if contact.valid_call_url(call_url) else "") if name and send else None
+    return (name, send, call_url if contact.valid_call_url(call_url) else "",
+            cfg.get("auto_alert", False) is True) if name and send else None
 
 
 def attach(agent) -> RiskWire:

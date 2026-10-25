@@ -119,6 +119,25 @@ Call links must use HTTPS. `contact.CALL_HOSTS` accepts `meet.google.com`, `zoom
 `teams.live.com` and `meet.jit.si`, including their subdomains. An invalid link falls back to **Tell**; without a name and valid topic,
 there is no contact button. The defaults above come from `ally/default_config.toml`.
 
+### Ally call frame and automatic alerts
+
+Set `[risk] auto_alert = true` to push the trusted contact immediately on high warnings, at most once per five minutes across all
+warning kinds (attempts count, including failed sends). It defaults to false. Delivery runs in a daemon worker and never delays the
+warning. The push has the same fixed text and optional Join link as Call/Tell. Its `risk_contact` event includes `auto: true`.
+After a successful auto-alert, Call only opens the room; without a call link there is no extra Tell button. A failed auto-alert can
+be retried manually. Clicking Call while delivery is pending opens the room immediately and waits for that delivery before deciding
+whether to retry the push.
+
+For Google Meet, Call prefers a maximized Chrome popup with an amber Ally frame, a large connection status and a red End call
+button. Only popup tab IDs saved in extension session storage receive this frame; normal Meet tabs stay unchanged, including after
+the service worker restarts. Other supported call hosts, or an unavailable `openCall` action, fall back to the existing browser tab.
+Reload the extension to install the new content script. **NOT LIVE-TESTED:** Meet DOM assumptions are English visible button text
+exactly `Join now`, `Ask to join` or `Join`, and an `aria-label` starting with `Leave call`. Ally clicks the join control once within
+30 seconds, treats its disappearance (or a leave control without a join control) as joined, and hides the first leave-control
+ancestor at least 60% of viewport width and between 0 and 200px high. Labels can change or be localized; camera/mic permissions,
+sign-in and host admission still depend on Meet. On script errors or no join/leave control within 30 seconds, Ally restores plain
+Meet and keeps End call. The leave control remains callable from JavaScript when its bar is hidden.
+
 ## 6. Changes to files owned by Ben H (please review)
 
 All small, all on `risk-branch`, all covered by tests:
@@ -130,6 +149,7 @@ All small, all on `risk-branch`, all covered by tests:
 | `ally/config.py` | `"risk": {"screen_review": bool, "daily_calls": int, "hourly_calls": int}` in SPEC and two RANGES entries | The `[risk]` section validates |
 | `ally/default_config.toml` | `[risk]` section (above), off by default | Opt-in screen review |
 | `ally/config.py`, `ally/default_config.toml` | `config.toml` keys `[risk] trusted_contact`, `contact_topic`, `contact_call_url`: validation and empty defaults | Configure the helper's name, ntfy delivery and optional standing call; `screen_review` stays false by default |
+| `ally/config.py`, `ally/default_config.toml` | `[risk] auto_alert`: boolean validation, default false | Opt in to automatic high-warning contact pushes, globally limited to one attempt per five minutes |
 
 No changes to `proactive.py` or `contracts.py`. The coordinator's `handle_risk` already calls `warning_for`, which now exists.
 

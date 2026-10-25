@@ -8,6 +8,7 @@
   "permissions": ["scripting", "fontSettings", "storage", "alarms", "tts"],
   "host_permissions": ["<all_urls>"],
   "content_scripts": [
+    { "matches": ["https://meet.google.com/*"], "js": ["call.js"], "run_at": "document_idle", "all_frames": false },
     { "matches": ["http://*/*", "https://*/*"], "js": ["risk.js"], "run_at": "document_idle", "all_frames": false },
     { "matches": ["http://*/*", "https://*/*"], "js": ["risk-main.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false }
   ],

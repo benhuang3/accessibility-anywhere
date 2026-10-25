@@ -64,7 +64,7 @@ SPEC = {
                   "voice_confirm": bool, "overlay": bool, "senses_behavior": bool, "senses_vision": bool,
                   "camera_index": int, "context_poll_seconds": NUM},
     "risk": {"screen_review": bool, "daily_calls": int, "hourly_calls": int, "trusted_contact": str,
-             "contact_topic": str, "contact_call_url": str},
+             "contact_topic": str, "contact_call_url": str, "auto_alert": bool},
     "profile": {"page_zoom": NUM, "min_font_px": int, "page_styles": list, "screen_magnify": NUM,
                 "color_filter": ("none", "invert", "grayscale", "high_contrast")},
     "tools": {"disabled": list, "timeout_seconds": NUM},
