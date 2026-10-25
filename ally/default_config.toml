@@ -156,6 +156,22 @@ rearm_seconds = 20         # a signal waits this long before firing again
 "<mod>+e" = "Describe what is on my screen in two short sentences."
 "<mod>+a" = "open_dashboard"
 
+[proactive]
+# Ally notices when you're struggling (squinting, leaning in, clicking the same spot, backspacing a lot)
+# and offers help. Say "yes" or click Yes. Things you accept twice on a site are done automatically next time.
+enabled = true
+overlay = true                 # on-screen highlight + Yes/No bubble (needs the overlay module; off-safe until then)
+voice_confirm = true           # ask out loud and listen for yes/no
+senses_behavior = true         # mouse/keyboard signals (needs pynput)
+senses_vision = false          # webcam squint/lean (needs mediapipe + opencv-python + face_landmarker.task)
+camera_index = 0
+min_confidence = 0.6           # 0..1, how sure before offering
+fusion_window_seconds = 4      # signals this close together count as one moment
+cooldown_seconds = 30          # at most one offer per app/site in this time
+offer_timeout_seconds = 8      # no answer = no change
+auto_apply_after = 2           # accepted this many times on a site = do it automatically
+context_poll_seconds = 1.5
+
 # Applied when Ally starts and on every page you open in Chrome.
 [profile]
 page_zoom = 0              # e.g. 1.25 = 125% on every site; 0 = leave Chrome's zoom alone

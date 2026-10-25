@@ -144,6 +144,8 @@ def make_handler(agent):
                     except ValueError:
                         after = 0
                     return self._json(200, {"events": agent.events.since(after)})
+                if path == "/api/habits":
+                    return self._json(200, {"habits": agent.habits.snapshot()})
             return self._json(404, {"error": "not found"})
 
         def do_POST(self):
@@ -169,6 +171,13 @@ def make_handler(agent):
             if path == "/api/config":
                 ok, errors, warnings = agent.save_config(str(data.get("text", "")))
                 return self._json(200 if ok else 400, {"ok": ok, "errors": errors, "warnings": warnings})
+            if path == "/api/event":
+                out = agent.publish_event(data if isinstance(data, dict) else {})
+                return self._json(200 if out["ok"] else 400, out)
+            if path == "/api/habits":
+                if data.get("forget"):
+                    agent.habits.forget(data.get("context") or None)
+                return self._json(200, {"habits": agent.habits.snapshot()})
             if path == "/api/stop":
                 agent.speaker.stop()
                 return self._json(200, {"ok": True})

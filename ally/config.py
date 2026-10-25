@@ -59,6 +59,10 @@ SPEC = {
                "lean_weak": NUM, "lean_release": NUM, "lean_hold": NUM, "rage_clicks": int, "rage_seconds": NUM,
                "rage_px": NUM, "retype_backspaces": int, "retype_seconds": NUM, "hesitation_seconds": NUM,
                "rearm_seconds": NUM, "post_url": str},
+    "proactive": {"enabled": bool, "offer_timeout_seconds": NUM, "cooldown_seconds": NUM,
+                  "fusion_window_seconds": NUM, "min_confidence": NUM, "auto_apply_after": int,
+                  "voice_confirm": bool, "overlay": bool, "senses_behavior": bool, "senses_vision": bool,
+                  "camera_index": int, "context_poll_seconds": NUM},
     "profile": {"page_zoom": NUM, "min_font_px": int, "page_styles": list, "screen_magnify": NUM,
                 "color_filter": ("none", "invert", "grayscale", "high_contrast")},
     "tools": {"disabled": list, "timeout_seconds": NUM},
@@ -83,6 +87,8 @@ RANGES = {
     ("senses", "hesitation_seconds"): (1, 30),
     ("profile", "page_zoom"): (0, 5), ("profile", "min_font_px"): (0, 72),
     ("profile", "screen_magnify"): (1, 16), ("tools", "timeout_seconds"): (1, 300),
+    ("proactive", "min_confidence"): (0, 1), ("proactive", "offer_timeout_seconds"): (2, 60),
+    ("proactive", "context_poll_seconds"): (0.5, 30),
 }
 
 

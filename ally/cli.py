@@ -21,6 +21,12 @@ commands:
   send "text"        send a request, e.g. python run.py send "make it bigger"
   tool NAME [JSON]   run one tool, e.g. python run.py tool set_page_zoom '{"zoom": 1.5}'
   status             show what Ally is doing
+  simulate ...       fake a sensor event (no camera needed), e.g.
+                       python run.py simulate struggle squint 0.8
+                       python run.py simulate risk scam_popup high "page says call Microsoft support"
+                       python run.py simulate answer yes
+                       python run.py simulate demo      (squint + lean together = fused offer)
+  habits [forget]    show (or wipe) what Ally has learned per app/site
   stop | restart     stop or restart the running agent
   open               open the dashboard
   check              validate config.toml without starting
@@ -133,6 +139,39 @@ def _voice_command(paths: Paths, cmd: str, a) -> int:
     return 0
 
 
+def simulate_bodies(args: list[str]) -> list[dict]:
+    """Turn `simulate ...` words into /api/event bodies. A trailing JSON object adds/overrides fields."""
+    import time
+
+    extra = {}
+    if args and args[-1].lstrip().startswith("{"):
+        extra = json.loads(args[-1])
+        args = args[:-1]
+    if not args:
+        raise ValueError("say what to simulate")
+    what, rest = args[0], args[1:]
+    if what == "struggle":
+        if not rest:
+            raise ValueError("struggle KIND [CONFIDENCE]")
+        body = {"type": "struggle", "kind": rest[0], "source": "simulate",
+                "confidence": float(rest[1]) if len(rest) > 1 else 0.8}
+    elif what == "risk":
+        if not rest:
+            raise ValueError("risk KIND [SEVERITY] [EVIDENCE]")
+        body = {"type": "risk", "kind": rest[0], "source": "simulate",
+                "severity": rest[1] if len(rest) > 1 else "high", "evidence": " ".join(rest[2:])}
+    elif what == "answer":
+        body = {"type": "answer", "choice": rest[0] if rest else "yes"}
+    elif what == "demo":
+        now = time.time()
+        return [{"type": "struggle", "kind": "squint", "confidence": 0.45, "source": "simulate", "ts": now, **extra},
+                {"type": "struggle", "kind": "lean", "confidence": 0.4, "source": "simulate", "ts": now, **extra}]
+    else:
+        raise ValueError(f"unknown '{what}'")
+    body.update(extra)
+    return [body]
+
+
 def main(argv: list[str] | None = None) -> int:
     if sys.version_info < (3, 11):
         print("Ally needs Python 3.11 or newer.")
@@ -203,6 +242,24 @@ def main(argv: list[str] | None = None) -> int:
         return _voice_command(paths, cmd, a)
     if cmd == "status":
         print(json.dumps(_api(paths, "GET", "/api/status", timeout=10), indent=2))
+        return 0
+    if cmd == "simulate":
+        try:
+            bodies = simulate_bodies(a.args)
+        except ValueError as e:
+            print(f"Usage: python run.py simulate struggle|risk|answer|demo ...  ({e})")
+            return 2
+        ok = True
+        for b in bodies:
+            out = _api(paths, "POST", "/api/event", b, timeout=10)
+            print(f"{b['type']} {b.get('kind') or b.get('choice')}: "
+                  + ("sent" if out.get("ok") else f"error: {out.get('error')}"))
+            ok = ok and bool(out.get("ok"))
+        return 0 if ok else 1
+    if cmd == "habits":
+        body = {"forget": True} if a.args[:1] == ["forget"] else {}
+        out = _api(paths, "POST" if body else "GET", "/api/habits", body or None, timeout=10)
+        print(json.dumps(out.get("habits"), indent=2))
         return 0
     if cmd in ("stop", "restart"):
         _api(paths, "POST", f"/api/{'shutdown' if cmd == 'stop' else 'restart'}", {}, timeout=10)
