@@ -42,6 +42,16 @@ RULES = [
          full=r"(reset|reset (all|everything|it|this|the page|the screen)|undo( (all|everything|that|it))?|"
               r"back to normal|go back to normal|turn (it|everything) off|normal( view| size)?|panic)",
          loose=r"\b(reset|back to normal|undo (everything|all))\b"),
+    # The gaze dot comes before look_magnify, which would otherwise take "show me where I'm looking".
+    Rule("show_dot", [("show_gaze", {"on": True})],
+         full=r"(?:please )?(?:show|display|turn on|put up|bring up)(?: me)? (?:where (?:i'm|i am|im) (?:looking|staring|gazing)(?: at)?|(?:the |my |an |a )?(?:eye|eyes|gaze|eye tracking|eye tracker|looking) (?:dot|circle|marker|pointer|cursor|spot))(?: please)?"),
+    Rule("hide_dot", [("show_gaze", {"on": False})],
+         full=r"(?:please )?(?:hide|turn off|remove|get rid of|stop showing|don't show|do not show)(?: me)? "
+              r"(?:where (?:i'm|i am|im) (?:looking|staring|gazing)(?: at)?|(?:the |my |an |a )?(?:eye|eyes|gaze|eye tracking|eye tracker|looking) (?:dot|circle|marker|pointer|cursor|spot))(?: please)?"),
+    Rule("follow_slower", [("eye_follow_speed", {"speed": "slower"})],
+         full=r"(?:follow|track|pan|move)(?: (?:my eyes|me|the view|the zoom|the screen))?(?: (?:a bit|a little|much))? (?:slower|more slowly)|slow (?:down )?(?:the )?(?:eye )?(?:following|follow|panning|pan|view)"),
+    Rule("follow_faster", [("eye_follow_speed", {"speed": "faster"})],
+         full=r"(?:follow|track|pan|move)(?: (?:my eyes|me|the view|the zoom|the screen))?(?: (?:a bit|a little|much))? (?:faster|more quickly|quicker)|speed up (?:the )?(?:eye )?(?:following|follow|panning|pan|view)"),
     Rule("look_magnify", [("magnify_where_i_look", {})],
          full=r"(?:i want |i'd like |let me see |show me )?(?:to )?(?:(?:magnify|enlarge|blow up|zoom(?: in)?(?: on)?|"
               r"make bigger) )?(?:what |where |the (?:thing|part|spot|area|text|word|words) (?:that )?)"
@@ -60,14 +70,6 @@ RULES = [
     Rule("check_eyes", [("check_eye_tracker", {})],
          full=r"check (?:my |the )?(?:eye ?track(?:er|ing)|eyes)",
          loose=r"\bcheck (?:my |the )?(?:eye ?track(?:er|ing)|eyes)\b"),
-    Rule("show_dot", [("show_gaze", {"on": True})],
-         full=r"show where i am looking"),
-    Rule("hide_dot", [("show_gaze", {"on": False})],
-         full=r"hide the eye dot"),
-    Rule("follow_slower", [("eye_follow_speed", {"speed": "slower"})],
-         full=r"follow my eyes slower"),
-    Rule("follow_faster", [("eye_follow_speed", {"speed": "faster"})],
-         full=r"follow my eyes faster"),
     Rule("follow_eyes", [("magnifier_follow", {"target": "eyes"})],
          full=r"(?:follow|track) (?:my )?(?:eyes|gaze)|(?:magnifier|zoom) (?:should )?follows? (?:my )?(?:eyes|gaze)"),
     Rule("follow_mouse", [("magnifier_follow", {"target": "mouse"})],

@@ -628,5 +628,24 @@ class OfferByLookingTests(unittest.TestCase):
         self.assertEqual((d["target"]["x"], d["target"]["y"]), (640, 300))
 
 
+class GazePhraseTests(unittest.TestCase):
+    """Offline mode only has these phrase rules, so everyday wordings must reach the gaze tools."""
+
+    def test_everyday_wordings(self):
+        from ally import rules
+
+        cases = {
+            "show where I'm looking at": "show_dot", "show me where I'm looking": "show_dot",
+            "show where I am looking": "show_dot", "show the eye dot": "show_dot",
+            "hide the eye dot": "hide_dot", "stop showing where I'm looking": "hide_dot",
+            "follow my eyes a bit slower": "follow_slower", "slow down the panning": "follow_slower",
+            "follow my eyes faster": "follow_faster", "speed up the panning": "follow_faster",
+            "magnify what I'm looking at": "look_magnify", "follow my eyes": "follow_eyes",
+        }
+        for text, rule in cases.items():
+            m = rules.match(text)
+            self.assertEqual(m.rule if m else None, rule, text)
+
+
 if __name__ == "__main__":
     unittest.main()
