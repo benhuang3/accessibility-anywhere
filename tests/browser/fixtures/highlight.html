@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Highlight test page</title>
+<style>
+  body { font: 16px Arial, sans-serif; margin: 0; }
+  header { display: flex; gap: 16px; align-items: center; padding: 12px 16px; background: #eee; }
+  nav a { margin-right: 12px; }
+  .wrap { display: flex; gap: 24px; padding: 16px; }
+  main { flex: 3; } aside { flex: 1; background: #f6f6f6; padding: 8px; }
+  section { margin-bottom: 24px; }
+  #far { margin-top: 1800px; }
+  footer { padding: 16px; background: #ddd; }
+</style>
+</head>
+<body>
+  <header>
+    <strong>Town Library</strong>
+    <nav aria-label="Main"><a href="#home">Home</a><a href="#news">News</a><a href="#hours">Opening hours</a></nav>
+    <input id="q" type="search" aria-label="Search the catalogue" placeholder="Search">
+    <button id="signin" type="button" style="margin-left: auto">Sign in</button>
+  </header>
+  <div class="wrap">
+    <main>
+      <section id="history"><h2>History</h2><p>The library opened in 1902 with a gift of two hundred books.</p></section>
+      <section id="prices"><h2>Prices</h2><p>Borrowing is free. Printing costs ten cents a page.</p></section>
+      <div id="flat">
+        <div class="mw-heading"><h2 id="rules-h">Rules</h2></div>
+        <p>Please return books within three weeks.</p>
+        <p>Quiet study is on the second floor.</p>
+        <div class="mw-heading"><h2>Volunteers</h2></div>
+        <p>Volunteers help with reading hour on Saturdays.</p>
+      </div>
+      <button id="far" type="button">Contact us</button>
+    </main>
+    <aside>Events this week</aside>
+  </div>
+  <footer>Town Library, 1 Main Street</footer>
+</body>
+</html>

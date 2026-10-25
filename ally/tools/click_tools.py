@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import time
 from typing import Annotated
 
 from ..pagekit import clicks
+from ..pagekit import tabs as tabkit
 from ..pagekit.core import PageSession
 from ..registry import ToolError, tool
 
+log = logging.getLogger("ally.tools.clicks")
 NAV_WORDS = {"back": "back", "go back": "back", "previous page": "back", "forward": "forward",
              "reload": "reload", "refresh": "reload", "reload the page": "reload", "refresh the page": "reload"}
 NAV_SAID = {"back": "went back", "forward": "went forward", "reload": "reloaded the page"}
@@ -111,4 +115,73 @@ def click_text(ctx, label: Annotated[str, "The words on the button or link, e.g.
                      str(best.get("text") or ""), id=best["id"], gen=listed.get("gen") or 0)
 
 
-__all__ = ["show_numbers", "click_number", "click_text"]
+def _find(session: PageSession, target: str, prefer: tuple[str, ...], shortest: bool = True) -> tuple[dict, list[dict]]:
+    found = _call(session, "highlightFind") or {}
+    items = found.get("items") or []
+    for kinds in (prefer, ("control", "area", "section")):
+        pool = [i for i in items if i.get("kind") in kinds]
+        best = clicks.match(target, pool, found.get("view") or {}, shortest=shortest)["items"]
+        if best:
+            return found, best
+    return found, []
+
+
+@tool(timeout=20)
+def show_where(ctx, target: Annotated[str, "What the user wants to click, e.g. 'sign in' or 'the search box'. "
+                                           "Empty = show numbers on everything."] = ""):
+    """Show the user where to click: a yellow box and arrow around the button, link or box they asked about.
+
+    Use for "where do I click to sign in", "where is the search box", "show me the cart button". Nothing is
+    clicked. With no target, shows numbers on everything clickable.
+    """
+    if not target.strip():
+        return show_numbers(ctx)
+    session = PageSession(ctx)
+    found, best = _find(session, target, ("control",))
+    log.info("show_where %r -> %d of %d (%s)", target, len(best), len(found.get("items") or []),
+             [b.get("label") for b in best[:3]])
+    if not best:
+        return f"I don't see {target.strip()} on this page. Say show numbers to see what you can click."
+    best = best[:5]
+    label = clicks.short_label(best[0].get("label", ""), 40)
+    shown = _call(session, "highlightShow", ids=[b["id"] for b in best], gen=found.get("gen") or 0, mode="point",
+                  note=f"Click here: {label}") or {}
+    boxes = shown.get("boxes") or [best[0]]
+    place = tabkit.where(boxes[0], shown.get("view") or found.get("view") or {})
+    if len(best) > 1:
+        return f"I see {len(best)} called {label}. I put yellow boxes around them."
+    return f"It's {place}. I put a yellow box around it. Say click {label.lower()} to click it."
+
+
+@tool(timeout=20)
+def highlight_area(ctx, target: Annotated[str, "The part of the page, e.g. 'main text', 'menu', 'the section "
+                                                "about history'."]):
+    """Highlight one part of the current web page: the rest is dimmed and the part outlined.
+
+    Use for "highlight the main text", "highlight the menu", "highlight the section about prices".
+    """
+    session = PageSession(ctx)
+    # "the section about history" -> "history": headings rarely say "section"
+    target = re.sub(r"^(?:the )?(?:section|part|bit|area|paragraph)s? (?:about|on|with|called|for|of) ", "",
+                    target.strip(), flags=re.I) or target
+    found, best = _find(session, target, ("area", "section"), shortest=False)
+    # Several menus or areas match ("menu" on Wikipedia: Main, Contents, Appearance...): the site's main one.
+    best.sort(key=lambda b: not re.search(r"\b(main|primary|site|global)\b", str(b.get("label", "")), re.I))
+    log.info("highlight_area %r -> %s", target, [(b.get("kind"), b.get("label")) for b in best[:3]])
+    if not best:
+        return f"I don't see {target.strip()} on this page."
+    shown = _call(session, "highlightShow", ids=[best[0]["id"]], gen=found.get("gen") or 0, mode="spotlight") or {}
+    if not shown.get("shown"):
+        return f"I couldn't highlight {target.strip()}."
+    return f"Highlighted {clicks.short_label(best[0].get('label', ''), 40)}. Say stop highlighting to clear it."
+
+
+@tool(timeout=10)
+def clear_highlight(ctx):
+    """Remove the yellow boxes or spotlight from show_where and highlight_area."""
+    out = _call(PageSession(ctx), "highlightClear") or {}
+    log.info("clear_highlight -> %s", out.get("said"))
+    return "Cleared the highlight." if out.get("said") else "Nothing is highlighted."
+
+
+__all__ = ["show_numbers", "click_number", "click_text", "show_where", "highlight_area", "clear_highlight"]

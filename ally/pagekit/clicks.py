@@ -39,8 +39,19 @@ def parse_number(text: str) -> int | None:
     return n if n and 1 <= n <= 99 else None
 
 
+def _stem(w: str) -> str:
+    """Light stemming so "renewing" finds "Renew" and "passports" finds "Passport"."""
+    if len(w) > 5 and w.endswith("ing"):
+        return w[:-3]
+    if len(w) > 4 and w.endswith("ies"):
+        return w[:-3] + "y"
+    if len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
+        return w[:-1]
+    return w
+
+
 def label_tokens(text: str) -> list[str]:
-    return [w for w in re.findall(r"[a-z0-9]+", str(text or "").lower().replace("'", "")) if w not in DROP]
+    return [_stem(w) for w in re.findall(r"[a-z0-9]+", str(text or "").lower().replace("'", "")) if w not in DROP]
 
 
 def _score(spoken: list[str], label: str) -> float:
@@ -61,9 +72,10 @@ def _centre_distance(item: dict, view: dict) -> float:
     return math.hypot(cx - float(view.get("w") or 0) / 2, cy - float(view.get("h") or 0) / 2)
 
 
-def match(spoken: str, items: list[dict], view: dict | None = None) -> dict:
+def match(spoken: str, items: list[dict], view: dict | None = None, shortest: bool = True) -> dict:
     """The targets that best match `spoken`: {"items": [...], "score": float}. Several items = a real tie
-    (same score and same label), for "which one?". No items = nothing close enough."""
+    (same score and same label), for "which one?". No items = nothing close enough. shortest=False keeps every
+    tied item even when their labels differ (the caller breaks the tie)."""
     want = label_tokens(spoken)
     scored = [(_score(want, str(i.get("label", ""))), i) for i in items]
     scored = [(s, i) for s, i in scored if s >= MATCH_MIN]
@@ -73,7 +85,7 @@ def match(spoken: str, items: list[dict], view: dict | None = None) -> dict:
     top = [i for s, i in scored if s == best]
     top.sort(key=lambda i: _centre_distance(i, view or {}))
     labels = {" ".join(label_tokens(i.get("label", ""))) for i in top}
-    if len(top) > 1 and len(labels) > 1 and best < 3.0:
+    if shortest and len(top) > 1 and len(labels) > 1 and best < 3.0:
         # Different labels with the same partial score: prefer the shortest label (closest to what was said).
         shortest = min(len(label_tokens(i.get("label", ""))) for i in top)
         top = [i for i in top if len(label_tokens(i.get("label", ""))) == shortest]

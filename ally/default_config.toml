@@ -116,6 +116,10 @@ features = "v5"            # v5 is v4 plus MobileGaze yaw and pitch (mobileone_s
 click_learning = true      # clicks quietly improve the estimate, and that learning is kept across restarts. A new setup starts fresh. Set false to turn that off. Clicks stay on this computer.
 max_radius_px = 250        # above this uncertainty, Ally uses the mouse pointer and says so
 answer_offers = false      # separate look-to-answer Yes/No cards (off: Ally's offer bubble and voice answer offers)
+scroll = true              # not zoomed in: look near the bottom of a page to scroll down, near the top to scroll up
+scroll_speed = 0.35        # screens per second at the very edge (slower further in)
+scroll_band = 0.15         # how much of the page's height counts as "near the edge", at the top and at the bottom
+scroll_dwell = 0.6         # seconds of looking there before it starts (stops at once when you look away)
 
 # Noticing when you're struggling, so Ally can offer help before you ask.
 # Camera: squinting and leaning toward the screen (shares the camera with the eye tracker; frames are

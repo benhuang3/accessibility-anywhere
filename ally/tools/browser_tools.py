@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import urllib.parse
 from typing import Annotated, Literal
 
+from ..pagekit import tabs as tabkit
 from ..registry import ToolError, tool
+
+log = logging.getLogger("ally.tools.tabs")
 
 
 def _styles(cfg: dict) -> list[str]:
@@ -116,6 +120,47 @@ def browser_navigate(ctx, action: Literal["back", "forward", "reload"]):
     if got == "none":
         return f"There's no page {'before' if action == 'back' else 'after'} this one."
     return {"back": "Went back.", "forward": "Went forward.", "reload": "Reloaded the page."}[action]
+
+
+@tool(timeout=10)
+def switch_tab(ctx, which: Literal["other", "next", "previous", "first", "last"] = "other",
+               name: Annotated[str, "Words from the tab's title or site, e.g. 'gmail'. Empty for which/number."] = "",
+               number: Annotated[int, "Tab position from the left, 1 = first. 0 = not by number."] = 0):
+    """Switch to another Chrome tab: the other (last used) one, next/previous, by number, or by name.
+
+    Use for "go to the other tab", "next tab", "go to tab 3", "switch to the gmail tab".
+    """
+    listed = ctx.browser.call("tabList") or {}
+    got = tabkit.choose(listed, which, name, int(number or 0))
+    log.info("switch_tab which=%s name=%r number=%s -> %s %s", which, name, number, got["why"],
+             got["tab"] and (got["tab"]["id"], got["tab"].get("title")))
+    tab = got["tab"]
+    if tab is None:
+        if got["why"] == "no_name":
+            return f"I don't see a tab called {name.strip()}. Say list my tabs to hear them."
+        if got["why"] == "no_number":
+            return f"There's no tab {int(number)}. You have {len(tabkit.window_tabs(listed))}."
+        return "There's only one tab open."
+    here = tabkit.active(listed)
+    if here is not None and here["id"] == tab["id"]:
+        return f"You're already on {tabkit.short_title(tab)}."
+    ctx.browser.call("tabSwitch", tabId=tab["id"])
+    return f"Switched to {tabkit.short_title(tab)}."
+
+
+@tool(timeout=10)
+def list_tabs(ctx):
+    """Say which Chrome tabs are open, numbered from the left, and which one the user is on."""
+    listed = ctx.browser.call("tabList") or {}
+    tabs = tabkit.window_tabs(listed)
+    log.info("list_tabs: %d tabs", len(tabs))
+    if not tabs:
+        return "No tabs are open."
+    here = next((n for n, t in enumerate(tabs, 1) if t.get("active")), 0)
+    names = "; ".join(f"{n}, {tabkit.short_title(t, 40)}" for n, t in enumerate(tabs, 1))
+    if len(tabs) == 1:
+        return f"You have one tab: {tabkit.short_title(tabs[0])}."
+    return f"You have {len(tabs)} tabs: {names}." + (f" You're on {here}." if here else "")
 
 
 @tool

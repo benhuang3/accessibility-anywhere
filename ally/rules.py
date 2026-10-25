@@ -77,6 +77,13 @@ RULES = [
     Rule("check_eyes", [("check_eye_tracker", {})],
          full=r"check (?:my |the )?(?:eye ?track(?:er|ing)|eyes)",
          loose=r"\bcheck (?:my |the )?(?:eye ?track(?:er|ing)|eyes)\b"),
+    # Eye scrolling (ally/gaze_scroll.py). Before scroll_down/up, whose full patterns would take "scroll".
+    Rule("eye_scroll_off", [("eye_scroll", {"on": False})],
+         full=r"(?:stop|turn off|no more|don't) (?:eye scrolling|scrolling with my eyes|scroll(?:ing)? with my eyes)|"
+              r"eye scroll(?:ing)? off"),
+    Rule("eye_scroll_on", [("eye_scroll", {"on": True})],
+         full=r"(?:turn on |start )?(?:eye scrolling|scroll(?:ing)? with my eyes)(?: on)?|eye scroll(?:ing)? on|"
+              r"let me scroll with my eyes"),
     Rule("follow_eyes", [("magnifier_follow", {"target": "eyes"})],
          full=r"(?:follow|track) (?:my )?(?:eyes|gaze)|(?:magnifier|zoom) (?:should )?follows? (?:my )?(?:eyes|gaze)"),
     Rule("follow_mouse", [("magnifier_follow", {"target": "mouse"})],
@@ -271,6 +278,68 @@ def _number_value(word: str) -> int | None:
     return _SMALL.index(word) + 1 if word in _SMALL else None
 
 
+# Tabs (docs/tabs_and_pointing.md).
+_ORD = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8,
+        "ninth": 9, "tenth": 10}
+TAB_RULES = [
+    ({"which": "other"}, re.compile(r"(?:go (?:back )?to |switch to |take me to )?(?:the |my )?(?:other|last|previous used|"
+                                    r"last used) tab|switch (?:the )?tabs?|go back to (?:the |my )?(?:last|other|previous) tab")),
+    ({"which": "next"}, re.compile(r"(?:go to |switch to )?(?:the )?next tab")),
+    ({"which": "previous"}, re.compile(r"(?:go to |switch to )?(?:the )?(?:previous tab|tab before(?: this(?: one)?)?)")),
+    ({"which": "first"}, re.compile(r"(?:go to |switch to )?(?:the )?first tab")),
+]
+TAB_NUMBER = re.compile(rf"(?:go to |switch to |open )?(?:the )?(?:tab (?:number )?(?P<n>{_NUM})|"
+                        rf"(?P<o>{'|'.join(_ORD)}) tab)")
+TAB_NAME = re.compile(r"(?:go to|switch to|take me to|show me|open)(?: the| my)? (?P<name>[a-z0-9' ]+?) tab")
+LIST_TABS = re.compile(r"(?:what|which) tabs (?:are|do i have)(?: open)?|list (?:my |the |all )?(?:open )?tabs|"
+                       r"(?:read|tell me) (?:my |the )?tabs|how many tabs(?: are open| do i have)?")
+# "Show me where to click" and highlighting.
+WHERE = re.compile(r"where (?:do|can|should) i (?:click|press|tap)(?: on)?(?: to| for)? (?P<a>.+)|"
+                   r"where(?:'s| is) (?:the |my )?(?P<b>.+?)(?: button| link| box)?|"
+                   r"(?:point (?:to|at)|find|show me) (?:the |my )?(?P<c>[a-z0-9' ]+?) (?:button|link|box|field)|"
+                   r"point (?:to|at) (?:the |my )?(?P<d>.+)")
+WHERE_ALL = re.compile(r"(?:show me )?where (?:do |can |should )?i (?:click|press|tap)|show me where to (?:click|press|tap)")
+HIGHLIGHT = re.compile(r"highlight (?:the |this |my )?(?P<t>.+)")
+HIGHLIGHT_OFF = re.compile(r"(?:stop|turn off) highlighting|(?:clear|remove|hide|turn off) (?:the |all )?highlights?|"
+                           r"no (?:more )?highlights?")
+
+
+def _tabs(t: str) -> Match | None:
+    for args, pattern in TAB_RULES:
+        if pattern.fullmatch(t):
+            return Match("switch_tab", [("switch_tab", dict(args))])
+    m = TAB_NUMBER.fullmatch(t)
+    if m:
+        n = _ORD.get(m.group("o") or "") or _number_value(m.group("n") or "")
+        if n:
+            return Match("switch_tab", [("switch_tab", {"number": n})])
+    if LIST_TABS.fullmatch(t):
+        return Match("list_tabs", [("list_tabs", {})])
+    m = TAB_NAME.fullmatch(t)
+    if m and m.group("name").strip() not in ("new", "a new", "another", "another new"):
+        return Match("switch_tab", [("switch_tab", {"name": m.group("name").strip()})])
+    return None
+
+
+def _pointing(t: str) -> Match | None:
+    if HIGHLIGHT_OFF.fullmatch(t):
+        return Match("clear_highlight", [("clear_highlight", {})])
+    if WHERE_ALL.fullmatch(t):
+        return Match("show_numbers", [("show_numbers", {"on": True})])
+    m = HIGHLIGHT.fullmatch(t)
+    if m:
+        target = m.group("t").strip()
+        if target in ("links", "the links", "all links", "all the links"):
+            return Match("highlight_links", [("restyle_page", {"style": "highlight_links"})])
+        return Match("highlight_area", [("highlight_area", {"target": target})])
+    m = WHERE.fullmatch(t)
+    if m:
+        target = next((g for g in m.groups() if g), "").strip()
+        if target and not re.match(r"(?:i'm|i am|im) |am i\b", target):
+            return Match("show_where", [("show_where", {"target": target})])
+    return None
+
+
 def _clicks(t: str, strict: bool) -> Match | None:
     for name, pattern in CLICK_RULES:
         if pattern.fullmatch(t):
@@ -303,7 +372,7 @@ def match(text: str, strict: bool = True) -> Match | None:
     t = normalize(text)
     if not t:
         return None
-    pic = _picture(t, strict) or _clicks(t, strict)
+    pic = _picture(t, strict) or _tabs(t) or _pointing(t) or _clicks(t, strict)
     if pic:
         return pic
     m = LEVEL.search(t)
@@ -329,7 +398,8 @@ def match(text: str, strict: bool = True) -> Match | None:
 HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the selection, stop, high contrast, "
              "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, "
              "what am I looking at, check my eye tracker, set up my eyes, "
-             "follow my eyes slower, follow my eyes faster, show where I am looking, hide the eye dot, "
+             "follow my eyes slower, follow my eyes faster, scroll with my eyes, show where I am looking, hide the eye dot, "
              "invert colors, scroll down, go back, simple mode, bigger buttons, hide pop-ups, simplify the menu, "
              "check the page, zoom in on the picture, describe the picture, show numbers, click 3, click sign in, "
+             "where do I click to sign in, highlight the menu, go to the other tab, next tab, list my tabs, "
              "reload, or ask anything when you're online.")
