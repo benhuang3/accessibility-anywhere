@@ -11,6 +11,34 @@ from ally import gaze_eval
 
 class GazeModelTests(unittest.TestCase):
 
+    def test_gaze_smoother_rejects_outliers_and_holds_missing(self):
+        smooth = gm.GazeSmoother()
+        shown = [smooth.update((100 + (-1) ** i * 8, 200), i * 0.08, 100) for i in range(10)]
+        before = smooth.update((600, 700), 0.81, 100)
+        after = smooth.update((101, 200), 0.89, 100)
+        held = smooth.update(None, 0.97, 100)
+        self.assertLess(np.max(np.linalg.norm(np.diff(shown, axis=0), axis=1)), 3)
+        self.assertLess(np.linalg.norm(before - shown[-1]), 3)
+        np.testing.assert_allclose(held, after)
+
+    def test_gaze_smoother_follows_saccade_within_250ms(self):
+        smooth = gm.GazeSmoother()
+        smooth.update((100, 100), 0.0, 100)
+        smooth.update((110, 102), 0.08, 100)
+        smooth.update((500, 400), 0.16, 100)
+        smooth.update((505, 402), 0.24, 100)
+        shown = smooth.update((503, 401), 0.32, 100)
+        self.assertLess(np.linalg.norm(shown - (503, 401)), 10)
+
+    def test_gaze_smoother_reset_reinitializes_after_missing_frames(self):
+        smooth = gm.GazeSmoother()
+        smooth.update((100, 100), 0.0, 80)
+        held = smooth.update(None, 0.1, 80)
+        np.testing.assert_allclose(held, (100, 100))
+        smooth.reset()
+        shown = smooth.update((800, 600), 0.2, 80)
+        np.testing.assert_allclose(shown, (800, 600))
+
     def landmarks(self, rh=0, rv=0, lh=0, lv=0):
         a = np.zeros((478, 3), float)
         for ids, h, v in ((gm.RIGHT_EYE, rh, rv), (gm.LEFT_EYE, lh, lv)):
@@ -20,6 +48,45 @@ class GazeModelTests(unittest.TestCase):
             a[ids['bottom'], :2] = [0.5, 0.52]
             a[ids['iris'], :2] = [0.5 + h * 0.2, 0.5 + v * 0.2]
         return a
+
+    def test_v3_ray_intersects_known_screen_point(self):
+        hit = gm.ray_screen_point((0, 0, 40), (0.1, 0.05, -1), (344, 193), (1920, 1080), -1)
+        self.assertAlmostEqual(hit[0], 1188.8372, delta=0.1)
+        self.assertAlmostEqual(hit[1], 114.7150, delta=0.1)
+
+    def test_v3_geometric_gaze_is_stable_across_head_pose(self):
+        target = np.array([0.08, 0.09])
+        vectors = []
+        v1 = []
+        for yaw, tx, tz in ((0, 0, -40), (math.radians(12), 4, -45)):
+            c, s = math.cos(yaw), math.sin(yaw)
+            rot = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+            trans = np.array([tx, 0, tz])
+            lm = self.landmarks()
+            for side, ids in ((-1, gm.RIGHT_EYE), (1, gm.LEFT_EYE)):
+                eye = trans + rot @ np.array([side * 3.2, 0, 0])
+                desired = np.array([(target[0] - .5) * 34.4, target[1] * 19.3, 0]) - eye
+                local = rot.T @ desired
+                h, v = local[0] / local[2] / 2.5, local[1] / local[2] / 2.5
+                lm[ids['iris'], 0] = .5 + h * .2
+                lm[ids['iris'], 1] = .5 + v * .2
+            mat = np.eye(4)
+            mat[:3, :3], mat[:3, 3] = rot, trans
+            v3 = gm.features_for_model({'features': 'v3'}, lm, {}, mat, 640, 480)[0]
+            v1.append(gm.features(lm, {}, mat, 640, 480)[0])
+            vectors.append(v3[:2])
+        self.assertLess(np.linalg.norm(np.asarray(vectors[0]) - vectors[1]), .02)
+        self.assertGreater(np.linalg.norm(np.asarray(v1[0][4:6]) - v1[1][4:6]), math.radians(10))
+
+    def test_v3_fit_recovers_known_screen_mapping(self):
+        samples = []
+        for x, y in ((100, 100), (960, 100), (1820, 100), (100, 540), (960, 540),
+                      (1820, 540), (100, 980), (960, 980), (1820, 980)):
+            f = [x / 1920, y / 1080, 0, 0, 0, 0, 0, 0, 40, 0]
+            samples.append((f, (x, y)))
+        model = gm.fit(samples, (1920, 1080), 'v3')
+        for f, target in samples:
+            self.assertLess(np.linalg.norm(np.asarray(gm.predict(model, f)) - target), 50)
 
     def test_per_eye_feature_directions(self):
         zero = gm.features_for_model({'features': 'v2'}, self.landmarks(), {}, None, 640, 480)[0]
@@ -116,6 +183,152 @@ class GazeModelTests(unittest.TestCase):
             c.add(f, target, i)
         px, py = c.predict(on_target[8][0])
         self.assertLess(abs(px - on_target[8][1][0]) + abs(py - on_target[8][1][1]), 5)
+
+    def _v4_scene(self, pose, true_coef, screen=(1920, 1080)):
+        """(features, target) at this head pose, made with the same geometry v4 assumes: the eye
+        angles needed to look at each target are produced by the true eye model's inverse."""
+        yaw, pitch, tx, ty, tz = pose
+        out = []
+        for gx in np.linspace(150, 1770, 5):
+            for gy in np.linspace(120, 960, 4):
+                need = gm._v4_needed([0, 0, 0, 0, yaw, pitch, tx, ty, tz], (gx, gy), screen, gm.DEFAULT_SCREEN_MM)
+                h, v = need[0] / true_coef[0], need[1] / true_coef[1]  # linear eyes: angle = k * offset
+                out.append(([h, v, 0.0, 0.0, yaw, pitch, tx, ty, tz], (float(gx), float(gy))))
+        return out
+
+    def test_v4_keeps_its_aim_when_the_head_moves(self):
+        k = (0.9, 1.1)
+        calib = self._v4_scene((0.0, -0.10, 0.0, -2.0, -30.0), k)
+        v4, v1 = gm.fit(calib, (1920, 1080), 'v4'), gm.fit(calib, (1920, 1080), 'v1')
+        self.assertLess(v4['error_px'], 10)
+        moved = self._v4_scene((0.14, -0.02, 3.0, -1.0, -42.0), k)  # turned 8 deg, sat back 12 cm, shifted 3 cm
+        err = lambda m: float(np.median([np.hypot(*(np.asarray(gm.predict(m, f, clamp=False)) - t)) for f, t in moved]))
+        self.assertLess(err(v4), 15)
+        self.assertGreater(err(v1), 150)  # the old regression memorised the calibration head pose
+
+    def _lid_scene(self, rel_of_need, v_scale=0.0, pose=(0.0, -0.10, 0.0, -2.0, -30.0)):
+        """A v4 scene whose iris barely moves up and down (v_scale), with the lids number appended."""
+        out = []
+        for (f, t) in self._v4_scene(pose, (0.9, 1.1)):
+            need = gm._v4_needed(f, t, (1920, 1080), gm.DEFAULT_SCREEN_MM)
+            f = list(f)
+            f[1] *= v_scale
+            out.append((f + [rel_of_need(need[1])], t))
+        return out
+
+    def test_the_lids_carry_up_and_down_when_the_iris_barely_moves(self):
+        calib = self._lid_scene(lambda pitch: 0.45 + 1.5 * pitch)
+        m = gm.fit(calib, (1920, 1080), 'v4')
+        self.assertIsNotNone(m['coef_lid'])
+        flat = dict(m, coef_lid=None)
+        moved = self._lid_scene(lambda pitch: 0.45 + 1.5 * pitch, pose=(0.1, -0.04, 2.0, -1.0, -38.0))
+        dy = lambda model: float(np.median([abs(gm.predict(model, f, clamp=False)[1] - t[1]) for f, t in moved]))
+        self.assertLess(dy(m), 15)
+        self.assertGreater(dy(flat), 100)  # without the lids, up and down is lost
+
+    def test_lids_that_do_not_help_are_left_out(self):
+        rng = np.random.default_rng(3)
+        calib = self._lid_scene(lambda pitch: float(rng.uniform(0.2, 0.8)), v_scale=1.0)
+        m = gm.fit(calib, (1920, 1080), 'v4')
+        self.assertIsNone(m['coef_lid'])
+        self.assertLess(m['error_px'], 10)
+
+    def test_older_models_and_unknown_lids_predict_as_before(self):
+        calib = self._v4_scene((0.0, -0.10, 0.0, -2.0, -30.0), (0.9, 1.1))
+        old = gm.fit(calib, (1920, 1080), 'v4')
+        old.pop('coef_lid', None)  # saved before the lids number existed
+        f = list(calib[5][0])
+        self.assertEqual(gm.predict(old, f + [0.7]), gm.predict(old, f))
+        new = gm.fit(self._lid_scene(lambda pitch: 0.45 + 1.5 * pitch, v_scale=1.0), (1920, 1080), 'v4')
+        m = dict(new, coef_lid=new['coef_lid'] or [0.0] * 9)
+        self.assertEqual(gm.predict(m, f + [float('nan')]), gm.predict(dict(m, coef_lid=None), f))
+        g = list(f); g[8] = -0.06  # no head pose: the v1 fallback gets the first nine numbers
+        self.assertEqual(gm.predict(m, g + [0.7]), gm.predict(m['fallback'], g))
+
+    def test_v4_falls_back_without_a_head_pose(self):
+        calib = self._v4_scene((0.0, -0.10, 0.0, -2.0, -30.0), (0.9, 1.1))
+        m = gm.fit(calib, (1920, 1080), 'v4')
+        f = list(calib[3][0]); f[8] = -0.06  # no transformation matrix: the rough pose, not centimetres
+        self.assertEqual(gm.predict(m, f), gm.predict(m['fallback'], f))
+        self.assertTrue(gm.load(self._saved(m), (1920, 1080))['fallback'])
+
+    def _saved(self, model):
+        import tempfile
+        path = Path(tempfile.mkdtemp()) / 'cal.json'
+        gm.save(model, path)
+        return path
+
+    def _hybrid_samples(self, screen=(1920, 1080)):
+        """Samples whose screen point is exactly the hybrid of v4 eye terms and two CNN angles."""
+        rng = np.random.default_rng(1)
+        coef = np.zeros((10, 2))
+        coef[0, 0], coef[7, 0], coef[9, 0] = 0.35, 0.5, 0.02
+        coef[1, 1], coef[8, 1], coef[9, 1] = -0.25, 0.4, -0.01
+        shy, shp = gm._V4_SIGNS[2], gm._V4_SIGNS[3]
+        samples = []
+        while len(samples) < 36:
+            h, v, lh, lv = (float(rng.uniform(-0.25, 0.25)) for _ in range(4))
+            yaw_deg, pitch_deg = float(rng.uniform(-12, 12)), float(rng.uniform(-8, 8))
+            features = [h, v, lh, lv, 0.05, -0.02, 1.0, -1.0, 55.0, yaw_deg, pitch_deg]
+            eye = gm.hybrid_terms(features[:9], yaw_deg, pitch_deg) @ coef
+            point = gm.project_gaze(features, float(eye[0] + shy * features[4]),
+                                    float(eye[1] + shp * features[5]), screen, gm.DEFAULT_SCREEN_MM)
+            if point is None or not (80 < point[0] < 1840 and 80 < point[1] < 1000):
+                continue
+            samples.append((features, point))
+        return samples
+
+    def test_v5_recovers_the_hybrid_and_falls_back_without_angles(self):
+        screen = (1920, 1080)
+        samples = self._hybrid_samples(screen)
+        model = gm.fit(samples, screen, 'v5', screen_mm=gm.DEFAULT_SCREEN_MM)
+        self.assertEqual(model['features'], 'v5')
+        self.assertEqual(model['cnn_model'], 'mobileone_s0')
+        self.assertEqual(model['fallback']['features'], 'v4')
+        self.assertEqual(len(model['coef']), 10)
+        errors = [float(np.hypot(*(np.asarray(gm.predict(model, feat, clamp=False)) - np.asarray(target))))
+                  for feat, target in samples]
+        self.assertLess(float(np.median(errors)), 5)
+        tuned = gm.retune(model, [(feat, (target[0] + 40, target[1] - 15)) for feat, target in samples[:6]])
+        self.assertEqual(tuned['features'], 'v5')
+        self.assertAlmostEqual(tuned['offset'][0], 40, delta=8)
+        corrector = gm.Corrector(model)
+        self.assertTrue(corrector.add(samples[0][0], samples[0][1], 0))
+        self.assertEqual(len(corrector.predict(samples[1][0])), 2)
+        self.assertGreater(gm.radius_px(model, samples[0][0]), 0)
+        shown = gm.GazeSmoother().update(gm.predict(model, samples[0][0]), 1.0, 40)
+        self.assertEqual(len(shown), 2)
+        missing = list(samples[3][0])
+        missing[9] = float('nan')
+        missing[10] = None
+        self.assertEqual(gm.predict(model, missing), gm.predict(model['fallback'], missing[:9]))
+        self.assertEqual(gm.predict(model, missing[:9]), gm.predict(model['fallback'], missing[:9]))
+        held = gm.validate(model, samples[:12])
+        self.assertGreater(held['region_total'], 0)
+
+    def test_features_for_model_adds_cnn_angles_only_for_v5(self):
+        lm = self.landmarks(0.1, -0.05, 0.05, 0.08)
+        bare = gm.features_for_model({'features': 'v5'}, lm, {}, None, 640, 480)
+        self.assertEqual(len(bare[0]), 12)  # v4's nine, the CNN's two, then the lids number
+        self.assertTrue(math.isnan(bare[0][9]) and math.isnan(bare[0][10]))
+        angled = gm.features_for_model({'features': 'v5'}, lm, {}, None, 640, 480, cnn=(12.5, -3.25))
+        self.assertEqual(angled[0][:9], bare[0][:9])
+        self.assertEqual(angled[0][9:11], [12.5, -3.25])
+        self.assertEqual(angled[0][11], bare[0][11])
+        for name in ('v1', 'v2', 'v3', 'v4'):
+            without = gm.features_for_model({'features': name}, lm, {}, None, 640, 480)
+            with_cnn = gm.features_for_model({'features': name}, lm, {}, None, 640, 480, cnn=(12.5, -3.25))
+            self.assertEqual(with_cnn[0], without[0])
+            self.assertNotEqual(len(with_cnn[0]), 11)
+
+    def test_v4_is_the_default_and_retunes_like_the_others(self):
+        self.assertEqual(gm.DEFAULT_FEATURE_SET, 'v4')
+        calib = self._v4_scene((0.0, -0.10, 0.0, -2.0, -30.0), (0.9, 1.1))
+        m = gm.fit(calib, (1920, 1080))
+        shifted = [(f, (t[0] + 120, t[1] - 80)) for f, t in calib[:5]]
+        tuned = gm.retune(m, shifted)
+        self.assertAlmostEqual(tuned['offset'][0], 120, delta=5)
+        self.assertAlmostEqual(tuned['offset'][1], -80, delta=5)
 
     def test_fixation(self):
         pts = [(i * 0.05, 100 + i % 2, 100) for i in range(8)] + [(0.4, 500, 500)] + [(0.45 + i * 0.05, 300, 300) for i in range(14)]
@@ -245,9 +458,70 @@ class GazeModelTests(unittest.TestCase):
             p.write_text('\n'.join((json.dumps(r) for r in records)), encoding='utf-8')
             rows = gaze_eval.evaluate(p)
             validation = [row for row in rows if row['phase'] == 'validation']
-            self.assertEqual({row['features'] for row in validation}, {'v1', 'v2'})
+            self.assertEqual({row['features'] for row in validation}, {'v1', 'v2', 'v3', 'v4'})
             self.assertTrue(all(row['error_px'] < 50 for row in validation), validation)
+            for row in validation:
+                for method in ('raw', 'one_euro', 'smoother'):
+                    self.assertIn(f'{method}_error_median_px', row)
+                    self.assertIn(f'{method}_jitter_p90_px', row)
+                    self.assertIn(f'{method}_settle_median_ms', row)
             gaze_eval.report([p], Path(td) / 'gaze_eval.csv')
             self.assertTrue((Path(td) / 'gaze_eval.csv').is_file())
+
+    def test_evaluator_includes_v5_only_when_mobileone_angles_exist(self):
+        import io
+        from contextlib import redirect_stdout
+
+        def write(path, cnn_name=None):
+            records = [{'rec': 'meta', 'screen': [1920, 1080], 'screen_mm': [344.0, 193.0]}]
+            mat = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 50, 0, 0, 0, 1]
+            t = 0.0
+            phases = [('calibration', [(100, 100), (960, 100), (1820, 100),
+                                       (100, 980), (960, 980), (1820, 980)]),
+                      ('validation', [(100, 540), (960, 540), (1820, 540)]),
+                      ('drift', [(400, 200), (1500, 800), (960, 400)])]
+            for phase, points in phases:
+                for i, (x, y) in enumerate(points):
+                    start = t + 0.1
+                    end = start + 0.3
+                    records.append({'rec': 'target', 'phase': phase, 'id': i, 'x': x, 'y': y,
+                                    'shown': t, 'start': start, 'end': end})
+                    lm = self.landmarks(x / 1920 - 0.5, y / 1080 - 0.5, 0.5 - x / 1920, 0.5 - y / 1080)
+                    for j in range(4):
+                        row = {'rec': 'frame', 't': start + j * 0.05, 'w': 640, 'h': 480,
+                               'lm': lm.tolist(), 'bs': {}, 'mat': mat}
+                        if cnn_name:
+                            row['cnn'] = {cnn_name: [round((x / 1920 - 0.5) * 20, 4),
+                                                     round((y / 1080 - 0.5) * 12, 4)]}
+                        records.append(row)
+                    t = end + 0.1
+            path.write_text('\n'.join(json.dumps(r) for r in records), encoding='utf-8')
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            older, angled, other = root / 'older.jsonl', root / 'angled.jsonl', root / 'resnet.jsonl'
+            write(older)
+            write(angled, 'mobileone_s0')
+            write(other, 'resnet18')
+            old_rows = gaze_eval.evaluate(older)
+            new_rows = gaze_eval.evaluate(angled)
+            other_rows = gaze_eval.evaluate(other)
+            self.assertNotIn('v5', {row['features'] for row in old_rows})
+            self.assertNotIn('v5', {row['features'] for row in other_rows})
+            v5 = [row for row in new_rows if row['features'] == 'v5']
+            self.assertEqual({row['phase'] for row in v5}, {'validation', 'drift'})
+            for row in v5:
+                for method in ('raw', 'one_euro', 'smoother'):
+                    self.assertIn(f'{method}_error_median_px', row)
+                    self.assertIn(f'{method}_jitter_p90_px', row)
+                    self.assertIn(f'{method}_settle_median_ms', row)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                gaze_eval.report([older, angled], root / 'gaze_eval.csv')
+            text = buf.getvalue()
+            self.assertIn('older.jsonl skipped v5', text)
+            self.assertIn('no mobileone_s0 angles', text)
+            self.assertIn('| angled.jsonl | v5 |', text)
+            self.assertNotIn('angled.jsonl skipped v5', text)
 if __name__ == '__main__':
     unittest.main()

@@ -758,7 +758,7 @@ class PrivacyTests(unittest.TestCase):
     def files(self):
         # Everything that sees camera frames or face numbers: senses, the camera helper, and the eye
         # tracker's model, recorder and evaluator.
-        gaze = ("gaze_helper.py", "gaze_model.py", "gaze_record.py", "gaze_eval.py")
+        gaze = ("gaze_helper.py", "gaze_model.py", "gaze_record.py", "gaze_eval.py", "gaze_dot.py", "gaze_cnn.py")
         return sorted((ROOT / "ally" / "senses").glob("*.py")) + [ROOT / "ally" / name for name in gaze]
 
     def test_no_network_or_image_writing(self):

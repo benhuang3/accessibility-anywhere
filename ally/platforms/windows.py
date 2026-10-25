@@ -28,7 +28,7 @@ import time
 import wave
 
 from ..registry import ToolError
-from .base import NO_WINDOW, Platform, edge_speed, is_64bit_python, popen, run, which
+from .base import NO_WINDOW, Platform, ReadingPan, is_64bit_python, popen, run, which
 from .cards import ReadingCards
 
 log = logging.getLogger("ally.os.windows")
@@ -396,7 +396,8 @@ class _Sound:
 
 class _MagThread(threading.Thread):
     """Owns the Magnification API. The view follows the mouse, stays put ("fixed"), or follows the
-    eyes ("eyes": looking near an edge pans that way; moving the mouse a lot hands control back to it)."""
+    eyes ("eyes": reading along a line pans with the reader, looking near an edge pans that way, and
+    moving the mouse a lot hands control back to it)."""
 
     def __init__(self):
         super().__init__(name="magnifier", daemon=True)
@@ -409,6 +410,7 @@ class _MagThread(threading.Thread):
         self.follow = "mouse"
         self.gaze = None  # callable -> (x, y) of the eyes on the screen, or None
         self.pan_speed = 1.0
+        self.max_pan = None  # top pan speed, screen widths per second
 
     def call(self, op: str, value, timeout: float = 3.0):
         done = threading.Event()
@@ -474,12 +476,15 @@ class _MagThread(threading.Thread):
                 return False
             self.level, self.offset = lvl, (x, y)
             pos[:] = [float(x), float(y)]
+            self._eye_pan = None  # a new view starts a new line
             return True
 
         try:
             while True:
                 try:
-                    op, value, done, box = self.cmds.get(timeout=1 / 30 if self.level > 1.0 else 0.5)
+                    # 60 steps a second while following the eyes, so a slow reading pan glides.
+                    wait = (1 / 60 if self.follow == "eyes" else 1 / 30) if self.level > 1.0 else 0.5
+                    op, value, done, box = self.cmds.get(timeout=wait)
                 except queue.Empty:
                     op = None
                 if op == "stop":
@@ -542,14 +547,20 @@ class _MagThread(threading.Thread):
                             apply_view(self.level, *xy)
                     elif self.follow == "eyes" and self.gaze is not None:
                         g = self.gaze()
-                        if g is not None:
-                            vw, vh = w / self.level, h / self.level
-                            vx, vy = edge_speed(g[0] / w), edge_speed(g[1] / h)
-                            pos[0] = min(max(pos[0] + vx * vw * self.pan_speed * dt, 0.0), w - vw)
-                            pos[1] = min(max(pos[1] + vy * vh * self.pan_speed * dt, 0.0), h - vh)
-                            xy = (int(pos[0]), int(pos[1]))
-                            if xy != self.offset and mag.MagSetFullscreenTransform(ctypes.c_float(self.level), *xy):
-                                self.offset = xy
+                        # A gap means the view was following the mouse or was just moved. Start
+                        # fresh, and don't carry an old velocity or line into the new look.
+                        pan = getattr(self, "_eye_pan", None)
+                        if pan is None or now - pan["tick"] > 0.25:
+                            pan = {"read": ReadingPan(), "tick": now}
+                        pan["tick"] = now
+                        self._eye_pan = pan
+                        gaze = None if g is None else (g[0] / max(w, 1), g[1] / max(h, 1))
+                        vw, vh = w / self.level, h / self.level
+                        pos[:] = pan["read"].step(gaze, pos, (vw, vh), (w - vw, h - vh), dt, self.pan_speed,
+                                                     self.max_pan)
+                        xy = (int(pos[0]), int(pos[1]))
+                        if xy != self.offset and mag.MagSetFullscreenTransform(ctypes.c_float(self.level), *xy):
+                            self.offset = xy
                 else:
                     tick = time.monotonic()
         finally:
@@ -582,7 +593,7 @@ class WindowsPlatform(Platform):
                     return None
                 t = _MagThread()
                 if self._gaze is not None:
-                    t.gaze, t.pan_speed = self._gaze
+                    t.gaze, t.pan_speed, t.max_pan = self._gaze
                 t.start()
                 t.ready.wait(5)
                 self._mag = t
@@ -608,7 +619,7 @@ class WindowsPlatform(Platform):
         self.magnify_level = level
         if level > 1.0:
             self.last_magnify = level
-        follows = {"eyes": "follows your eyes; look near an edge to move", "mouse": "follows your mouse"}
+        follows = {"eyes": "follows your eyes as you read; look near an edge to move", "mouse": "follows your mouse"}
         msg = ("Screen magnifier off." if level <= 1.0 else
                f"Screen magnified to {level:g}x" + (f" ({follows[m.follow]})." if m.follow in follows else "."))
         return ("Closed the Windows Magnifier app so I could take over. " + msg) if took_over else msg
@@ -625,7 +636,7 @@ class WindowsPlatform(Platform):
         m.call("follow", mode)
         if self.magnify_level <= 1.0:
             return f"The magnifier will follow your {mode} when it's on."
-        return f"The magnifier follows your {mode} now." + (" Look near an edge to move." if mode == "eyes" else "")
+        return f"The magnifier follows your {mode} now." + (" It moves along as you read, or look near an edge to move." if mode == "eyes" else "")
 
     def view(self) -> tuple[float, int, int]:
         m = self._magnifier()
@@ -639,10 +650,12 @@ class WindowsPlatform(Platform):
     def other_magnifier_open(self) -> bool:
         return magnifier_app_open()
 
-    def set_gaze_source(self, latest, pan_speed: float = 1.0) -> None:
-        self._gaze = (latest, pan_speed)  # handed to the magnifier thread when it starts
+    def set_gaze_source(self, latest, pan_speed: float = 1.0, max_speed: float | None = None) -> None:
+        if max_speed is None and self._gaze is not None:
+            max_speed = self._gaze[2]  # a speed change keeps the saved top speed
+        self._gaze = (latest, pan_speed, max_speed)  # handed to the magnifier thread when it starts
         if self._mag is not None:
-            self._mag.gaze, self._mag.pan_speed = latest, pan_speed
+            self._mag.gaze, self._mag.pan_speed, self._mag.max_pan = latest, pan_speed, max_speed
 
     def magnify(self, level: float) -> str:
         level = max(1.0, min(16.0, float(level)))

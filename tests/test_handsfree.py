@@ -173,7 +173,7 @@ class GazeModelTests(unittest.TestCase):
         """Fake eye features that depend on the target in a curved way, plus head wobble."""
         rnd = np.random.default_rng(seed)
         screen = (1920, 1080)
-        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.1, 0.5, 0.9) for fx in (0.08, 0.5, 0.92)]
+        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.06, 0.5, 0.94) for fx in (0.08, 0.5, 0.92)]
         samples = []
         for tx, ty in dots:
             for _ in range(n_per_dot):

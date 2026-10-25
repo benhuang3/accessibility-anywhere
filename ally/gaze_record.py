@@ -1,10 +1,16 @@
 """Record a gaze session while Ally is stopped. Numbers only; frames are never saved.
 
     python -m ally.gaze_record --person ALIAS --glasses yes|no --light bright|dim
+    python -m ally.gaze_record --person ALIAS --glasses no --light bright --cnn mobileone_s0,resnet18
 
-The same setup as "Ally, set up my eyes" (readiness, 13 dots, 5 check dots), then about
+The same setup as "Ally, set up my eyes" (readiness, 9 dots, then 5 sitting back and 5
+leaning in when calibration_poses is 3, then 5 check dots), then about
 2 minutes of reading, then 5 check dots again (drift). Writes
 state/gaze_runs/<run>/<alias>-<glasses>-<light>.jsonl.
+
+--cnn runs those ONNX models on each frame in memory and adds yaw and pitch (degrees)
+plus the milliseconds each one took. Without --cnn the file is unchanged. The picture
+is still not saved.
 
 Stop Ally first (`python run.py stop`): only one program can use the camera.
 Ctrl+C keeps whatever has already been written.
@@ -174,21 +180,86 @@ def target_record(event: dict) -> dict | None:
     if phase not in ("calibration", "validation", "drift"):
         return None
     try:
-        return {"rec": "target", "phase": phase, "id": int(event["id"]), "x": int(event["x"]),
-                "y": int(event["y"]), "shown": float(event["shown"]), "start": float(event["start"]),
-                "end": float(event["end"])}
+        row = {"rec": "target", "phase": phase, "id": int(event["id"]), "x": int(event["x"]),
+               "y": int(event["y"]), "shown": float(event["shown"]), "start": float(event["start"]),
+               "end": float(event["end"])}
     except (KeyError, TypeError, ValueError):
         return None
+    pose = event.get("pose")
+    if pose in ("normal", "back", "close"):
+        row["pose"] = pose
+    return row
 
 
-def meta_record(alias: str, glasses: str, light: str, screen, camera: int, commit: str, created: float) -> dict:
-    return {"rec": "meta", "alias": alias, "glasses": glasses, "light": light,
-            "screen": [int(screen[0]), int(screen[1])], "camera": int(camera),
-            "commit": str(commit or ""), "created": float(created)}
+def meta_record(alias: str, glasses: str, light: str, screen, camera: int, commit: str, created: float,
+                screen_mm=None) -> dict:
+    row = {"rec": "meta", "alias": alias, "glasses": glasses, "light": light,
+           "screen": [int(screen[0]), int(screen[1])], "camera": int(camera),
+           "commit": str(commit or ""), "created": float(created)}
+    if screen_mm:
+        try:
+            row["screen_mm"] = [int(screen_mm[0]), int(screen_mm[1])]
+        except (TypeError, ValueError, IndexError):
+            pass
+    return row
 
 
 def click_record(t, x, y) -> dict:
     return {"rec": "click", "t": float(t), "x": int(x), "y": int(y)}
+
+
+def attach_cnn(row: dict, readings: dict) -> dict:
+    """Add model name -> [yaw, pitch] degrees, and the milliseconds each model took.
+
+    readings maps a model name to (yaw, pitch, milliseconds). Nothing pictorial is copied.
+    A row with no usable angles is returned unchanged, so a session without --cnn
+    stays free of these fields.
+    """
+    if not readings:
+        return row
+    cnn: dict[str, list[float]] = {}
+    elapsed: dict[str, float] = {}
+    for name, item in readings.items():
+        try:
+            yaw, pitch, ms = item
+            yaw_f, pitch_f, ms_f = float(yaw), float(pitch), float(ms)
+        except (TypeError, ValueError):
+            continue
+        if yaw_f != yaw_f or pitch_f != pitch_f or ms_f != ms_f:  # NaN
+            continue
+        cnn[str(name)] = [round(yaw_f, 4), round(pitch_f, 4)]
+        elapsed[str(name)] = round(ms_f, 2)
+    if not cnn:
+        return row
+    out = dict(row)
+    out["cnn"] = cnn
+    out["cnn_ms"] = elapsed
+    if image_like(out):
+        return row
+    return out
+
+
+_cnn_warned: set[str] = set()
+
+
+def _cnn_readings(runners, frame, landmarks) -> dict:
+    """Run each model on this frame. The frame is not kept."""
+    readings = {}
+    for runner in runners:
+        name = getattr(runner, "name", "model")
+        t0 = time.perf_counter()
+        try:
+            angles = runner.angles(frame, landmarks)
+        except Exception as e:
+            if name not in _cnn_warned:
+                _cnn_warned.add(name)
+                print(f"Gaze model {name} failed on a frame ({type(e).__name__}: {e})")
+            angles = None
+        ms = (time.perf_counter() - t0) * 1000.0
+        if not angles:
+            continue
+        readings[name] = (angles[0], angles[1], ms)
+    return readings
 
 
 class RunLog:
@@ -238,6 +309,19 @@ def run_name(run: str) -> str:
     if run and TOKEN.fullmatch(run):
         return run
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
+def calibration_poses(paths) -> int:
+    """How many head positions a recording collects. Same setting as Ally's setup."""
+    try:
+        from .config import ConfigManager
+        from .gaze_helper import pose_count
+
+        cm = ConfigManager(paths.config)
+        cm.reload()
+        return pose_count((cm.data.get("gaze") or {}).get("calibration_poses", 3))
+    except (OSError, KeyError, TypeError, ValueError):
+        return 3
 
 
 def camera_index(paths, camera: int | None) -> int:
@@ -370,7 +454,8 @@ def _on_target(log: RunLog, event: dict) -> None:
 
 
 def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int],
-          alias: str, glasses: str, light: str, commit: str, created: float) -> int:
+          alias: str, glasses: str, light: str, commit: str, created: float,
+          poses: int = 3, screen_mm=None, runners=None) -> int:
     cap = indicator = calib = reading = None
     cv2 = None
     try:
@@ -380,7 +465,8 @@ def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int]
 
         from ally import gaze_model
         from ally.gaze_helper import (NUM_FACES, Calibration, CameraIndicator, likely_cause, look,
-                                      open_camera, result_grade, result_lines, validation_score)
+                                      open_camera, pose_count, result_grade, result_lines, screen_mm as read_screen_mm,
+                                      setup_duration, validation_score)
     except Exception as e:
         print(f"Eye tracking needs mediapipe and opencv-python ({type(e).__name__}: {e})")
         return 3
@@ -399,12 +485,22 @@ def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int]
         return 3
 
     log.open()
-    log.write(meta_record(alias, glasses, light, screen, camera, commit, created))
+    if screen_mm is None:
+        screen_mm = read_screen_mm()
+    poses = pose_count(poses)
+    log.write(meta_record(alias, glasses, light, screen, camera, commit, created, screen_mm=screen_mm))
     print(f"Recording to {log.path}")
-    print("Look at each dot. Esc cancels. Ctrl+C keeps what was recorded.")
+    if runners:
+        print("Also running in memory: " + ", ".join(getattr(r, "name", "model") for r in runners))
+    takes = setup_duration(poses).rstrip(".").lower()
+    if poses <= 1:
+        print(f"Look at each dot. This takes {takes}. Esc cancels. Ctrl+C keeps what was recorded.")
+    else:
+        print("Look at each dot. Then sit back a little, and lean in a little. "
+              f"This takes {takes}. Esc cancels.")
     indicator = CameraIndicator()
     indicator.open(cv2, screen)
-    calib = Calibration(screen, on_target=lambda event: _on_target(log, event))
+    calib = Calibration(screen, on_target=lambda event: _on_target(log, event), poses=poses)
     clicks = ClickWatch()
     phase = "setup"
     read_until = 0.0
@@ -429,15 +525,18 @@ def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int]
             misses = 0
             wall = time.time()
             seen = look(landmarker, mp, cv2, frame, int((tick - t_start) * 1000))
+            readings = _cnn_readings(runners, frame, seen["lms"]) if runners else None
             row = frame_record(round(wall, 3), seen["w"], seen["h"], seen["lms"], seen["bs"], seen["mat"])
             if row is not None:
+                if readings:
+                    row = attach_cnn(row, readings)
                 log.write(row)
             mono = time.monotonic()
             if phase == "setup":
                 state = calib.step(seen["feat"], mono, seen["face"], wall)
                 if state == "fit":
                     try:
-                        calib.accept_fit(gaze_model.fit(calib.usable(), screen))
+                        calib.accept_fit(gaze_model.fit(calib.usable(), screen, screen_mm=screen_mm))
                     except Exception as e:
                         why = f"I {e}. Try again with more light on your face."
                         calib.finish({"calibrated": False, "why": why}, ["Calibration didn't work.", why])
@@ -505,9 +604,32 @@ def _live(log: RunLog, *, model_path: Path, camera: int, screen: tuple[int, int]
     return code
 
 
+def _prepare_cnn(spec: str | None, state_dir: Path):
+    """Load --cnn models, or None when the flag is absent. Prints and returns an exit code on failure."""
+    if not spec:
+        return None
+    from .gaze_cnn import MissingDependency, MissingModelFile, load_models
+
+    try:
+        return load_models(spec, state_dir)
+    except MissingModelFile as e:
+        print(e)
+        return 2
+    except MissingDependency as e:
+        print(e)
+        return 3
+    except ValueError as e:
+        print(e)
+        return 2
+    except Exception as e:
+        print(f"Couldn't load the gaze model ({type(e).__name__}: {e})")
+        return 3
+
+
 def record(person: str, glasses: str, light: str, camera: int | None = None, run: str = "", *,
            paths=None, ally_running=None, root: Path | None = None, model: Path | None = None,
-           screen: tuple[int, int] | None = None, commit: str | None = None, created: float | None = None) -> int:
+           screen: tuple[int, int] | None = None, commit: str | None = None, created: float | None = None,
+           cnn: str | None = None) -> int:
     """Run one recording. Returns a process exit code. Does not open the camera until checks pass."""
     from .paths import Paths
 
@@ -527,6 +649,9 @@ def record(person: str, glasses: str, light: str, camera: int | None = None, run
         print("The face model isn't here yet (state/models/face_landmarker.task).")
         print("Start Ally once so it can download, run python run.py stop, then try again.")
         return 2
+    prepared = _prepare_cnn(cnn, paths.state_dir)
+    if isinstance(prepared, int):
+        return prepared
     if screen is None:
         from .gaze_helper import screen_size
         screen = screen_size()
@@ -537,7 +662,8 @@ def record(person: str, glasses: str, light: str, camera: int | None = None, run
     try:
         return _live(log, model_path=model_path, camera=cam, screen=screen, alias=person, glasses=glasses,
                      light=light, commit=git_commit() if commit is None else commit,
-                     created=time.time() if created is None else float(created))
+                     created=time.time() if created is None else float(created),
+                     poses=calibration_poses(paths), runners=prepared)
     except KeyboardInterrupt:
         print("\nStopped. Kept what was recorded.")
         return 0
@@ -552,8 +678,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--light", required=True, choices=("bright", "dim"))
     parser.add_argument("--camera", type=int, default=None)
     parser.add_argument("--run", default="", help="folder name under state/gaze_runs (default: a timestamp)")
+    parser.add_argument("--cnn", default="",
+                        help="comma-separated gaze models to run in memory, for example mobileone_s0,resnet18")
     args = parser.parse_args(argv)
-    return record(args.person, args.glasses, args.light, args.camera, args.run)
+    return record(args.person, args.glasses, args.light, args.camera, args.run, cnn=args.cnn or None)
 
 
 if __name__ == "__main__":

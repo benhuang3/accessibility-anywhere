@@ -156,6 +156,31 @@ to know or do. Agents: read the newest entries before starting work.
 7. Since `hayden/eye-tracker`, Ally doesn't start without numpy (`ally/gaze_model.py` imports it at the top) - Hayden.
 8. `test_senses` `test_calibration` fails now and then in the VM (timing) - Hayden.
 
+### Oct 24, 23:43 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commits `ee1e039`, merge of `agent/cursor`, `d64e290`, `52782a3`
+
+**Changed:** up-and-down accuracy, a shorter setup, and quick calibrate. 475 tests pass.
+- **Eyelids for up and down (`ee1e039`, `ally/gaze_model.py`):**
+  - The v4 and v5 vectors now end with the iris position between the eyelids. v4 is 10 numbers
+    and v5 is 12.
+  - Calibration fits a vertical-only weight set, `coef_lid`, and keeps it only when it predicts
+    held-out dots better.
+  - On six recordings, vertical error after the user moved fell from 95 to 66 px (median).
+  - Older saved models still load and predict as before.
+  - **Anyone reading feature vectors:** don't assume a length of 9 or 11. Use `gaze_model` helpers.
+- **Cursor's merged work:**
+  - The setup is the 9-dot grid plus the two head-position rounds, about 45 s.
+  - Click learning is saved with the calibration and restored on start.
+  - A look that picks a card sends the helper a `choice t0 t1 x y` line, which teaches it.
+- **Calibration rows (`d64e290`):** the top and bottom rows sit 6% from the edge (was 10%). The worst
+  vertical errors were beyond the old rows.
+- **Quick calibrate (`52782a3`):**
+  - "Quick calibrate", "recalibrate quickly" and "check my eye tracker" run 5 check dots at 0.6 s
+    each, about 6 s, and re-tune the saved setup.
+  - Measured: an earlier session's model went from 176 to 114 px. A full setup that day scored 91 px.
+
+**Not merged yet:** Codex's Corrector rework (save and restore, refit). Replaying recorded clicks
+through it made error worse in 4 of 6 sessions, so it is under investigation.
+
 ### Oct 24, 23:20 PT — Ben H (via Claude Code) — branch `worktree-voice`, streaming speech-to-text (unwired)
 
 **Changed:** new `ally/ws_client.py` (stdlib WebSocket client, ws:// and wss://), new `ally/stt_stream.py`
@@ -206,6 +231,20 @@ Consider `offer_timeout_seconds` ~20 (gaze cards use `offer.timeout` too, so wit
 **For Ganesh:** please publish a "call ended" event (voice goes quiet for a fixed 10 min until then), and
 check the spoken wording for labelled choices.
 
+### Oct 24, 22:27 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `0a248f1`
+
+**Changed:** reading-aid tuning after Hayden tried it. 463 tests pass.
+- **Edge delay:** looking near an edge waits 0.6 s before the view moves (was 0.3 s).
+- **Top speed:** the new `[gaze] max_pan_speed` (default 0.35 screen widths a second) caps every
+  pan. The trip back to the start of a line may peak at twice that, and takes longer when it would.
+- **New defaults:**
+  - `[gaze] pan_speed` defaults to 0.85. The named speeds are slow 0.4, medium 0.85 and fast 1.5.
+  - "Magnify what I'm looking at" opens at 1.5x.
+- **Code:** `Platform.set_gaze_source(latest, pan_speed, max_speed=None)` gained `max_speed`, and
+  None keeps the saved cap. `ally/agent.py` passes it from config, on the same two lines as before.
+- **Ganesh:** `risk-branch` also changes `ally/agent.py`, `ally/config.py` and
+  `ally/default_config.toml`. A dry-run merge is clean.
+
 ### Oct 24, 22:20 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `30e80b2`
 
 **Committed (local, not pushed yet). Not merged.** Windows only from now on (Mac abandoned).
@@ -231,6 +270,37 @@ check the spoken wording for labelled choices.
 - Privacy: with a key, a screenshot of the visible tab goes to Claude after page changes (never on excluded
   pages such as sign-in or payments). Turn off with `[page_enlarge] ai_check = false`.
 
+### Oct 24, 22:15 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commits `141222f`, `878a894`
+
+**Changed:** the eye-following magnifier is now a reading aid, and the live eye tracker runs the v5
+hybrid model. 462 tests pass.
+- **Reading aid (`141222f`):**
+  - In `ally/platforms/base.py`, the new `ReadingPan` notices when the eyes move forward along one
+    line in small steps. It then pans right at the reader's pace, keeping the words being read a
+    little left of the middle.
+  - At the end of a line, a jump back to the left returns the view to where the line began, eased
+    over 0.8 s.
+  - Looking around without reading leaves the view still, and edges pan as before.
+  - The Windows magnifier loop (`platforms/windows.py`) uses it and steps at 60 Hz while following
+    the eyes.
+  - "Help me read this" now starts `magnify_where_i_look` (`ally/rules.py`).
+  - Tested with a simulated reader at 1.5x to 3x, including tracker bias, jitter and the real smoother.
+- **v5 (`878a894`, merge of Cursor's branch):**
+  - `[gaze] features` defaults to `v5`: v4 plus MobileGaze `mobileone_s0` angles, run in the camera
+    helper in memory.
+  - It falls back to v4, with a sentence in the calibration result, when
+    `state/models/mobileone_s0_gaze.onnx` or onnxruntime is missing. `doctor` names both fixes, and
+    onnxruntime is in `requirements-optional.txt`.
+  - **Bug fixed along the way:** the camera helper accepted only v1 and v2, so since v4 became the
+    default, live calibrations were silently fitted as v1.
+  - On the benchmark session, v5 has a median error of 73 px after calibration (v4: 76) and 143 px
+    after moving (v4: 169).
+
+**Others:**
+- **Ben H:** a gaze calibration saved before this push is v1. Recalibrate once to get v5.
+- **Ganesh:** `README.md` and `ally/default_config.toml` also changed on `risk-branch`; a dry-run
+  merge is clean.
+
 ### Oct 24, 22:01 PT — Ben H (via Claude Code) — branch `worktree-voice`, voice fixes
 
 **Changed:** `ally/voice_confirm.py`, `ally/speech.py`, `ally/listener.py`, `tests/test_voice_confirm.py`,
@@ -244,6 +314,56 @@ one comment line in `config.toml` / `ally/default_config.toml`.
 - Voice-name lookups use the 4 s speech timeout; unknown names aren't looked up again for 60 s.
 **For everyone:** `/api/stop`, `stop_speaking` and `reset_all` now end an open spoken question.
 **For Ganesh:** please check the risk-answer rule above.
+
+### Oct 24, 21:26 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `8676b99`
+
+**Added:** a benchmark of the open-source MobileGaze model against our eye tracker. Nothing changes in
+live behavior. 449 tests pass.
+- **`ally/gaze_cnn.py`:** runs MobileGaze ONNX models (github.com/yakhyo/gaze-estimation, MIT) on
+  MediaPipe's face box, in memory only, on the installed onnxruntime with no PyTorch.
+- **Recording:** `python -m ally.gaze_record ... --cnn mobileone_s0,resnet18` stores each model's
+  yaw and pitch per frame. Pictures are never saved.
+- **Scoring:** `python -m ally.gaze_cnn evaluate state/gaze_runs` compares three approaches on the
+  same session: MobileGaze plus head geometry, a hybrid of our features plus MobileGaze's angles,
+  and our v4.
+- **Model files:** `python scripts/get_gaze_models.py` downloads them into `state/models` (4.8 MB and
+  45 MB). Measured here at 22 and 58 ms per frame.
+- **Research summary** (a Claude helper, sources in its report):
+  - Published webcam trackers reach 2–4°, and ours is about 2° per target, so the main problem was
+    frame noise. That's fixed by the smoother in the next entry down.
+  - MobileGaze was the only candidate with a permissive license, downloadable ONNX weights and CPU
+    speed. Its published accuracy is only on the wide-angle Gaze360 dataset (11–13°), so it has to be
+    measured on a laptop.
+  - Rejected for licenses or PyTorch-only weights: UniGaze, OpenFace, EyeGestures, L2CS-Net,
+    ETH-XGaze.
+
+**Next:** the user records one benchmark session; the result decides between keeping our model,
+the hybrid, or switching to MobileGaze.
+
+### Oct 24, 21:05 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `01d34a0`
+
+**Changed:** live gaze points are now steady.
+- **Live testing found the gaze dot jumping.** Single frames are much noisier than the per-target
+  medians the evaluator reported: median 128 px error, and 10% of frames off by more than 274 px,
+  with jumps of about 60 px between frames.
+- **New `gaze_model.GazeSmoother`, used for the camera helper's gaze points:** it holds a fixation
+  steady, ignores single stray frames, and moves only when 3 frames agree. That feeds the gaze dot,
+  the magnifier following the eyes, and `target()`.
+- **Evaluator:** `ally.gaze_eval` now reports per-frame error, jitter, spread and settle time.
+- **Tests:** 437 pass.
+
+**Medians over 5 recordings, right after calibration:**
+
+| Method | Error (typical / worst 10%) | Movement per frame | Spread while looking at one dot | Settle |
+| --- | --- | --- | --- | --- |
+| Old One Euro filter | 152 / 293 px | 38 px | 54 px | 192 ms |
+| New smoother | 147 / 330 px | 0.1 px | 2 px | 91 ms |
+
+**Not fixed:** accuracy. A steady wrong point stays wrong; the worst 10% got a little worse.
+
+**In progress:** a benchmark of the open-source MobileGaze model (MIT, ONNX, 12–48 ms per frame on
+this CPU) against ours, on the user's own face. Research is summarized in the next entry once the
+benchmark has run.
 
 ### Oct 24, 20:30 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commit `68e4150`
 
@@ -286,6 +406,72 @@ Run them: `tests/browser/README.md`, `scripts/browser_tests.ps1`.
   says no required packages). Please make that import lazy or optional.
 - **Ben W:** `simplified_mode` calls `ctx.say("One moment, I'm making this page simpler.")` before working.
 - `test_network`'s size test deadlocked on macOS (socket buffer); fixed by sending from a thread.
+
+### Oct 24, 20:25 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `f4292fc`
+
+**Fixed:** offline phrase rules for the gaze dot and the eye-follow speed. Without an API key the
+phrase rules are the only way Ally understands requests, and the gaze-dot rule only matched the
+exact words "show where i am looking".
+- **Symptom:** "show where I'm looking at" did nothing, and "show me where I'm looking" magnified
+  instead.
+- **Fix:** `ally/rules.py` now accepts everyday wordings (I'm/I am, "at", "me", dot/circle/marker),
+  and those rules run before `look_magnify`.
+- **Tests:** 434 pass.
+- **For everyone:** if you add offline phrases, test the contracted forms too ("I'm", "don't").
+
+**Evidence:** first recording with the three-position calibration (Hayden, glasses off, bright light):
+
+| Model | Right after calibration | After moving, no re-tune | After a 5-dot re-tune |
+| --- | --- | --- | --- |
+| v4 (default) | 105 px (4/4 regions) | 176 px | 71 px |
+| v1 | 614 px | 625 px | 200 px |
+
+v1 can't use calibration across several head positions; v4 is the only model that benefits from it.
+
+### Oct 24, 20:15 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `11be275`
+
+The eye tracker after live testing: it now copes with head movement, follows the eyes calmly, and
+can show where it thinks you're looking. 433 tests pass.
+
+1. **Head movement no longer breaks it.**
+   - **New default model `v4`:** the head's position and rotation (MediaPipe's transformation matrix,
+     in cm) are used as geometry; only the eye angle is learned from calibration.
+   - **Error after the user moved, with no re-tune, on 4 real recordings:**
+
+     | Model | Hayden 1 | Hayden 2 | p3 | p2 |
+     | --- | --- | --- | --- | --- |
+     | v1 (before) | 769 px | 999 px | 773 px | 917 px |
+     | v4 | 204 px | 155 px | 159 px | 259 px |
+
+   - **Right after calibration** it's close to v1.
+   - **Codex's `v3`** (another geometric attempt) couldn't fit its own calibration and isn't used.
+   - **Without a head pose,** `v4` falls back to a `v1` model fitted alongside.
+   - **Settings:** `[gaze] features = "v4"` by default (also accepts `v1`, `v2`, `v3`).
+2. **Calibration at three head positions.** After the 13 dots: "sit back a little" (5 dots), then
+   "lean in a little" (5 dots). `[gaze] calibration_poses = 3`; set `1` for the old setup.
+   Recordings now carry `pose` on target lines and `screen_mm` in the meta line.
+3. **Calmer eye-following while zoomed in:**
+   - **Speed:** default `pan_speed` 0.35, was 1.0.
+   - **Start:** a quadratic ramp, and panning waits until the gaze has stayed in the edge band for
+     0.3 s.
+   - **Smoothing:** speed changes are eased.
+   - **Adjusting it:** the tool `eye_follow_speed` and the phrases "follow my eyes slower/faster" save
+     to `config.toml`.
+   - **Files outside gaze:** the eye-follow block in `ally/platforms/windows.py` and `edge_speed`
+     plus a new `ease_pan` in `ally/platforms/base.py`. Ben H: platform files, FYI.
+4. **Gaze dot:** a translucent, click-through, never-focused circle where the tracker thinks the
+   user is looking, sized by its uncertainty. It also works while zoomed in.
+   - **Turning it on:** the tool `show_gaze` and the phrases "show where I'm looking" / "hide the eye
+     dot", plus `[gaze] show_dot` (off by default).
+   - **Where it lives:** `ally/gaze_dot.py`, drawn by the camera helper. It doesn't use `ally/overlay`.
+
+**Conflict check** (fetched at 20:10): no new change-log entries from others. Ganesh's
+`risk-branch` (19:44) shares only `ally/config.py` and `ally/default_config.toml` with this, in
+different sections.
+
+**Needs a person and camera:** a three-position calibration, the slower panning and voice speed
+change, and the dot (no focus taken, clicks pass through, follows the zoomed view).
+
 
 ### Oct 24, 19:25 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, docs only
 

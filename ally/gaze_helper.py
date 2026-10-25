@@ -3,7 +3,7 @@
     {"ready": true, "calibrated": false}         camera and face model work
     {"t": 1730000000.1, "x": 812, "y": 403, "r": 140}  where the user looks, and how unsure that frame is (pixels)
     {"t": ..., "face": true} / {"face": false}   face seen but not calibrated / no face (a few per second)
-    {"calibrated": true, "error_px": 140, "dots": 13, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
+    {"calibrated": true, "error_px": 140, "dots": 9, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
                                            calibration done ({"calibrated": false, "why": "..."} if not)
     {"t": ..., "f": {"squint_l": 0.21, ...}}     face numbers for struggle sensing (with "signals": true)
     {"camera_off": true}                         the camera-on window was clicked; the camera then closes
@@ -12,12 +12,18 @@
 Settings "gaze" (default true) turns gaze points on; "signals" sends face numbers (ally.senses.face) at
 "signals_fps". Frames never leave this process and are never written to disk.
 
-Commands on stdin: "calibrate"; "check" runs only the 5 check dots; "stop" cancels a calibration in
-progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not saved
-and is not sent anywhere); "choose {json}" shows 2 to 4 large cards and "choose off" closes them;
+Commands on stdin: "calibrate" or "calibrate 1" / "calibrate 3" (head positions); "check" runs only the 5 check dots; "stop" cancels a calibration in
+progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not
+sent anywhere). What that learning has learned is saved next to the calibration, as numbers only,
+at most once a minute and on exit, and restored on start. A new calibration starts fresh.
+"choose {json}" shows 2 to 4 large cards and "choose off" closes them;
+"choice <t0> <t1> <x> <y>" learns from a look that settled on a card (features from that dwell,
+the card centre as the target);
 "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
 "card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds) and
-"card off" closes it. The card also closes itself after seconds. Unknown or broken lines are ignored.
+"card off" closes it. The card also closes itself after seconds. "dot on" / "dot off" show or hide
+the click-through gaze circle. "view LEVEL LEFT TOP" is the magnified view, so the circle can sit
+on the glass point while zoomed in. Unknown or broken lines are ignored.
 It exits when the agent closes its stdin (like the hotkey helper),
 so a camera or MediaPipe crash can never take Ally down. The agent never opens the camera.
 ally.gaze_record opens it only while Ally is stopped, and it writes numbers, not pictures.
@@ -44,19 +50,29 @@ HUD_SCALE = 0.9
 HUD_THICK = 2
 HUD_STEP = 36
 HUD_FOOTER = "Nothing is saved."
-# 3x3 grid, inset from the edges, then the four midpoints between the center and the corners.
+# 3x3 grid, inset from the edges. The setup uses these 9 dots, center first.
 GRID_X = (0.08, 0.50, 0.92)
-GRID_Y = (0.10, 0.50, 0.90)
+GRID_Y = (0.06, 0.50, 0.94)  # near the top and bottom, so up and down is fitted, not stretched
 READY_SECONDS = 3.0
 STEADY_SECONDS = 1.0  # face width and head pose must hold still this long before the first dot
 CAL_SETTLE, CAL_COLLECT = 0.8, 1.5
 VAL_SETTLE, VAL_COLLECT = 0.5, 1.5  # 1.5 s kept per dot, so a 10 fps camera still beats the 10-frame minimum
 VAL_COUNT = 5
+# The quick check ("quick calibrate"): 0.6 s per dot re-tuned as well as 1.5 s on recordings (an
+# earlier session's model plus 5 dots: 176 px before, 114 px after; a full setup that day: 91 px).
+# A dot keeps collecting up to CHECK_MAX until it has CHECK_MIN_GOOD frames, for slow cameras.
+CHECK_COLLECT, CHECK_MAX, CHECK_MIN_GOOD = 0.6, 1.5, 6
 MIN_GOOD = 10  # fewer good frames than this, and that dot is shown once more
 HEAD_MOVE_DEG = 3.0  # yaw or pitch change that means the head turned instead of the eyes
 WIDTH_STEADY = 0.05  # relative face-width change; 40 cm to 32 cm is much larger than this
 EYES_ONLY = "Move only your eyes, keep your head still."
 HEAD_RETRY_LINE = "Keep your head still, look with your eyes only."
+SIT_BACK = "Sit back a little"
+LEAN_IN = "Lean in a little"
+POSE_NORMAL, POSE_BACK, POSE_CLOSE = "normal", "back", "close"
+# 9 dots are about 30 seconds. With the two head-position rounds, the same recording is about 45.
+ABOUT_30 = "About 30 seconds."
+ABOUT_45 = "About 45 seconds."
 RESULT_SECONDS = 4.0
 MIN_OPEN = 0.12  # eye openness below this is a blink: skip the frame
 JUMP = 0.08  # change in iris position (eye widths) that means the eye jumped: skip that frame
@@ -137,10 +153,6 @@ def open_camera(index: int):
     return None
 
 
-def _mid(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
-    return (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
-
-
 def _third(pos: float) -> int:
     if pos < 1.0 / 3.0:
         return 0
@@ -155,14 +167,10 @@ def grid_points() -> list[tuple[float, float]]:
 
 
 def calibration_points() -> list[tuple[float, float]]:
-    """13 dots: the 3x3 grid, center first, then the four dots between the center and the corners."""
+    """9 dots: the 3x3 grid, center first. The corner midpoints are not part of the setup."""
     grid = grid_points()
     center = (GRID_X[1], GRID_Y[1])
-    corners = (
-        (GRID_X[0], GRID_Y[0]), (GRID_X[2], GRID_Y[0]),
-        (GRID_X[0], GRID_Y[2]), (GRID_X[2], GRID_Y[2]),
-    )
-    return [center] + [p for p in grid if p != center] + [_mid(c, center) for c in corners]
+    return [center] + [p for p in grid if p != center]
 
 
 def cell_index(nx: float, ny: float) -> int:
@@ -214,10 +222,63 @@ def _pose_summary(poses: list[tuple[float, float]]) -> tuple[float, tuple[float,
     return span, (statistics.median(yaws), statistics.median(pitches))
 
 
-def intro_lines(instruction: str = "") -> list[str]:
+def pose_count(value) -> int:
+    """3 runs the extra sit-back and lean-in rounds. 1 is the 9 grid dots only."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 3
+    return 1 if n <= 1 else 3
+
+
+def setup_duration(poses: int = 3) -> str:
+    """The time shown and spoken before the dots.
+
+    Nine grid dots take about 30 seconds. The two head-position rounds make it about 45.
+    """
+    return ABOUT_30 if pose_count(poses) <= 1 else ABOUT_45
+
+
+def intro_lines(instruction: str = "", poses: int = 3) -> list[str]:
     """The words on the setup screen before the first dot."""
     third = instruction if instruction else "Next, look at each dot until it moves."
-    return ["Eye tracker setup", EYES_ONLY, third, "Esc cancels."]
+    return ["Eye tracker setup", EYES_ONLY, third, setup_duration(poses), "Esc cancels."]
+
+
+def screen_mm() -> tuple[int, int] | None:
+    """The primary screen's physical size in millimetres, or None when Windows can't say."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+        hdc = user32.GetDC(0)
+        try:
+            width = int(gdi32.GetDeviceCaps(hdc, 4))   # HORZSIZE
+            height = int(gdi32.GetDeviceCaps(hdc, 6))  # VERTSIZE
+        finally:
+            user32.ReleaseDC(0, hdc)
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def attach_screen_mm(model: dict, mm=None) -> dict:
+    """Copy of a fitted model with screen_mm set, when the size is known."""
+    out = dict(model)
+    if mm is None:
+        mm = screen_mm()
+    if not mm:
+        return out
+    try:
+        out["screen_mm"] = [int(mm[0]), int(mm[1])]
+    except (TypeError, ValueError, IndexError):
+        return out
+    return out
 
 
 def readiness_issue(face: dict | None) -> str | None:
@@ -263,11 +324,11 @@ def eye_jumped(prev, vector, limit: float = JUMP) -> bool:
 
 CLICK_LAG = 0.1  # people look at a spot, then click; the look is a little earlier than the click
 CLICK_SLACK = 0.25  # ignore a click when no frame is this close to that moment
-FEATURE_MEMORY = 1.0  # seconds of recent feature vectors kept for click correction
+FEATURE_MEMORY = 3.0  # recent feature vectors: a click needs the look just before it, a choice needs the dwell
 
 
 class RecentFeatures:
-    """About one second of feature vectors, so a click can use the look just before it."""
+    """A few seconds of feature vectors, so a click or a look-to-answer can use that look."""
 
     def __init__(self, seconds: float = FEATURE_MEMORY):
         self.seconds = float(seconds)
@@ -294,17 +355,170 @@ def nearest_click_frame(frames, click_time, lag: float = CLICK_LAG, slack: float
     return best
 
 
+def add_sample(corrector, features, target, t, source: str = "click") -> bool:
+    """One learning sample. `source` is sent only when this Corrector.add accepts it."""
+    if corrector is None or not hasattr(corrector, "add"):
+        return False
+    kwargs = {}
+    try:
+        import inspect
+        if "source" in inspect.signature(corrector.add).parameters:
+            kwargs["source"] = source
+    except (TypeError, ValueError):
+        kwargs = {}
+    try:
+        return bool(corrector.add(features, target, float(t), **kwargs))
+    except TypeError:
+        if not kwargs:
+            return False
+        return bool(corrector.add(features, target, float(t)))
+
+
 def apply_click(corrector, frames, t, x, y) -> bool:
     """Teach the corrector from the frame nearest 0.1 s before this click. False if none qualifies."""
     frame = nearest_click_frame(frames, t)
     if frame is None or corrector is None:
         return False
-    return bool(corrector.add(frame[1], (float(x), float(y)), float(t)))
+    return add_sample(corrector, frame[1], (float(x), float(y)), float(t), "click")
+
+
+def apply_choice(corrector, frames, t0, t1, x, y) -> bool:
+    """One choice sample: features from the middle of the dwell, target at the card centre."""
+    if corrector is None:
+        return False
+    try:
+        start, end = float(t0), float(t1)
+    except (TypeError, ValueError):
+        return False
+    if end < start:
+        start, end = end, start
+    picked = []
+    for frame in frames or []:
+        try:
+            stamp = float(frame[0])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if start - 0.05 <= stamp <= end + 0.05:
+            picked.append(frame)
+    if not picked:
+        return False
+    mid = (start + end) / 2.0
+    best = min(picked, key=lambda frame: abs(float(frame[0]) - mid))
+    return add_sample(corrector, best[1], (float(x), float(y)), float(best[0]), "choice")
+
+
+_FEATURE_SETS = ("v1", "v2", "v3", "v4", "v5")
+LIVE_CNN = "mobileone_s0"
+_cnn_logged = False
 
 
 def feature_set_name(value) -> str:
     """The feature set a calibration should fit. Anything else stays on v1."""
-    return value if value in ("v1", "v2") else "v1"
+    return value if value in _FEATURE_SETS else "v1"
+
+
+def helper_state_dir(cfg: dict) -> Path:
+    """App state folder. The gaze model sits in state/models, next to the face landmarker."""
+    raw = cfg.get("state") if isinstance(cfg, dict) else None
+    if raw:
+        return Path(raw)
+    model = cfg.get("model") if isinstance(cfg, dict) else None
+    if model:
+        parent = Path(model).parent
+        if parent.name == "models":
+            return parent.parent
+    return Path("state")
+
+
+def cnn_readiness(state_dir) -> dict:
+    """Whether mobileone_s0 can run: the file is on disk, and onnxruntime imports.
+
+    This does not open the camera and does not download anything.
+    """
+    from ally.gaze_cnn import model_file
+
+    path = model_file(Path(state_dir), LIVE_CNN)
+    try:
+        import onnxruntime  # noqa: F401
+        ort = True
+    except ImportError:
+        ort = False
+    return {"file": path.is_file(), "path": str(path), "onnxruntime": ort}
+
+
+def cnn_fallback_note(state_dir) -> str | None:
+    """Why v5 cannot run, or None when the model file and onnxruntime are both ready."""
+    ready = cnn_readiness(state_dir)
+    if ready["file"] and ready["onnxruntime"]:
+        return None
+    parts = ["Using v4 instead of v5."]
+    if not ready["file"]:
+        parts.append("mobileone_s0_gaze.onnx is not in state/models. Run python scripts/get_gaze_models.py.")
+    if not ready["onnxruntime"]:
+        parts.append("onnxruntime is not installed. Run pip install onnxruntime.")
+    return " ".join(parts)
+
+
+def log_cnn_fallback(note: str) -> None:
+    """Print the v4 fallback once. Later frames stay quiet."""
+    global _cnn_logged
+    if _cnn_logged or not note:
+        return
+    _cnn_logged = True
+    err = sys.stderr
+    if err is None:
+        return
+    try:
+        err.write(note + "\n")
+        err.flush()
+    except OSError:
+        pass
+
+
+def open_live_cnn(state_dir):
+    """Load mobileone_s0 once, or None when the file or onnxruntime is missing."""
+    from ally.gaze_cnn import GazeCNN, MissingDependency, model_file
+
+    path = model_file(Path(state_dir), LIVE_CNN)
+    if not path.is_file():
+        return None
+    try:
+        runner = GazeCNN(path)
+        runner.load()
+    except Exception:
+        return None
+    return runner
+
+
+def resolve_live_features(requested, state_dir):
+    """(feature set, CNN runner or None, fallback note or None).
+
+    v5 loads mobileone_s0. A missing model file or onnxruntime logs once and uses v4.
+    """
+    name = feature_set_name(requested)
+    if name != "v5":
+        return name, None, None
+    note = cnn_fallback_note(state_dir)
+    if note is None:
+        runner = open_live_cnn(state_dir)
+        if runner is not None:
+            return "v5", runner, None
+        note = "Using v4 instead of v5. The gaze model could not be loaded. Run pip install onnxruntime."
+    log_cnn_fallback(note)
+    return "v4", None, note
+
+
+def mention_fallback(result: dict, lines, note: str | None):
+    """Put the v4 fallback sentence on a calibration result, which is what the agent shows."""
+    if not note:
+        return result, lines
+    text = list(lines or [])
+    if note not in text:
+        text.append(note)
+    out = dict(result)
+    out["cnn_fallback"] = note
+    out["lines"] = text
+    return out, text
 
 
 def validation_score(model: dict, samples: list, screen: tuple[int, int]) -> dict:
@@ -462,14 +676,227 @@ def retune_check(model: dict, samples: list) -> dict:
             "validation": tuned.get("validation"), "grade": result_grade(after)}
 
 
+LEARNING_EVERY = 60.0  # what click learning has learned is written at most this often
+# A list this long whose items are also long is a picture, not feature samples.
+_BITMAP = 64
+_IMAGE_KEYS = frozenset({
+    "image", "images", "jpeg", "jpg", "png", "pixels", "pixel", "video", "picture", "bitmap",
+})
+
+
+def learning_path(calib_path) -> Path:
+    """File next to the calibration. The calibration file itself stays the fitted model."""
+    path = Path(calib_path)
+    return path.with_name(path.stem + ".learning.json")
+
+
+def _model_stamp(model) -> str | None:
+    """Identity of a calibration. A new fit has a new stamp, so old learning does not apply."""
+    if not isinstance(model, dict):
+        return None
+    created = model.get("created")
+    if isinstance(created, bool) or not isinstance(created, (int, float)):
+        return None
+    return format(float(created), ".6f")
+
+
+def _plain_learning(value, depth: int = 0) -> bool:
+    """True for feature numbers, screen points, times, and short labels. Not a picture."""
+    if depth > 8:
+        return False
+    if value is None or isinstance(value, bool):
+        return True
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, str):
+        return len(value) <= 80 and "\x00" not in value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return False
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str) or len(key) > 40 or key.lower() in _IMAGE_KEYS:
+                return False
+            if not _plain_learning(item, depth + 1):
+                return False
+        return True
+    if isinstance(value, (list, tuple)):
+        if len(value) > 5000:
+            return False
+        if len(value) > _BITMAP:
+            for item in value:
+                if isinstance(item, (list, tuple)) and len(item) > _BITMAP:
+                    return False
+        return all(_plain_learning(item, depth + 1) for item in value)
+    return False
+
+
+def _jsonable(value):
+    """Plain JSON values. Numeric array types become lists, without importing them."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, tuple):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    as_list = getattr(value, "tolist", None)
+    if callable(as_list):
+        try:
+            return _jsonable(as_list())
+        except Exception:
+            pass
+    as_item = getattr(value, "item", None)
+    if callable(as_item):
+        try:
+            return _jsonable(as_item())
+        except Exception:
+            pass
+    return value
+
+
+def learning_document(corrector, model) -> dict | None:
+    """The corrector's own state, or None when it cannot be stored safely."""
+    if corrector is None or not hasattr(corrector, "to_dict"):
+        return None
+    stamp = _model_stamp(model)
+    if stamp is None:
+        return None
+    try:
+        data = _jsonable(corrector.to_dict())
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not _plain_learning(data):
+        return None
+    return {"created": stamp, "corrector": data}
+
+
+def save_learning(path, corrector, model) -> bool:
+    """Write what learning has learned. False when there is nothing safe to store."""
+    doc = learning_document(corrector, model)
+    if doc is None:
+        return False
+    try:
+        text = json.dumps(doc, allow_nan=False)
+    except (TypeError, ValueError):
+        return False
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / (path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def load_learning(path, model) -> dict | None:
+    """Saved corrector state for this calibration, or None when it is missing or stale."""
+    stamp = _model_stamp(model)
+    if stamp is None:
+        return None
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or not _plain_learning(doc):
+        return None
+    if doc.get("created") != stamp:
+        return None
+    data = doc.get("corrector")
+    return data if isinstance(data, dict) else None
+
+
+def restore_corrector(model, data, click_learning: bool, factory=None):
+    """A corrector for this model. Restores `data` when Corrector.from_dict exists.
+
+    Without that API, or when `data` is empty, this is a fresh corrector. Click learning
+    off returns None.
+    """
+    if factory is None:
+        from ally import gaze_model
+        factory = gaze_model.Corrector
+    if not click_learning or not model:
+        return None
+    if data and hasattr(factory, "from_dict"):
+        try:
+            restored = factory.from_dict(model, data)
+        except Exception:
+            restored = None
+        if restored is not None:
+            return restored
+    try:
+        return factory(model)
+    except Exception:
+        return None
+
+
+class LearningStore:
+    """Writes the corrector at most once a minute, and whenever save() is called on exit."""
+
+    def __init__(self, path, interval: float = LEARNING_EVERY):
+        self.path = Path(path)
+        self.interval = float(interval)
+        self.dirty = False
+        self.saved_at: float | None = None
+
+    def mark(self) -> None:
+        self.dirty = True
+
+    def due(self, now: float) -> bool:
+        if not self.dirty:
+            return False
+        if self.saved_at is None:
+            return True
+        return float(now) - self.saved_at >= self.interval
+
+    def save(self, corrector, model, now: float | None = None) -> bool:
+        """Write now. Used on exit, so it does not wait for the minute."""
+        if not self.dirty or corrector is None or not hasattr(corrector, "to_dict"):
+            return False
+        try:
+            ok = save_learning(self.path, corrector, model)
+        except OSError:
+            ok = False
+        self.saved_at = time.monotonic() if now is None else float(now)
+        if ok:
+            self.dirty = False
+        return ok
+
+    def maybe_save(self, corrector, model, now: float) -> bool:
+        if not self.due(now):
+            return False
+        return self.save(corrector, model, now)
+
+    def clear(self) -> None:
+        """A new calibration starts with nothing learned."""
+        self.dirty = False
+        self.saved_at = None
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+
+
 def adopt_model(path, screen, camera: int, click_learning: bool):
-    """The model a check just saved, and a fresh click corrector. (None, None) if it cannot be used."""
+    """The model a check just saved, and its click corrector. (None, None) if it cannot be used.
+
+    Learning saved beside the calibration is restored when it belongs to this model.
+    """
     from ally import gaze_model
 
     loaded = kept_model(gaze_model.load(path, screen), camera)
     if not loaded:
         return None, None
-    corrector = gaze_model.Corrector(loaded) if click_learning else None
+    data = load_learning(learning_path(path), loaded)
+    corrector = restore_corrector(loaded, data, click_learning, gaze_model.Corrector)
     return loaded, corrector
 
 
@@ -509,10 +936,13 @@ def _wrap_plain(text: str, limit: int = 42) -> list[str]:
 
 
 class _Dot:
-    def __init__(self, phase: str, tid: int, nx: float, ny: float, settle: float, collect: float):
+    def __init__(self, phase: str, tid: int, nx: float, ny: float, settle: float, collect: float,
+                 pose: str = "", collect_max: float | None = None, min_good: int = 0):
         self.phase, self.id = phase, tid
         self.nx, self.ny = nx, ny
         self.settle, self.collect = settle, collect
+        self.collect_max, self.min_good = collect_max, int(min_good)  # keep going until min_good frames
+        self.pose = pose
         self.good = 0
         self.samples: list[tuple[list[float], tuple[float, float]]] = []
         self.poses: list[tuple[float, float]] = []  # yaw, pitch in degrees, from the face matrix
@@ -523,15 +953,17 @@ class _Dot:
 
 
 class Setup:
-    """Readiness, 13 calibration dots, one retry, then 5 check dots. No camera and no window."""
+    """Readiness, 9 calibration dots, one retry, then 5 check dots. No camera and no window."""
 
     def __init__(self, screen: tuple[int, int], rng: random.Random | None = None,
-                 ready_seconds: float = READY_SECONDS, min_good: int = MIN_GOOD, on_target=None):
+                 ready_seconds: float = READY_SECONDS, min_good: int = MIN_GOOD, on_target=None,
+                 poses: int = 3):
         self.w, self.h = int(screen[0]), int(screen[1])
         self.rng = rng or random.Random()
         self.ready_seconds = float(ready_seconds)
         self.min_good = int(min_good)
         self.on_target = on_target
+        self.poses = pose_count(poses)
         self.stage = "ready"
         self.instruction = ""
         self.good_since: float | None = None
@@ -554,6 +986,9 @@ class Setup:
         self._steady_ref: tuple[float, float, float] | None = None
         self._steady_since: float | None = None
         self.anchor_pose: tuple[float, float] | None = None
+        self._round: list[_Dot] = []  # the dots of the round in progress; retries stay inside it
+        self.pose_plan: list[tuple[str, str, list]] = []
+        self.announcements: list[str] = []
         self._lights: list[float] = []
         self._widths: list[float] = []
         self._glare_frames = 0
@@ -572,6 +1007,8 @@ class Setup:
         wall = now if wall is None else wall
         if self.stage == "ready":
             return self._ready(now, face, wall)
+        if self.stage == "settle":
+            return self._settle(now, face, wall)
         if self.stage in ("targets", "validate", "drift"):
             if self.t0 is None:
                 self._begin(now, wall)
@@ -643,15 +1080,58 @@ class Setup:
         return now - self._steady_since >= STEADY_SECONDS
 
     def _start_targets(self, now: float, wall: float) -> None:
-        self.targets = [_Dot("calibration", i, x, y, CAL_SETTLE, CAL_COLLECT)
+        self.targets = [_Dot("calibration", i, x, y, CAL_SETTLE, CAL_COLLECT, pose=POSE_NORMAL)
                         for i, (x, y) in enumerate(calibration_points())]
         checks = validation_points(self.rng)
         self.val_targets = [_Dot("validation", i, x, y, VAL_SETTLE, VAL_COLLECT)
                             for i, (x, y) in enumerate(checks)]
-        self.order = list(self.targets)
+        self.pose_plan = []
+        if self.poses >= 3:
+            avoid = [(dot.nx, dot.ny) for dot in self.targets + self.val_targets]
+            back = validation_points(self.rng, n=5, avoid=avoid)
+            close = validation_points(self.rng, n=5, avoid=avoid + back)
+            self.pose_plan = [(POSE_BACK, SIT_BACK, back), (POSE_CLOSE, LEAN_IN, close)]
+        self._begin_round(self.targets, now, wall)
+
+    def _begin_round(self, dots: list[_Dot], now: float, wall: float) -> None:
+        """Start a round. Head movement is judged against this round's first dot, not an earlier one."""
+        self.anchor_pose = None
+        self._round = list(dots)
+        self.order = list(dots)
         self.pos = 0
+        self.t0 = None
         self.stage = "targets"
-        self._begin(now, wall)
+        self._retried_stages.discard("targets")
+        if self.order:
+            self._begin(now, wall)
+
+    def _settle(self, now: float, face, wall: float) -> str:
+        """Wait until the new head position holds still, then collect that round."""
+        if not self._update_steady(now, face):
+            return "running"
+        name = getattr(self, "_settle_pose", "")
+        prompt = getattr(self, "_settle_prompt", "")
+        points = getattr(self, "_settle_points", [])
+        dots = [_Dot("calibration", i, x, y, CAL_SETTLE, CAL_COLLECT, pose=name)
+                for i, (x, y) in enumerate(points)]
+        self.targets.extend(dots)
+        self._begin_round(dots, now, wall)
+        if prompt:
+            self.line = prompt
+        return "running"
+
+    def _start_settle(self, pose: str, prompt: str, points: list) -> None:
+        self.stage = "settle"
+        self._settle_pose = pose
+        self._settle_prompt = prompt
+        self._settle_points = list(points)
+        self.t0 = None
+        self._steady_ref = None
+        self._steady_since = None
+        self.line = prompt
+        self.instruction = prompt
+        self.banners.append(prompt)
+        self.announcements.append(prompt)
 
     def _begin(self, now: float, wall: float) -> None:
         target = self.order[self.pos]
@@ -662,6 +1142,8 @@ class Setup:
         x, y = self._px(target)
         event = {"phase": target.phase, "id": target.id, "x": x, "y": y,
                  "shown": target.shown, "start": target.start, "end": target.end}
+        if target.pose:
+            event["pose"] = target.pose
         self.events.append(event)
         if target.warn_head:
             self.line = HEAD_RETRY_LINE
@@ -678,10 +1160,13 @@ class Setup:
     def _dots(self, now: float, feat, face, wall: float) -> str:
         target = self.order[self.pos]
         elapsed = 0.0 if self.t0 is None else now - self.t0
-        if target.settle <= elapsed < target.settle + target.collect:
+        collect = target.collect
+        if target.collect_max is not None and target.good < target.min_good:
+            collect = max(collect, target.collect_max)  # too few frames yet: a slow camera gets longer
+        if target.settle <= elapsed < target.settle + collect:
             self._watch_head(target, face)
             self._consider(target, feat, face)
-        if elapsed >= target.settle + target.collect:
+        if elapsed >= target.settle + collect:
             return self._advance(now, wall)
         return "running"
 
@@ -695,7 +1180,7 @@ class Setup:
             return
 
     def _mark_head(self, target: _Dot) -> None:
-        """Flag a dot whose head turned during the collection, or away from the first dot's pose."""
+        """Flag a dot whose head turned during the collection, or away from this round's first dot."""
         if target.retried:
             return
         summary = _pose_summary(target.poses)
@@ -754,6 +1239,10 @@ class Setup:
                 self.order.extend(again)
                 self._begin(now, wall)
                 return "running"
+        if self.stage == "targets" and self.pose_plan:
+            pose, prompt, points = self.pose_plan.pop(0)
+            self._start_settle(pose, prompt, points)
+            return "running"
         if self.stage == "targets":
             self.stage = "await_fit"
             self._fit_sent = False
@@ -767,7 +1256,7 @@ class Setup:
 
     def _again(self) -> list[_Dot]:
         """Dots to show once more: too few frames (calibration only), or the head turned."""
-        dots = {"targets": self.targets, "validate": self.val_targets, "drift": self.drift_targets}
+        dots = {"targets": self._round, "validate": self.val_targets, "drift": self.drift_targets}
         again = []
         for target in dots.get(self.stage, []):
             if target.retried:
@@ -817,17 +1306,22 @@ class Setup:
         self.pos = 0
         self.t0 = None
         self._score_sent = False
+        self.anchor_pose = None  # the check is its own round
+        self._retried_stages.discard("validate")
 
     def start_check(self, now: float, wall: float) -> None:
         """Five check dots only. The model is already fit; these frames are not used to fit it."""
         points = validation_points(self.rng)
-        self.val_targets = [_Dot("validation", i, x, y, VAL_SETTLE, VAL_COLLECT) for i, (x, y) in enumerate(points)]
+        self.val_targets = [_Dot("validation", i, x, y, VAL_SETTLE, CHECK_COLLECT, collect_max=CHECK_MAX,
+                                 min_good=CHECK_MIN_GOOD) for i, (x, y) in enumerate(points)]
         self.order = list(self.val_targets)
         self.pos = 0
         self.t0 = None
         self.stage = "validate" if self.order else "done"
         self._score_sent = False
         self._fit_sent = True
+        self.anchor_pose = None
+        self._retried_stages.discard("validate")
         if self.order:
             self._begin(now, wall)
 
@@ -843,6 +1337,8 @@ class Setup:
         self.pos = 0
         self.t0 = None
         self.stage = "drift" if self.drift_targets else "done"
+        self.anchor_pose = None
+        self._retried_stages.discard("drift")
 
     def finish(self, now: float) -> None:
         self.stage = "result"
@@ -850,16 +1346,18 @@ class Setup:
 
 
 class Calibration:
-    """Full-screen setup: readiness, 13 dots, a retry, then 5 check dots. Esc cancels."""
+    """Full-screen setup: readiness, 9 dots, optional sit-back and lean-in rounds, then 5 check dots."""
 
     def __init__(self, size: tuple[int, int], on_target=None, rng: random.Random | None = None,
-                 ready_seconds: float = READY_SECONDS):
+                 ready_seconds: float = READY_SECONDS, poses: int = 3):
         import cv2  # type: ignore
         import numpy as np  # type: ignore
 
         self.cv2, self.np = cv2, np
         self.w, self.h = size
-        self.setup = Setup(size, rng=rng, ready_seconds=ready_seconds, on_target=on_target)
+        self.speak = False  # the camera helper turns this on so Ally can say the pose prompts
+        self._said = 0
+        self.setup = Setup(size, rng=rng, ready_seconds=ready_seconds, on_target=on_target, poses=poses)
         self.last_face = time.monotonic()
         self.check_only = False
         self.result: dict | None = None
@@ -909,6 +1407,10 @@ class Calibration:
         if feat is not None:
             self.last_face = now
         state = self.setup.step(now, feat, face, wall)
+        if self.speak:
+            while self._said < len(self.setup.announcements):
+                emit({"say": self.setup.announcements[self._said]})
+                self._said += 1
         self._draw(now)
         if (self.cv2.waitKey(1) & 0xFF) == 27:
             if self.setup.stage in ("result", "done"):
@@ -922,11 +1424,15 @@ class Calibration:
         stage = self.setup.stage
         target = self.setup.current
         if stage == "ready":
-            title, eyes, third, cancel = intro_lines(self.setup.instruction)
-            self._text(img, title, 0.32, 1.3)
-            self._text(img, eyes, 0.44, 0.75)
-            self._text(img, third, 0.56, 0.85)
-            self._text(img, cancel, 0.68, 0.7)
+            title, eyes, third, duration, cancel = intro_lines(self.setup.instruction, self.setup.poses)
+            self._text(img, title, 0.28, 1.2)
+            self._text(img, eyes, 0.40, 0.75)
+            self._text(img, third, 0.52, 0.8)
+            self._text(img, duration, 0.64, 0.75)
+            self._text(img, cancel, 0.76, 0.7)
+        elif stage == "settle":
+            self._text(img, self.setup.line or SIT_BACK, 0.46, 1.15)
+            self._text(img, "Hold still there.", 0.58, 0.8)
         elif target is not None and self.setup.t0 is not None:
             x, y = self.setup._px(target)
             elapsed = now - self.setup.t0
@@ -1279,15 +1785,43 @@ def classify_command(cmd: str) -> tuple[str, object]:
             return "stop", None
         if cmd == "calibrate":
             return "calibrate", None
+        if cmd.startswith("calibrate "):
+            parts = cmd.split()
+            if len(parts) != 2:
+                return "ignore", None
+            try:
+                return "calibrate", pose_count(parts[1])
+            except ValueError:
+                return "ignore", None
         if cmd == "check":
             return "check", None
         if cmd == "reload":
             return "reload", None
+        if cmd == "dot on":
+            return "dot", True
+        if cmd == "dot off":
+            return "dot", False
+        if cmd.startswith("view "):
+            parts = cmd.split()
+            if len(parts) != 4:
+                return "ignore", None
+            try:
+                return "view", (float(parts[1]), int(float(parts[2])), int(float(parts[3])))
+            except ValueError:
+                return "ignore", None
         if cmd == "choose off":
             return "choose_off", None
         if cmd.startswith("choose"):
             spec = parse_choose(cmd[6:].strip())
             return ("choose", spec) if spec else ("ignore", None)
+        if cmd.startswith("choice "):
+            parts = cmd.split()
+            if len(parts) != 5:
+                return "ignore", None
+            try:
+                return "choice", (float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4]))
+            except ValueError:
+                return "ignore", None
         if cmd.startswith("click "):
             parts = cmd.split()
             if len(parts) != 4:
@@ -1501,20 +2035,43 @@ def face_snapshot(landmarks, matrix, light, eye_light=None, two: bool = False) -
             "yaw": yaw, "pitch": pitch, "eye_light": eye_f}
 
 
-def frame_features(model, landmarks, blendshapes, matrix, width, height):
-    """Feature vector for this model (v1 or v2) plus eye openness. None when the landmarks are unusable."""
+def read_cnn_angles(runner, frame, landmarks):
+    """Yaw and pitch in degrees, or None. The frame is only handed to the model and is not kept."""
+    if runner is None or frame is None or landmarks is None:
+        return None
+    try:
+        got = runner.angles(frame, landmarks)
+    except Exception:
+        return None
+    if not got or len(got) < 2:
+        return None
+    try:
+        yaw, pitch = float(got[0]), float(got[1])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(yaw) or not math.isfinite(pitch):
+        return None
+    return yaw, pitch
+
+
+def frame_features(model, landmarks, blendshapes, matrix, width, height, cnn=None):
+    """Feature vector for this model plus eye openness. None when the landmarks are unusable.
+
+    `cnn` is (yaw, pitch) in degrees for v5. Other feature sets ignore it.
+    """
     from ally import gaze_model
 
     probe = model if isinstance(model, dict) else {"features": "v1"}
-    if probe.get("features") not in ("v1", "v2"):
+    if probe.get("features") not in _FEATURE_SETS:
         probe = {"features": "v1"}
-    return gaze_model.features_for_model(probe, landmarks, blendshapes, matrix, width, height)
+    return gaze_model.features_for_model(probe, landmarks, blendshapes, matrix, width, height, cnn=cnn)
 
 
-def look(landmarker, mp, cv2, frame, t_ms: int, model=None) -> dict:
+def look(landmarker, mp, cv2, frame, t_ms: int, model=None, gaze_cnn=None) -> dict:
     """One camera frame -> landmarks, features, and readiness numbers. The frame is not returned.
 
-    `model` only picks the feature set (a fitted model, or {"features": "v1"} / "v2").
+    `model` only picks the feature set. `gaze_cnn`, when set, is asked for yaw and pitch on this
+    frame; the picture stays in this function.
     """
     import numpy as np
     from ally.senses.face import brightness, face_box
@@ -1537,7 +2094,8 @@ def look(landmarker, mp, cv2, frame, t_ms: int, model=None) -> dict:
     mat = None
     if res.facial_transformation_matrixes and chosen < len(res.facial_transformation_matrixes):
         mat = res.facial_transformation_matrixes[chosen]
-    feat = frame_features(model, lms, bs, mat, w, h)
+    angles = read_cnn_angles(gaze_cnn, frame, lms)
+    feat = frame_features(model, lms, bs, mat, w, h, cnn=angles)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     light = brightness(gray, face_box(np.asarray(lms), w, h))
     face = face_snapshot(lms, mat, light, _eye_light(gray, lms, w, h))
@@ -1651,7 +2209,7 @@ def main(argv: list[str]) -> int:
         return 3
 
     gaze_on, signals_on = bool(cfg.get("gaze", True)), bool(cfg.get("signals", False))
-    feature_set = feature_set_name(cfg.get("features", "v1"))
+    feature_set, live_cnn, cnn_note = resolve_live_features(cfg.get("features", "v1"), helper_state_dir(cfg))
     click_learning = bool(cfg.get("click_learning", True))
     if signals_on:
         from ally.senses import face as face_signals
@@ -1659,7 +2217,8 @@ def main(argv: list[str]) -> int:
     calib_path = Path(cfg.get("calibration", "gaze_calibration.json"))
     camera = int(cfg.get("camera", 0))
     model = kept_model(gaze_model.load(calib_path, size), camera)
-    corrector = gaze_model.Corrector(model) if model is not None and click_learning else None
+    learning = LearningStore(learning_path(calib_path))
+    corrector = restore_corrector(model, load_learning(learning.path, model), click_learning)
     recent = RecentFeatures()
     try:
         landmarker = vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(
@@ -1693,10 +2252,14 @@ def main(argv: list[str]) -> int:
     sig_period = 1.0 / max(2, min(30, int(cfg.get("signals_fps", 10))))
     period = 1.0 / max(5, min(30, int(cfg.get("fps", 20)))) if gaze_on else sig_period
     last_sig, hud, hud_rows = 0.0, False, []
-    smooth = gaze_model.OneEuro()
+    smooth = gaze_model.GazeSmoother()
     calib: Calibration | None = None
     card: CardWindow | None = None
     choices: ChoiceBoard | None = None
+    from ally.gaze_dot import GazeDot
+    dot = GazeDot()
+    dot.set_enabled(bool(cfg.get("show_dot", False)))
+    view = [1.0, 0, 0]
     t_start = time.monotonic()
     last_face_msg, misses = 0.0, 0
     while True:
@@ -1714,16 +2277,23 @@ def main(argv: list[str]) -> int:
             emit({"calibrated": False, "why": "cancelled"})
             calib.close()
             calib = None
-            smooth = gaze_model.OneEuro()
+            smooth = gaze_model.GazeSmoother()
         try:
             if kind == "calibrate" and calib is None:
-                calib = Calibration(size)
+                poses = 3 if payload is None else pose_count(payload)
+                calib = Calibration(size, poses=poses)
+                calib.speak = True
             elif kind == "check" and calib is None:
                 if model is None:
                     emit({"calibrated": False, "why": "The eye tracker needs a setup first."})
                 else:
                     calib = Calibration(size)
                     calib.begin_check()
+            elif kind == "dot":
+                dot.set_enabled(bool(payload))
+            elif kind == "view" and payload is not None:
+                view[0], view[1], view[2] = payload
+                dot.set_view(*view)
             elif kind == "reload":
                 loaded, new_corrector = adopt_model(calib_path, size, camera, click_learning)
                 if loaded is not None:
@@ -1731,7 +2301,12 @@ def main(argv: list[str]) -> int:
                     corrector = new_corrector
                     recent = RecentFeatures()
             elif kind == "click" and corrector is not None and calib is None:
-                apply_click(corrector, recent.frames, payload[0], payload[1], payload[2])
+                if apply_click(corrector, recent.frames, payload[0], payload[1], payload[2]):
+                    learning.mark()
+            elif kind == "choice" and corrector is not None and calib is None:
+                t0, t1, x, y = payload
+                if apply_choice(corrector, recent.frames, t0, t1, x, y):
+                    learning.mark()
             elif kind == "hud_off":
                 if hud:
                     try:
@@ -1778,11 +2353,13 @@ def main(argv: list[str]) -> int:
                 if choices is not None:
                     choices.close()
                 indicator.close()
+                dot.close()
                 cap.release()
                 try:
                     cv2.destroyAllWindows()
                 except Exception:
                     pass
+                learning.save(corrector, model)
                 return 1
             time.sleep(0.05)
             continue
@@ -1794,7 +2371,8 @@ def main(argv: list[str]) -> int:
             probe = {"features": feature_set}
         else:
             probe = model or {"features": feature_set}
-        seen = look(landmarker, mp, cv2, frame, int((tick - t_start) * 1000), probe)
+        use_cnn = live_cnn if probe.get("features") == "v5" else None
+        seen = look(landmarker, mp, cv2, frame, int((tick - t_start) * 1000), probe, use_cnn)
         feat, lms, bs, mat = seen["feat"], seen["lms"], seen["bs"], seen["mat"]
         face, w, h = seen["face"], seen["w"], seen["h"]
         now = time.time()
@@ -1827,15 +2405,19 @@ def main(argv: list[str]) -> int:
                 choices = None
 
         if calib is not None:
+            dot.update(face=False, calibrated=False)  # the dots on screen are the thing to look at
             state = calib.step(feat, time.monotonic(), face, now)
             if state == "fit":
                 try:
-                    fitted = gaze_model.fit(calib.usable(), size, feature_set)
+                    mm = screen_mm()  # v4 needs the physical size while fitting, not just after
+                    fitted = attach_screen_mm(gaze_model.fit(calib.usable(), size, feature_set, screen_mm=mm or None), mm)
                     calib.accept_fit(fitted)
                 except (ValueError, np.linalg.LinAlgError) as e:
-                    result = {"calibrated": False, "why": f"I {e}. Try again with more light on your face."}
+                    result = {"calibrated": False, "why": f"I {e}. Try again with more light on your face.",
+                              "features": feature_set}
+                    result, lines = mention_fallback(result, ["Calibration didn't work.", result["why"]], cnn_note)
                     emit(result)
-                    calib.finish(result, ["Calibration didn't work.", result["why"]])
+                    calib.finish(result, lines)
             elif state == "score":
                 check_only = getattr(calib, "check_only", False)
                 scoring = model if check_only else calib.model
@@ -1881,12 +2463,15 @@ def main(argv: list[str]) -> int:
                     try:
                         gaze_model.save(checked, calib_path)
                         model = checked
-                        corrector = gaze_model.Corrector(model) if click_learning else None
+                        learning.clear()  # a new calibration starts with nothing learned
+                        corrector = restore_corrector(model, None, click_learning)
                         recent = RecentFeatures()
                     except OSError as e:
                         result = {"calibrated": False, "why": f"couldn't save the calibration ({e})"}
                         lines = ["Calibration didn't work.", result["why"]]
                         result.pop("grade", None)
+                result["features"] = feature_set
+                result, lines = mention_fallback(result, lines, cnn_note)
                 emit(result)
                 calib.finish(result, lines)
             elif state in ("done", "cancel"):
@@ -1894,14 +2479,17 @@ def main(argv: list[str]) -> int:
                     emit({"calibrated": False, "why": "cancelled"})
                 calib.close()
                 calib = None
-                smooth = gaze_model.OneEuro()
+                smooth = gaze_model.GazeSmoother()
             continue
 
         if feat is None or feat[1] < MIN_OPEN:
+            if feat is None:
+                dot.update(face=False, calibrated=model is not None)
             if now - last_face_msg > 1.0 and feat is None:
                 emit({"t": now, "face": False})
                 last_face_msg = now
         elif model is None or not gaze_on:
+            dot.update(face=True, calibrated=False)
             if now - last_face_msg > 0.5:
                 emit({"t": now, "face": True})
                 last_face_msg = now
@@ -1916,10 +2504,14 @@ def main(argv: list[str]) -> int:
                 radius_model = model
             x = min(max(x, -0.05 * size[0]), 1.05 * size[0])
             y = min(max(y, -0.05 * size[1]), 1.05 * size[1])
-            sx, sy = smooth(np.array([x, y]), now)
-            emit({"t": round(now, 3), "x": int(min(max(sx, 0), size[0] - 1)),
-                  "y": int(min(max(sy, 0), size[1] - 1)),
-                  "r": round(float(gaze_model.radius_px(radius_model, vector)), 1)})
+            radius = round(float(gaze_model.radius_px(radius_model, vector)), 1)
+            sx, sy = smooth.update(np.array([x, y]), now, radius)
+            px = int(min(max(sx, 0), size[0] - 1))
+            py = int(min(max(sy, 0), size[1] - 1))
+            emit({"t": round(now, 3), "x": px, "y": py, "r": radius})
+            dot.set_view(*view)
+            dot.update(px, py, radius, face=True, calibrated=True)
+        learning.maybe_save(corrector, model, time.monotonic())
         spare = period - (time.monotonic() - tick)
         if spare > 0:
             time.sleep(spare)
@@ -1928,11 +2520,13 @@ def main(argv: list[str]) -> int:
     if choices is not None:
         choices.close()
     indicator.close()
+    dot.close()
     cap.release()
     try:
         cv2.destroyAllWindows()
     except Exception:
         pass
+    learning.save(corrector, model)
     return 0
 
 

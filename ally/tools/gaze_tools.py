@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from typing import Annotated, Literal
 
 from .. import gaze_model
-from ..gaze_helper import likely_cause, result_grade, result_lines, retune_check, retune_sentence
+from ..gaze_helper import (likely_cause, pose_count, result_grade, result_lines, retune_check,
+                           retune_sentence, setup_duration)
 from ..registry import ToolError, tool
 
 
@@ -134,14 +136,18 @@ def where_am_i_looking(ctx):
     return looking_text(info, _element_at(info))
 
 
+LOOK_ZOOM = 1.5  # "magnify what I'm looking at" when no level is named and the magnifier is off
+
+
 @tool(timeout=20)
 def magnify_where_i_look(ctx, level: Annotated[float, "Magnification, e.g. 2 = 200%. 0 = keep the current "
-                                                      "level (2x if the magnifier is off)."] = 0):
+                                                      "level (1.5x if the magnifier is off)."] = 0):
     """Magnify the part of the screen the user is looking at, in any app, using the webcam eye tracker.
 
     Use for "magnify what I'm looking at", "zoom in where I'm looking", "make this bigger" when the
-    user means the spot their eyes are on, or "magnify here". Afterwards the magnified view follows
-    their eyes: looking near an edge pans that way.
+    user means the spot their eyes are on, "magnify here", or "help me read this". Afterwards the
+    magnified view is a reading aid: as they read along a line it pans at their pace, looking back
+    to the left after a line returns to where the line began, and looking near an edge pans that way.
     """
     looked = ctx.agent.gaze.target()
     x, y = int(looked["x"]), int(looked["y"])
@@ -155,27 +161,32 @@ def magnify_where_i_look(ctx, level: Annotated[float, "Magnification, e.g. 2 = 2
               + (f"; {why}" if why else "")
               + f"; {info.get('samples', '?')} samples, steady within {info.get('spread_px', '?')} px",
               kind="gaze")
-    level = float(level) if level and level > 1.0 else (lvl if lvl > 1.0 else max(2.0, ctx.os.last_magnify or 2.0))
+    level = float(level) if level and level > 1.0 else (lvl if lvl > 1.0 else LOOK_ZOOM)
     done = ctx.os.magnify_at(max(1.0, min(8.0, level)), cx, cy, follow="eyes")
     if looked.get("source") == "mouse" and why:
         return f"{done} {why}"
     return done
 
 
-@tool(timeout=150)
+@tool(timeout=210)
 def calibrate_eye_tracker(ctx):
-    """Set up the eye tracker: about a minute of dots, then a check the user was not trained on.
+    """Set up the eye tracker: 9 dots, then sit back a little and lean in a little, then a check.
 
     Use when the user asks to calibrate or set up eye tracking, or when "what I'm looking at"
-    doesn't land where they look.
+    doesn't land where they look. With calibration_poses = 1 it is the 9 dots only.
+    About 45 seconds with the head-position rounds, about 30 seconds without them.
     """
     p = ctx.os
     level = p.view()[0]
     if level > 1.0 or p.other_magnifier_open():
         p.magnify(1.0)  # the dots must be shown unmagnified (this also closes Windows Magnifier)
-    ctx.say("Eye tracker setup. Look at each dot. Move only your eyes, and keep your head still. This takes about a minute.")
+    poses = pose_count(ctx.agent.config.data.get("gaze", {}).get("calibration_poses", 3))
+    extra = "" if poses <= 1 else " Then sit back a little, and lean in a little."
+    takes = setup_duration(poses).rstrip(".").lower()
+    ctx.say("Eye tracker setup. Look at each dot. Move only your eyes, and keep your head still."
+            f"{extra} This takes {takes}.")
     try:
-        result = ctx.agent.gaze.calibrate()
+        result = ctx.agent.gaze.calibrate(timeout=180 if poses >= 3 else 120)
     finally:
         if level > 1.0:
             p.magnify(level)
@@ -184,10 +195,11 @@ def calibrate_eye_tracker(ctx):
 
 @tool(timeout=60)
 def check_eye_tracker(ctx):
-    """Check eye-tracker accuracy with 5 dots (about 10 seconds), without a full setup.
+    """Quick calibrate: 5 quick dots (about 6 seconds) re-tune the saved setup, without a full setup.
 
-    Use when the user asks to check the eye tracker, or after they have moved. Re-tunes the
-    saved model from those dots and says the error before and after.
+    Use for "quick calibrate", "recalibrate quickly", "check my eye tracker", or when it is off
+    after the user moved. Re-tunes the saved model from those dots and says the error before and
+    after. Needs one full setup first (calibrate_eye_tracker).
     """
     p = ctx.os
     level = p.view()[0]
@@ -237,7 +249,126 @@ def eye_tracking(ctx, on: bool):
 
 @tool
 def magnifier_follow(ctx, target: Literal["eyes", "mouse"]):
-    """Choose what the screen magnifier follows: the user's eyes (look near an edge to pan) or the mouse."""
+    """Choose what the screen magnifier follows: the user's eyes (it moves along as they read; look near an edge to pan) or the mouse."""
     if target == "eyes" and ctx.agent.gaze.status() != "tracking":
         raise ctx.agent.gaze.problem()
     return ctx.os.set_follow(target)
+
+
+# Named speeds. "medium" is the calm default. slower/faster step from whatever is saved now.
+PAN_SPEEDS = {"slow": 0.4, "medium": 0.85, "fast": 1.5}
+PAN_MIN, PAN_MAX = 0.1, 2.0
+
+
+def resolve_pan_speed(speed, current: float) -> float:
+    """slower, faster, slow, medium, fast, or a number from 0.1 to 2.0."""
+    if isinstance(speed, str):
+        word = speed.strip().lower()
+        if word in PAN_SPEEDS:
+            return PAN_SPEEDS[word]
+        if word == "slower":
+            return max(PAN_MIN, round(float(current) - 0.15, 2))
+        if word == "faster":
+            return min(PAN_MAX, round(float(current) + 0.15, 2))
+        try:
+            speed = float(word)
+        except ValueError:
+            raise ToolError("Say slower, faster, slow, medium, fast, or a number from 0.1 to 2.")
+    try:
+        value = float(speed)
+    except (TypeError, ValueError):
+        raise ToolError("Say slower, faster, slow, medium, fast, or a number from 0.1 to 2.")
+    if isinstance(speed, bool) or not PAN_MIN <= value <= PAN_MAX:
+        raise ToolError("Eye-follow speed must be from 0.1 to 2.")
+    return round(value, 2)
+
+
+def replace_toml_key(text: str, section: str, key: str, literal: str) -> str:
+    """Replace `key = ...` inside [section]. The comment on that line, and every other line, stay.
+
+    The key is added at the end of the section when it is missing.
+    """
+    lines = text.splitlines(keepends=True)
+    header = f"[{section}]"
+    start = None
+    for i, line in enumerate(lines):
+        if line.strip() == header:
+            start = i + 1
+            break
+    if start is None:
+        extra = "" if (not text or text.endswith("\n")) else "\n"
+        return text + extra + f"[{section}]\n{key} = {literal}\n"
+    pattern = re.compile(rf"^(\s*){re.escape(key)}\s*=")
+    end = len(lines)
+    for i in range(start, len(lines)):
+        stripped = lines[i].strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            end = i
+            break
+        raw = lines[i].rstrip("\r\n")
+        code, hash_mark, comment = raw.partition("#")
+        if not pattern.match(code):
+            continue
+        newline = lines[i][len(raw):]
+        body = f"{pattern.match(code).group(1)}{key} = {literal}"
+        if hash_mark:
+            gap = code[len(code.rstrip()):] or " "
+            lines[i] = f"{body}{gap}#{comment}{newline}"
+        else:
+            lines[i] = f"{body}{newline}"
+        return "".join(lines)
+    lines.insert(end, f"{key} = {literal}\n")
+    return "".join(lines)
+
+
+def _save_gaze_key(ctx, key: str, literal: str) -> None:
+    """Write one [gaze] value back to config.toml, then reload it."""
+    cm = ctx.agent.config
+    text = cm.read_text()
+    updated = replace_toml_key(text, "gaze", key, literal)
+    save = getattr(ctx.agent, "save_config", None)
+    if save is not None:
+        ok, errors, _warnings = save(updated)
+    else:
+        ok, errors, _warnings = cm.save_text(updated)
+    if not ok:
+        raise ToolError("Couldn't save that setting: " + "; ".join(errors))
+
+
+def _fmt_speed(value: float) -> str:
+    text = f"{value:.2f}".rstrip("0").rstrip(".")
+    return text if "." in text else text + ".0"
+
+
+@tool
+def eye_follow_speed(ctx, speed: Annotated[str, "slower, faster, slow, medium, fast, or a number from 0.1 to 2.0."]):
+    """Set how fast the magnified view pans when the user looks toward an edge, and how eagerly it keeps up while they read.
+
+    Use for "follow my eyes slower", "follow my eyes faster", or when they name a speed.
+    Applies immediately and is saved, so it stays after Ally restarts.
+    """
+    current = float(ctx.agent.config.data.get("gaze", {}).get("pan_speed", 0.85))
+    value = resolve_pan_speed(speed, current)
+    _save_gaze_key(ctx, "pan_speed", _fmt_speed(value))
+    platform = getattr(ctx.agent, "platform", None)
+    if platform is not None:
+        platform.set_gaze_source(ctx.agent.gaze.latest, value)
+    if isinstance(speed, str) and speed.strip().lower() == "slower":
+        return f"The view will follow your eyes more slowly ({_fmt_speed(value)})."
+    if isinstance(speed, str) and speed.strip().lower() == "faster":
+        return f"The view will follow your eyes a little faster ({_fmt_speed(value)})."
+    return f"The view will follow your eyes at speed {_fmt_speed(value)}."
+
+
+@tool
+def show_gaze(ctx, on: bool):
+    """Show or hide the dot that marks where the eye tracker thinks the user is looking.
+
+    Use for "show where I am looking" and "hide the eye dot". The dot is click-through.
+    It is drawn by the camera helper on each gaze point, and the choice is saved.
+    """
+    _save_gaze_key(ctx, "show_dot", "true" if on else "false")
+    ctx.agent.gaze.set_show_dot(bool(on))
+    if on:
+        return "The eye dot is on. It sits where the tracker thinks you are looking."
+    return "The eye dot is hidden."

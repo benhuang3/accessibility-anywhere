@@ -80,7 +80,9 @@ class Agent:
                                     events=self.events, state=self.state, log_dir=self.paths.log_dir)
         install_voice(self.confirm)
         self.gaze = GazeManager(self)
-        self.platform.set_gaze_source(self.gaze.latest, float(self.config.data["gaze"].get("pan_speed", 1.0)))
+        g = self.config.data["gaze"]
+        self.platform.set_gaze_source(self.gaze.latest, float(g.get("pan_speed", 0.85)),
+                                      float(g.get("max_pan_speed", 0.35)))
         self.last_utterance: tuple[float, float] | None = None  # (start, end) of the last spoken request
         # ---- proactive layer (see docs/integration_plan.md): bus -> coordinator -> overlay/voice -> tools.
         # Hayden's senses feeds the bus through on_struggle(); risk and simulate feed it via /api/event.
@@ -127,7 +129,8 @@ class Agent:
             self.senses.apply()
             self.gaze.apply()
             threading.Thread(target=self.confirm.prerender, name="voice-prerender", daemon=True).start()
-            self.platform.set_gaze_source(self.gaze.latest, float(cfg["gaze"].get("pan_speed", 1.0)))
+            self.platform.set_gaze_source(self.gaze.latest, float(cfg["gaze"].get("pan_speed", 0.85)),
+                                          float(cfg["gaze"].get("max_pan_speed", 0.35)))
             self.push_profile()
 
     def save_config(self, text: str) -> tuple[bool, list, list]:

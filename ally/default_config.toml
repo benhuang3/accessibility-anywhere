@@ -41,7 +41,11 @@ How to act:
   Another app in front: use screen tools (magnify_screen, color_filter, read_selection, describe_screen).
 - "What am I looking at", "this", "that", or "here" means the spot they are looking at: call where_am_i_looking.
   "Magnify what I'm looking at" or "magnify here" still uses magnify_where_i_look.
-- "Check my eye tracker" re-tunes it from 5 dots when their position changed. Call check_eye_tracker.
+- "Quick calibrate" or "check my eye tracker" re-tunes it from 5 quick dots (about 6 seconds) when it is off. Call check_eye_tracker.
+  Suggest this before a full setup when tracking has drifted.
+- "Set up my eyes" runs calibration: 9 dots, then sit back a little, then lean in a little. About 45 seconds. Call calibrate_eye_tracker.
+- "Follow my eyes slower" or "follow my eyes faster" sets how fast the zoomed view pans. Call eye_follow_speed.
+- "Show where I am looking" turns on a dot at the gaze point. "Hide the eye dot" turns it off. Call show_gaze.
 - When they can answer yes or no by looking, call choose_by_looking with those options.
 - The user may be talking hands-free, so never ask them to click or type.
 - To answer questions about the screen or a page, look first with describe_screen or get_page_text.
@@ -97,15 +101,19 @@ follow_up_seconds = 6      # after Ally answers, short follow-ups ("a bit more")
 whisper_model = "base.en"  # offline speech-to-text: "tiny.en" (fastest), "base.en", "small.en" (most accurate)
 
 # Eye tracking with the webcam, for "Ally, magnify what I'm looking at".
-# Say "Ally, calibrate my eyes" once (about a minute). Move only your eyes and keep your head still.
+# Say "Ally, calibrate my eyes" once (about 45 seconds). Move only your eyes and keep your head still.
+# After the first 9 dots, sit back a little, then lean in a little, so head movement is part of the setup.
 # Video stays on this computer.
 [gaze]
 enabled = true             # needs: pip install mediapipe opencv-python. The camera light stays on while Ally runs.
 camera = 0                 # which camera (0 = the built-in one)
 fps = 20                   # frames per second; lower saves battery
-pan_speed = 1.0            # magnifier following your eyes: how fast looking near an edge moves the view
-features = "v1"            # "v1" or "v2". A new setup uses this. v2 stays off until recordings show it is better.
-click_learning = true      # clicks quietly improve the estimate. Set false to turn that off. Clicks stay on this computer.
+pan_speed = 0.85           # magnifier following your eyes: how eagerly it keeps up as you read, and how fast looking near an edge moves it (0.1 slow, 2 fast)
+max_pan_speed = 0.35       # the magnifier never pans faster than this, in screen widths per second
+show_dot = false           # a soft circle where the tracker thinks you are looking. Say "show where I am looking".
+calibration_poses = 3      # 3 = 9 dots, then sit back for 5, then lean in for 5. 1 = the 9 dots only.
+features = "v5"            # v5 is v4 plus MobileGaze yaw and pitch (mobileone_s0). If that model is missing, setup uses v4.
+click_learning = true      # clicks quietly improve the estimate, and that learning is kept across restarts. A new setup starts fresh. Set false to turn that off. Clicks stay on this computer.
 max_radius_px = 250        # above this uncertainty, Ally uses the mouse pointer and says so
 answer_offers = true       # when Ally offers help, Yes and No cards appear; look at one to answer (if the tracker is reliable)
 

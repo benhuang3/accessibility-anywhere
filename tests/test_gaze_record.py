@@ -15,12 +15,15 @@ from pathlib import Path
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
 from ally.gaze_helper import (CAL_COLLECT, CAL_SETTLE, CLOSER, CENTER_HEAD, EYES_ONLY, FARTHER,
-                              HEAD_MOVE_DEG, HEAD_RETRY_LINE, NEED_LIGHT, NO_FACE, STEADY_SECONDS,
-                              TWO_FACES, VAL_COLLECT, Setup, calibration_points, cell_index, grid_points,
-                              intro_lines, kept_model, likely_cause, readiness_issue, result_grade,
-                              validation_points, validation_score, with_check)
-from ally.gaze_record import (BLENDSHAPES, READING_SECONDS, RunLog, click_record, frame_record,
-                              gaze_run_path, meta_record, record, target_record)
+                              HEAD_MOVE_DEG, HEAD_RETRY_LINE, LEAN_IN, ABOUT_30, ABOUT_45, NEED_LIGHT,
+                              NO_FACE, SIT_BACK, STEADY_SECONDS, TWO_FACES, VAL_COLLECT, Setup,
+                              attach_screen_mm, calibration_points, cell_index, classify_command,
+                              grid_points, intro_lines, kept_model, likely_cause, pose_count,
+                              readiness_issue, result_grade, setup_duration, validation_points,
+                              validation_score, with_check)
+from ally.gaze_record import (BLENDSHAPES, READING_SECONDS, RunLog, _cnn_readings, _cnn_warned,
+                              attach_cnn, click_record, frame_record, gaze_run_path, image_like,
+                              meta_record, record, target_record)
 from ally.paths import Paths
 
 try:
@@ -51,12 +54,14 @@ def _drive(setup: Setup, feat_fn, face: dict, until: set[str], t: float = 0.0, d
 
 
 class LayoutTests(unittest.TestCase):
-    def test_thirteen_dots_cover_the_grid(self):
+    def test_nine_grid_dots_cover_every_cell(self):
         dots = calibration_points()
-        self.assertEqual(len(dots), 13)
-        self.assertEqual(len(set(dots)), 13)
-        self.assertTrue(set(grid_points()).issubset(set(dots)))
-        self.assertEqual({cell_index(x, y) for x, y in grid_points()}, set(range(9)))
+        center = (0.50, 0.50)
+        self.assertEqual(len(dots), 9)
+        self.assertEqual(len(set(dots)), 9)
+        self.assertEqual(set(dots), set(grid_points()))
+        self.assertEqual(dots[0], center)
+        self.assertEqual({cell_index(x, y) for x, y in dots}, set(range(9)))
 
     def test_validation_dots_use_different_cells(self):
         calib = calibration_points()
@@ -140,11 +145,11 @@ class RetryTests(unittest.TestCase):
                     return _feat(0.0)  # a blink: the frame does not count
             return _feat()
 
-        setup = Setup((1920, 1080), rng=random.Random(1), ready_seconds=0)
+        setup = Setup((1920, 1080), rng=random.Random(1), ready_seconds=0, poses=1)
         _drive(setup, feat_fn, _face(), {"fit"})
         ids = [event["id"] for event in setup.events if event["phase"] == "calibration"]
         self.assertEqual(ids.count(weak), 2)
-        for dot_id in range(13):
+        for dot_id in range(9):
             if dot_id != weak:
                 self.assertEqual(ids.count(dot_id), 1)
         self.assertGreaterEqual(setup.targets[weak].good, 10)
@@ -224,7 +229,7 @@ class RetryTests(unittest.TestCase):
                 return _face(yaw=2)  # under the limit: not shown again
             return _face()
 
-        setup = Setup((1920, 1080), rng=random.Random(4), ready_seconds=0)
+        setup = Setup((1920, 1080), rng=random.Random(4), ready_seconds=0, poses=1)
         t = 0.0
         state = "running"
         for _ in range(20000):
@@ -243,6 +248,105 @@ class RetryTests(unittest.TestCase):
         self.assertGreaterEqual(setup.targets[turned].good, 10)
         self.assertTrue(all(row[0][0] != 1.0 for row in setup.usable()))
         self.assertEqual(ids.count(turned), 2)  # not a third time
+
+
+class PoseRoundTests(unittest.TestCase):
+    def test_one_pose_is_the_nine_grid_dots(self):
+        self.assertEqual(pose_count(1), 1)
+        self.assertEqual(pose_count(3), 3)
+        self.assertEqual(pose_count("nope"), 3)
+        self.assertEqual(setup_duration(1), ABOUT_30)
+        self.assertEqual(setup_duration(3), ABOUT_45)
+        self.assertEqual(ABOUT_30, "About 30 seconds.")
+        self.assertEqual(ABOUT_45, "About 45 seconds.")
+        self.assertIn(ABOUT_45, intro_lines())
+        self.assertIn(ABOUT_30, intro_lines("", 1))
+        setup = Setup((1920, 1080), rng=random.Random(5), ready_seconds=0, poses=1)
+        _drive(setup, lambda _s: _feat(), _face(), {"fit"})
+        calib = [event for event in setup.events if event["phase"] == "calibration"]
+        self.assertEqual(len(calib), 9)
+        self.assertTrue(all(event["pose"] == "normal" for event in calib))
+        self.assertEqual(setup.announcements, [])
+        self.assertEqual(classify_command("calibrate"), ("calibrate", None))
+        self.assertEqual(classify_command("calibrate 1"), ("calibrate", 1))
+        self.assertEqual(classify_command("calibrate 3"), ("calibrate", 3))
+        from ally.config import merge, validate
+        bad, _warnings = validate(merge({"gaze": {"calibration_poses": 2}}))
+        self.assertTrue(any("calibration_poses" in err for err in bad))
+        good, _warnings = validate(merge({"gaze": {"calibration_poses": 1}}))
+        self.assertFalse(any("calibration_poses" in err for err in good))
+
+    def test_extra_rounds_are_tagged_and_each_has_its_own_head_anchor(self):
+        def face_fn(setup: Setup):
+            if setup.stage == "settle":
+                yaw = 10.0 if setup._settle_pose == "back" else -8.0
+                return _face(yaw=yaw)
+            cur = setup.current
+            if cur is None or cur.phase != "calibration":
+                return _face()
+            if cur.pose == "normal":
+                if cur.id == 3 and not cur.retried:
+                    return _face(yaw=8)  # away from this round's first dot
+                return _face(yaw=0)
+            if cur.pose == "back":
+                # The first dot of this round is the new anchor, not the very first dot.
+                if cur.id == 2 and not cur.retried:
+                    return _face(yaw=0)
+                return _face(yaw=10)
+            if cur.id == 1 and not cur.retried:
+                return _face(yaw=10)  # still at the sit-back pose, not this round
+            return _face(yaw=-8)
+
+        setup = Setup((1920, 1080), rng=random.Random(6), ready_seconds=0, poses=3)
+        t = 0.0
+        state = "running"
+        for _ in range(20000):
+            state = setup.step(t, _feat(), face_fn(setup), 1_000_000.0 + t)
+            t += 0.05
+            if state == "fit":
+                break
+        else:
+            raise AssertionError((setup.stage, len(setup.events)))
+        self.assertEqual(setup.announcements, [SIT_BACK, LEAN_IN])
+        self.assertEqual(SIT_BACK, "Sit back a little")
+        self.assertEqual(LEAN_IN, "Lean in a little")
+
+        def ids(pose):
+            return [event["id"] for event in setup.events
+                    if event.get("phase") == "calibration" and event.get("pose") == pose]
+
+        normal, back, close = ids("normal"), ids("back"), ids("close")
+        self.assertEqual(len(set(normal)), 9)
+        self.assertEqual(len(normal), 10)  # 9, plus one retry
+        self.assertEqual(normal.count(3), 2)
+        self.assertEqual(normal.count(0), 1)
+        self.assertEqual(len(back), 6)  # 5, plus the dot that returned to the first pose
+        self.assertEqual(back.count(0), 1)
+        self.assertEqual(back.count(1), 1)
+        self.assertEqual(back.count(2), 2)
+        self.assertEqual(len(close), 6)
+        self.assertEqual(close.count(0), 1)
+        self.assertEqual(close.count(1), 2)
+        self.assertEqual(len(set(back)), 5)
+        self.assertEqual(len(set(close)), 5)
+        poses = {event["pose"] for event in setup.events if event["phase"] == "calibration"}
+        self.assertEqual(poses, {"normal", "back", "close"})
+        # The check dots are not training targets and carry no pose.
+        setup.accept_fit({"version": 1})
+        _drive(setup, lambda _s: _feat(), _face(), {"score"})
+        checks = [event for event in setup.events if event["phase"] == "validation"]
+        self.assertEqual(len(checks), 5)
+        self.assertTrue(all("pose" not in event for event in checks))
+        trained = {event["pose"] for event in setup.events if event["phase"] == "calibration"}
+        self.assertIn("back", trained)
+        self.assertGreaterEqual(len(setup.usable()), 9 * 10)
+
+    def test_screen_mm_is_stored_on_the_model(self):
+        stamped = attach_screen_mm({"dots": 13}, (345, 194))
+        self.assertEqual(stamped["screen_mm"], [345, 194])
+        self.assertEqual(stamped["dots"], 13)
+        self.assertNotIn("screen_mm", attach_screen_mm({"dots": 13}, ()))
+        self.assertNotIn("screen_mm", {"dots": 13})
 
 
 class ScoreTests(unittest.TestCase):
@@ -276,7 +380,7 @@ class PredictScoreTests(unittest.TestCase):
     def test_median_distance_and_region_hits(self):
         rnd = np.random.default_rng(1)
         screen = (1920, 1080)
-        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.1, 0.5, 0.9) for fx in (0.08, 0.5, 0.92)]
+        dots = [(fx * screen[0], fy * screen[1]) for fy in (0.06, 0.5, 0.94) for fx in (0.08, 0.5, 0.92)]
         samples = []
         for tx, ty in dots:
             for _ in range(12):
@@ -319,10 +423,11 @@ class FormatTests(unittest.TestCase):
         matrix = [[0.1, 0, 0, 0], [0, 0.2, 0, 0], [0, 0, 0.3, 0], [0, 0, 0, 1]]
         frame = frame_record(1730000000.125, 640, 480, landmarks, {"eyeLookUpLeft": 0.12}, matrix)
         self.assertIsNotNone(frame)
-        self.assertTrue(log.write(meta_record("ada", "yes", "dim", (1920, 1080), 0, "abc123", 1730000000.0)))
+        self.assertTrue(log.write(meta_record("ada", "yes", "dim", (1920, 1080), 0, "abc123", 1730000000.0,
+                                             screen_mm=(345, 194))))
         self.assertTrue(log.write(frame))
         self.assertTrue(log.write(target_record({
-            "phase": "validation", "id": 2, "x": 400, "y": 300,
+            "phase": "calibration", "id": 2, "x": 400, "y": 300, "pose": "back",
             "shown": 1730000001.0, "start": 1730000001.5, "end": 1730000002.5,
         })))
         self.assertTrue(log.write(click_record(1730000100.5, 812, 403)))
@@ -343,6 +448,7 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(len(lines), 4)
         self.assertEqual(lines[0]["rec"], "meta")
         self.assertEqual(lines[0]["screen"], [1920, 1080])
+        self.assertEqual(lines[0]["screen_mm"], [345, 194])
         frame_line = lines[1]
         self.assertEqual(frame_line["rec"], "frame")
         self.assertEqual(len(frame_line["lm"]), 478)
@@ -354,7 +460,8 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(frame_line["bs"]["eyeBlinkLeft"], 0.0)
         self.assertEqual(len(frame_line["mat"]), 16)
         target = lines[2]
-        self.assertEqual(target["phase"], "validation")
+        self.assertEqual(target["phase"], "calibration")
+        self.assertEqual(target["pose"], "back")
         for key in ("shown", "start", "end"):
             self.assertIn(key, target)
         self.assertLess(target["shown"], target["start"])
@@ -391,6 +498,101 @@ class FormatTests(unittest.TestCase):
             self.assertEqual(record("a person", "no", "bright", paths=Paths(home), ally_running=lambda: False), 2)
             self.assertEqual(record("ada", "sometimes", "bright", paths=Paths(home), ally_running=lambda: False), 2)
         self.assertEqual(READING_SECONDS, 120.0)
+
+
+class CnnRecordTests(unittest.TestCase):
+    def _frame(self):
+        landmarks = [(0.2, 0.4, 0.0)] * 478
+        return frame_record(10.0, 640, 480, landmarks, {"eyeLookUpLeft": 0.1}, None)
+
+    def test_cnn_fields_are_written_only_when_asked(self):
+        row = self._frame()
+        self.assertNotIn("cnn", row)
+        self.assertNotIn("cnn_ms", row)
+        self.assertIs(attach_cnn(row, {}), row)
+        self.assertIs(attach_cnn(row, {"mobileone_s0": (float("nan"), 1.0, 1.0)}), row)
+        blob = "data:image/png;base64," + ("A" * 400)
+        self.assertIs(attach_cnn(row, {"mobileone_s0": (blob, 1.0, 1.0)}), row)
+
+        stamped = attach_cnn(row, {
+            "mobileone_s0": (1.23456, -2.5, 12.345),
+            "resnet18": (None, None, 40.0),
+        })
+        self.assertNotIn("cnn", row)
+        self.assertEqual(stamped["cnn"], {"mobileone_s0": [1.2346, -2.5]})
+        self.assertEqual(stamped["cnn_ms"], {"mobileone_s0": 12.35})
+        self.assertFalse(image_like(stamped))
+
+        home = Path(tempfile.mkdtemp(prefix="ally-gaze-cnn-"))
+        path = gaze_run_path(home, "run1", "ada", "no", "bright")
+        log = RunLog(path)
+        self.assertTrue(log.write(stamped))
+        self.assertFalse(log.write({"rec": "frame", "cnn": {"mobileone_s0": ["A" * 400]}}))
+        log.close()
+        text = path.read_text(encoding="utf-8")
+        self.assertIn('"cnn"', text)
+        self.assertNotIn("base64", text.lower())
+        self.assertNotIn("jpeg", text.lower())
+        self.assertNotIn("png", text.lower())
+        saved = json.loads(text)
+        keys = set()
+
+        def walk(value):
+            if isinstance(value, dict):
+                keys.update(name.lower() for name in value)
+                for item in value.values():
+                    walk(item)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+
+        walk(saved)
+        for banned in ("image", "jpeg", "jpg", "png", "video", "pixels", "bmp", "frame"):
+            self.assertNotIn(banned, keys)
+
+    def test_a_missing_model_does_not_open_the_camera(self):
+        home = Path(tempfile.mkdtemp(prefix="ally-gaze-cnn-miss-"))
+        models = home / "state" / "models"
+        models.mkdir(parents=True)
+        (models / "face_landmarker.task").write_bytes(b"face")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = record("ada", "no", "bright", paths=Paths(home), ally_running=lambda: False,
+                          cnn="mobileone_s0,resnet18")
+        self.assertEqual(code, 2)
+        text = buf.getvalue()
+        self.assertIn("python scripts/get_gaze_models.py", text)
+        self.assertIn("mobileone_s0_gaze.onnx", text)
+        self.assertFalse((home / "state" / "gaze_runs").exists())
+
+    def test_readings_are_numbers_from_the_runner(self):
+        class Runner:
+            def __init__(self, name, angles):
+                self.name = name
+                self._angles = angles
+                self.frames = []
+
+            def angles(self, frame, landmarks):
+                self.frames.append(frame)
+                if isinstance(self._angles, Exception):
+                    raise self._angles
+                return self._angles
+
+        good = Runner("mobileone_s0", (4.0, -1.25))
+        bad = Runner("resnet18", RuntimeError("skip"))
+        _cnn_warned.clear()
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            readings = _cnn_readings([bad, good], [[1, 2, 3]], [[0.2, 0.3, 0.0]])
+        self.assertEqual(set(readings), {"mobileone_s0"})
+        yaw, pitch, ms = readings["mobileone_s0"]
+        self.assertEqual((yaw, pitch), (4.0, -1.25))
+        self.assertGreaterEqual(ms, 0.0)
+        self.assertIn("resnet18", buf.getvalue())
+        row = attach_cnn(self._frame(), readings)
+        self.assertEqual(row["cnn"]["mobileone_s0"][0], 4.0)
+        self.assertNotIn("resnet18", row["cnn"])
+        self.assertEqual(good.frames, [[[1, 2, 3]]])
 
 
 if __name__ == "__main__":

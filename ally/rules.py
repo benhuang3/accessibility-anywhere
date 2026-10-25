@@ -42,13 +42,30 @@ RULES = [
          full=r"(reset|reset (all|everything|it|this|the page|the screen)|undo( (all|everything|that|it))?|"
               r"back to normal|go back to normal|turn (it|everything) off|normal( view| size)?|panic)",
          loose=r"\b(reset|back to normal|undo (everything|all))\b"),
+    # The gaze dot comes before look_magnify, which would otherwise take "show me where I'm looking".
+    Rule("show_dot", [("show_gaze", {"on": True})],
+         full=r"(?:please )?(?:show|display|turn on|put up|bring up)(?: me)? (?:where (?:i'm|i am|im) (?:looking|staring|gazing)(?: at)?|(?:the |my |an |a )?(?:eye|eyes|gaze|eye tracking|eye tracker|looking) (?:dot|circle|marker|pointer|cursor|spot))(?: please)?"),
+    Rule("hide_dot", [("show_gaze", {"on": False})],
+         full=r"(?:please )?(?:hide|turn off|remove|get rid of|stop showing|don't show|do not show)(?: me)? "
+              r"(?:where (?:i'm|i am|im) (?:looking|staring|gazing)(?: at)?|(?:the |my |an |a )?(?:eye|eyes|gaze|eye tracking|eye tracker|looking) (?:dot|circle|marker|pointer|cursor|spot))(?: please)?"),
+    Rule("follow_slower", [("eye_follow_speed", {"speed": "slower"})],
+         full=r"(?:follow|track|pan|move)(?: (?:my eyes|me|the view|the zoom|the screen))?(?: (?:a bit|a little|much))? (?:slower|more slowly)|slow (?:down )?(?:the )?(?:eye )?(?:following|follow|panning|pan|view)"),
+    Rule("follow_faster", [("eye_follow_speed", {"speed": "faster"})],
+         full=r"(?:follow|track|pan|move)(?: (?:my eyes|me|the view|the zoom|the screen))?(?: (?:a bit|a little|much))? (?:faster|more quickly|quicker)|speed up (?:the )?(?:eye )?(?:following|follow|panning|pan|view)"),
     Rule("look_magnify", [("magnify_where_i_look", {})],
          full=r"(?:i want |i'd like |let me see |show me )?(?:to )?(?:(?:magnify|enlarge|blow up|zoom(?: in)?(?: on)?|"
               r"make bigger) )?(?:what |where |the (?:thing|part|spot|area|text|word|words) (?:that )?)"
               r"(?:i'm|i am|im) (?:looking|staring|gazing)(?: at)?(?: magnified| bigger| larger| enlarged| zoomed(?: in)?)?|"
               r"(?:magnify|enlarge|zoom(?: in)?(?: on)?) (?:here|right here|this spot|there|where i look)|"
-              r"make (?:what|where) (?:i'm|i am|im) looking at (?:bigger|larger)",
+              r"make (?:what|where) (?:i'm|i am|im) looking at (?:bigger|larger)|"
+              r"help me read(?: (?:this|that|it|the (?:text|page|screen)))?",
          loose=r"\b(?:i'm|i am|im) (?:looking|staring|gazing)\b|\bwhere i look\b|\b(?:magnify|zoom(?: in)?) here\b"),
+    # Quick calibrate comes before calibrate, whose loose pattern would take any "calibrate".
+    Rule("quick_calibrate", [("check_eye_tracker", {})],
+         full=r"(?:do a )?(?:quick|quickly|fast)(?: re)? ?(?:calibrat(?:e|ion)|check|setup|set up)(?: (?:my|the))?"
+              r"(?: eyes?| eye ?track(?:er|ing)| gaze(?: tracking)?)?|"
+              r"re ?calibrate(?: (?:my|the))?(?: eyes?| eye ?track(?:er|ing))? (?:quickly|fast)",
+         loose=r"\b(?:quick|quickly|fast) ?(?:re ?)?calibrat|\brecalibrate (?:\w+ )*(?:quickly|fast)\b"),
     Rule("calibrate", [("calibrate_eye_tracker", {})],
          full=r"(?:re)?calibrate(?: the| my)?(?: eyes?| eye ?track(?:er|ing)| gaze(?: tracking)?)?|"
               r"(?:set up|setup)(?: the| my)? (?:eyes|eye ?track(?:er|ing)|gaze(?: tracking)?)|"
@@ -204,5 +221,6 @@ def match(text: str, strict: bool = True) -> Match | None:
 HELP_TEXT = ("You can say: bigger, smaller, reset, read this page, read the selection, stop, high contrast, "
              "dark mode, reader mode, more spacing, magnifier, magnify what I'm looking at, "
              "what am I looking at, check my eye tracker, set up my eyes, "
+             "follow my eyes slower, follow my eyes faster, show where I am looking, hide the eye dot, "
              "invert colors, scroll down, go back, simple mode, bigger buttons, hide pop-ups, simplify the menu, "
              "check the page, or ask anything when you're online.")
