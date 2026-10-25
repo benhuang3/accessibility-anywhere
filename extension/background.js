@@ -904,33 +904,42 @@ async function handlePopup(msg) {
   }
 }
 
-// Only an Ally-created Spacecall tab may request these three announced actions.
+// Only an Ally-created Spacecall tab may request helper actions.
 async function handleHelperAction(msg, sender) {
-  await callCreation;
   const tabId = sender.tab && sender.tab.id;
   if (!Number.isInteger(tabId) || (sender.frameId !== undefined && sender.frameId !== 0)) return { ok: false };
-  const saved = (await chrome.storage.session.get(`allySpacecall:${tabId}`))[`allySpacecall:${tabId}`];
-  if (!saved || saved.tabId !== tabId || saved.windowId !== sender.tab.windowId) return { ok: false };
   const { seq, action, x, y } = msg;
   if (!Number.isInteger(seq) || seq < 0 || seq > 0xffffffff ||
-      !["close_tab", "point", "bigger"].includes(action) ||
+      !["close_tab", "hl_start", "hl_move", "hl_end", "touch_start", "touch_move", "touch_end"].includes(action) ||
       !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1 ||
-      (action !== "point" && (x !== 0 || y !== 0))) return { ok: false };
+      (action === "close_tab" && (x !== 0 || y !== 0))) return { ok: false };
+  await callCreation;
+  // Share even an in-flight lookup; streaming never waits for a previous action's result.
+  const cache = handleHelperAction.sessions ||= new Map();
+  const now = Date.now(), key = `allySpacecall:${tabId}`;
+  for (const [id, entry] of cache) if (now >= entry.until) cache.delete(id);
+  if (action === "close_tab" || !cache.has(key)) {
+    cache.set(key, { until: now + 250, saved: chrome.storage.session.get(key) });
+  }
+  const saved = (await cache.get(key).saved)[key];
+  if (!saved || saved.tabId !== tabId || saved.windowId !== sender.tab.windowId) return { ok: false };
+  if (action !== "close_tab") {
+    return { ok: send({ type: "event", name: "helper_action", action, x, y,
+      helper_name: saved.name, ok: true }) };
+  }
   let ok = false, target;
   try {
     const win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
     if (win && win.type === "normal" && win.id !== saved.windowId) {
       [target] = await chrome.tabs.query({ active: true, windowId: win.id });
       if (target && target.id !== tabId && /^https?:\/\//i.test(target.url || "")) {
-        if (action === "close_tab") await chrome.tabs.remove(target.id);
-        else if (action === "bigger") await chrome.tabs.setZoom(target.id, stepZoom(await chrome.tabs.getZoom(target.id), 1));
+        await chrome.tabs.remove(target.id);
         ok = true;
       }
     }
   } catch { /* closed windows and restricted tabs fail without changing another tab */ }
-  const announced = send({ type: "event", name: "helper_action", action, ok,
+  send({ type: "event", name: "helper_action", action, ok,
     x, y, helper_name: saved.name, tab_id: target && target.id });
-  if (action === "point") ok = ok && announced;
   return { ok };
 }
 

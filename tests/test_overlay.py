@@ -669,5 +669,95 @@ class PanelRenderingTests(unittest.TestCase):
                     release.set()
 
 
+class MarkerTests(unittest.TestCase):
+    def marker(self):
+        from ally.overlay.marker import Marker
+
+        tk, root, show = Mock(), Mock(), Mock()
+        root.winfo_screenwidth.return_value = 3200
+        root.winfo_screenheight.return_value = 2000
+        tk.Toplevel.side_effect = lambda _root: Mock()
+        tk.Canvas.side_effect = lambda *args, **kwargs: Mock()
+        guard = patch("ally.overlay.marker._click_through")
+        guard.start()
+        self.addCleanup(guard.stop)
+        return Marker(tk, root, 2, show)
+
+    def test_marker_is_queued_and_all_drawing_stays_on_the_tk_thread(self):
+        overlay = Overlay()
+        with patch("ally.overlay.marker.Marker") as factory:
+            overlay.marker("start", 120, 180)
+            factory.assert_not_called()
+            overlay._tk, overlay._root, overlay._scale = Mock(), Mock(), 2
+            overlay._handle(overlay._q.get_nowait())
+            factory.return_value.handle.assert_called_once_with("start", 120, 180)
+            overlay.marker("end", 140, 200)
+            overlay._handle(overlay._q.get_nowait())
+            factory.assert_called_once()
+
+    def test_fullscreen_translucent_marker_round_scaled_stroke_and_independent_fade(self):
+        marker = self.marker()
+        marker.handle("start", 100, 200)
+        stroke = marker.current
+        stroke.win.geometry.assert_called_once_with("3200x2000+0+0")
+        stroke.win.overrideredirect.assert_called_once_with(True)
+        self.assertIn((("-topmost", True), {}), stroke.win.attributes.call_args_list)
+        self.assertIn((("-alpha", .45), {}), stroke.win.attributes.call_args_list)
+        marker.handle("move", 140, 240)
+        stroke.canvas.create_line.assert_called_once_with(100, 200, 140, 240, fill="#ffd52a", width=56,
+                                                         capstyle="round", joinstyle="round")
+        marker.handle("end", 160, 260)
+        self.assertEqual(stroke.win.after.call_args.args[:2], (2150, stroke.fade))
+        marker.handle("start", 200, 300)
+        current = marker.current
+        for step in range(8):
+            stroke.fade(step)
+        stroke.win.destroy.assert_called_once()
+        self.assertIs(marker.current, current)
+        self.assertIn(current, marker.windows)
+        marker.handle("clear", 0, 0)
+        self.assertFalse(marker.windows)
+        self.assertIsNone(marker.current)
+        current.win.destroy.assert_called_once()
+
+    def test_tap_draws_dot_and_ripple_expands_then_disappears(self):
+        marker = self.marker()
+        marker.handle("start", 100, 200)
+        stroke = marker.current
+        stroke.canvas.create_oval.assert_any_call(72, 172, 128, 228, fill="#ffd52a", outline="")
+        marker.handle("end", 100, 200)
+        marker.handle("ripple", 300, 400)
+        ripple = next(window for window in marker.windows if window is not stroke)
+        ripple.canvas.coords.assert_called_once_with(ripple.ring, 284, 384, 316, 416)
+        for step in range(1, 11):
+            ripple.ripple(300, 400, step)
+        ripple.win.destroy.assert_called_once()
+        self.assertIn(stroke, marker.windows)
+
+    def test_failed_clickthrough_setup_destroys_window_without_showing_it(self):
+        marker = self.marker()
+        with patch("ally.overlay.marker._click_through", side_effect=OSError("denied")):
+            with self.assertRaises(OSError):
+                marker.handle("start", 100, 200)
+        marker.show.assert_not_called()
+        marker.tk.Toplevel.return_value.deiconify.assert_not_called()
+        self.assertFalse(marker.windows)
+
+    def test_windows_marker_uses_layered_transparent_and_noactivate_styles(self):
+        from ally.overlay import marker
+
+        user32, win = Mock(), Mock()
+        win.wm_frame.return_value = "100000001"
+        flags = marker.WS_EX_LAYERED | marker.WS_EX_TRANSPARENT | marker.WS_EX_NOACTIVATE
+        user32.GetWindowLongPtrW.side_effect = [8, 8 | flags]
+        user32.GetWindowLongW.side_effect = [8, 8 | flags]
+        with patch.object(marker.sys, "platform", "win32"), \
+                patch.object(marker.ctypes, "windll", Mock(user32=user32), create=True):
+            marker._click_through(win)
+        put = user32.SetWindowLongPtrW if marker.ctypes.sizeof(marker.ctypes.c_void_p) == 8 else user32.SetWindowLongW
+        put.assert_called_once_with(0x100000001, -20,
+                                    8 | marker.WS_EX_LAYERED | marker.WS_EX_TRANSPARENT | marker.WS_EX_NOACTIVATE)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -173,20 +173,20 @@ test('face profiles are private to their owner, upserted and deletable', () => {
   assert.equal(module.own_face_profile(f.harness.viewContext(f.elder)).length, 0);
 });
 
-const helperAction = { room_id: room, seq: 7, action: 'point', x: 0.25, y: 0.75 };
+const helperAction = { room_id: room, seq: 7, action: 'hl_start', x: 0.25, y: 0.75 };
 
 test('helper actions derive the elder recipient and results derive the helper recipient', () => {
   const f = fixture(); f.open(); f.join();
   f.harness.clock.set(new Timestamp(123456n));
-  for (const action of ['point', 'close_tab', 'bigger']) {
+  for (const action of ['close_tab', 'hl_start', 'hl_move', 'hl_end', 'touch_start', 'touch_move', 'touch_end']) {
     f.harness.withReducerTx(f.helper, ctx => {
       module.send_helper_action(ctx, { ...helperAction, action });
       const [event] = [...ctx.db.helperActionEvent.iter()];
       assert.equal(event.room_id, room);
       assert.equal(event.seq, 7);
       assert.equal(event.action, action);
-      assert.equal(event.x, action === 'point' ? 0.25 : 0);
-      assert.equal(event.y, action === 'point' ? 0.75 : 0);
+      assert.equal(event.x, action === 'close_tab' ? 0 : 0.25);
+      assert.equal(event.y, action === 'close_tab' ? 0 : 0.75);
       assert.equal(event.server_at.microsSinceUnixEpoch, 123456n);
       assert.ok(event.recipient.isEqual(f.harness.viewContext(f.elder).sender));
       assert.ok(!event.recipient.isEqual(f.harness.viewContext(f.helper).sender));
@@ -248,7 +248,7 @@ test('actions require a connected live room and explicit screen sharing', () => 
 
 test('unknown actions, nonfinite coordinates and points outside the screen are rejected', () => {
   const f = fixture(); f.open(); f.join();
-  for (const bad of [{ action: 'click' }, { action: 'type' }, { action: 'scroll' }, { action: '' },
+  for (const bad of [{ action: 'click' }, { action: 'type' }, { action: 'scroll' }, { action: 'point' }, { action: 'bigger' }, { action: '' },
     { x: -0.01 }, { x: 1.01 }, { y: -0.01 }, { y: 1.01 }, { x: NaN }, { y: Infinity }]) {
     assert.throws(() => f.harness.withReducerTx(f.helper, ctx => module.send_helper_action(ctx, { ...helperAction, ...bad })));
   }

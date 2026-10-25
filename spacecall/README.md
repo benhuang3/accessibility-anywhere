@@ -203,19 +203,34 @@ remain necessary before publishing.
 ## Helping on the shared screen
 
 Once both people have joined and screen sharing is on, the helper has three controls:
-**Close this page**, **Point**, and **Make it bigger**. Point mode sends the next tap on
-the displayed screen, including when zoomed; it does not click the elder's page.
-There is no remote typing, clicking or scrolling. Each action is announced by Ally.
-The helper sees a brief success or failure note, with one request per kind at a time.
+**Highlight**, **Use their screen**, and **Close tab**. Highlight and Use their screen
+are exclusive modes; press the selected button again to turn it off. With neither
+mode selected, double-tap to zoom or fit, and scroll the zoomed image as before.
 
-Actions and results are transient, recipient-filtered SpacetimeDB events. The elder
-page relays actions to the extension and reports failure if it gets no reply in five
-seconds. Only an extension-created call tab with its saved `allySpacecall:<tabId>`
-session record is authorized. Close and zoom target the active tab of the most
-recent normal browser window, excluding the call window and restricted pages.
-The bridge event keeps `name: "helper_action"` as its discriminator and carries the
-saved person's name separately as `helper_name`.
+Highlight follows a finger live with a translucent yellow stroke and a small dot.
+A tap makes a dot; each stroke fades about 2.5 seconds after lifting the finger.
+The helper sees their own marks immediately. Use their screen turns a tap into a
+left click and a drag into vertical or horizontal scrolling, like a phone. A brief
+ripple shows each click on the older adult's screen. There is no right-click,
+typing or keyboard input. Ally says once per call that the helper is helping.
+Close tab keeps its closing, success or failure feedback and its spoken note.
 
-Regenerate the mirrored bindings with `spacetime generate` and publish the module
-before trying this on Maincloud. Local tests do not publish anything. Live Maincloud,
-a real phone, physical display pointing and a real Chrome tab close still need checking.
+Actions are transient, recipient-filtered SpacetimeDB events. The seven verbs are
+`close_tab`, `hl_start`, `hl_move`, `hl_end`, `touch_start`, `touch_move`, `touch_end`.
+Coordinates cover the whole primary screen, including the taskbar. Moves send the
+latest point at most 20 times per second; starts and ends always send. Streaming
+continues after reducer failures and needs no individual results. Only Close tab
+waits for an extension reply and uses `report_action_result`.
+
+The elder page forwards gestures immediately. Only an extension-created call tab
+with its saved `allySpacecall:<tabId>` session record is authorized; streaming
+briefly caches that lookup. Close targets the active web tab of the most recent
+normal browser window, excluding the call window and restricted pages. The bridge
+event keeps `name: "helper_action"` as its discriminator and the saved person's name
+in `helper_name`. Ally ignores touch and highlight events unless the call is open,
+and clears the marker and touch state when it ends. Marker windows are click-through.
+
+The reducer signature and tables are unchanged, so the mirrored bindings do not
+need edits. Republish the module before trying the new allowlist on Maincloud.
+Local tests do not publish anything. Live Maincloud, a real phone or iPad, Windows
+physical display alignment, click-through drawing and real input still need checking.

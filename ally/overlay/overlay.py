@@ -240,6 +240,9 @@ class Overlay:
     def highlight(self, box) -> None:
         self._q.put(make_highlight_command(box))
 
+    def marker(self, phase: str, x: int = 0, y: int = 0) -> None:
+        self._q.put(("marker", phase, x, y))
+
     def show_card(self, text: str, actions: Sequence[str] = ("OK",), kind: str = "info") -> None:
         if not self._state.may_show_card(kind):
             return
@@ -318,7 +321,16 @@ class Overlay:
 
     def _handle(self, cmd: tuple[Any, ...]) -> None:
         kind = cmd[0]
+        if kind == "marker":
+            from .marker import Marker
+
+            if getattr(self, "_marker", None) is None:
+                self._marker = Marker(self._tk, self._root, getattr(self, "_scale", 1.0), _show_without_focus)
+            self._marker.handle(*cmd[1:])
+            return
         if kind == "stop":
+            if getattr(self, "_marker", None) is not None:
+                self._marker.handle("clear", 0, 0)
             self._destroy_all()
             if self._root is not None:
                 self._root.quit()
