@@ -50,14 +50,20 @@
     document.body.append(bar, end);
     document.documentElement.classList.add("ally-call");
 
-    let join = null;
+    let joinClicked = false;
+    let cameraClicked = false;
+    let microphoneClicked = false;
+    let mediaChangedAt = null;
     let foundControl = false;
     let controlsHidden = false;
     const started = Date.now();
 
-    function talking() {
-      const text = `Talking with ${info.name}`;
+    function status(text) {
       if (bar.textContent !== text) bar.textContent = text;
+    }
+
+    function mediaButton(label) {
+      return Array.from(document.querySelectorAll(`[aria-label^="${label}"]`)).find(visible);
     }
 
     function scan() {
@@ -66,7 +72,7 @@
         const leave = leaveButton();
         if (leave) {
           foundControl = true;
-          if (!join || !join.isConnected || !visible(join)) talking();
+          status(`Talking with ${info.name}`);
           if (controlsHidden && !Array.from(hidden).some((element) => element.isConnected)) controlsHidden = false;
           if (!controlsHidden) {
             for (let parent = leave.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
@@ -80,15 +86,37 @@
             }
           }
         }
-        if (!join && !leave && Date.now() - started <= 30000) {
-          join = Array.from(document.querySelectorAll('button, [role="button"]')).find((element) =>
+        if (!joinClicked && !leave) {
+          if (!cameraClicked) {
+            const camera = mediaButton("Turn on camera");
+            if (camera) {
+              cameraClicked = true;
+              camera.click();
+              mediaChangedAt = Date.now();
+            }
+          }
+          if (!microphoneClicked) {
+            const microphone = mediaButton("Turn on microphone");
+            if (microphone) {
+              microphoneClicked = true;
+              microphone.click();
+              mediaChangedAt = Date.now();
+            }
+          }
+          const join = Array.from(document.querySelectorAll('button, [role="button"]')).find((element) =>
             visible(element) && ["Join now", "Ask to join", "Join"].includes(element.innerText.trim()));
           if (join) {
             foundControl = true;
-            join.click();
+            const cameraReady = cameraClicked || mediaButton("Turn off camera");
+            const microphoneReady = microphoneClicked || mediaButton("Turn off microphone");
+            const mediaReady = (cameraReady && microphoneReady) || Date.now() - started >= 5000;
+            if (mediaReady && (mediaChangedAt === null || Date.now() - mediaChangedAt >= 500)) {
+              join.click();
+              joinClicked = true;
+            }
           }
         }
-        if (join && (!join.isConnected || !visible(join))) talking();
+        if (joinClicked && !leave) status(`Waiting for ${info.name} to let you in\u2026`);
       } catch {
         restoreMeet();
       }
@@ -111,7 +139,6 @@
     deadline = setTimeout(() => {
       try {
         scan();
-        clearInterval(poll);
         if (!foundControl) restoreMeet();
       } catch {
         restoreMeet();
