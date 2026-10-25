@@ -283,7 +283,9 @@ class GazeToolTests(unittest.TestCase):
         os_ = types.SimpleNamespace(view=lambda: (2.0, 100, 50), last_magnify=2.0,
                                     magnify_at=lambda *a, **k: calls.append((a, k)) or "ok")
         ctx = types.SimpleNamespace(agent=types.SimpleNamespace(gaze=types.SimpleNamespace(
-            point_for_request=lambda: (960, 540), last_point=None)), os=os_, event=lambda *a, **k: None)
+            target=lambda t0=None, t1=None: {"x": 960, "y": 540, "radius_px": 40, "confidence": 0.8,
+                                              "region": "middle", "source": "eyes", "why": ""},
+            last_point=None)), os=os_, event=lambda *a, **k: None)
         magnify_where_i_look(ctx)
         (level, cx, cy), kw = calls[0]
         self.assertEqual((level, cx, cy, kw["follow"]), (2.0, 580.0, 320.0, "eyes"))  # 100 + 960/2, 50 + 540/2

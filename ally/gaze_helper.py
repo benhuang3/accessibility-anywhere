@@ -12,11 +12,12 @@
 Settings "gaze" (default true) turns gaze points on; "signals" sends face numbers (ally.senses.face) at
 "signals_fps". Frames never leave this process and are never written to disk.
 
-Commands on stdin: "calibrate"; "stop" cancels a calibration in progress; "click <t> <x> <y>" notes a
-mouse click so the estimate can learn (the click is not saved and is not sent anywhere); "hud on" /
-"hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows; "card {json}" shows
-a readable card (text, optional title, size normal|large|tiny, seconds) and "card off" closes it. The
-card also closes itself after seconds. Unknown or broken lines are ignored.
+Commands on stdin: "calibrate"; "check" runs only the 5 check dots; "stop" cancels a calibration in
+progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not saved
+and is not sent anywhere); "choose {json}" shows 2 to 4 large cards and "choose off" closes them;
+"hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
+"card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds) and
+"card off" closes it. The card also closes itself after seconds. Unknown or broken lines are ignored.
 It exits when the agent closes its stdin (like the hotkey helper),
 so a camera or MediaPipe crash can never take Ally down. The agent never opens the camera.
 ally.gaze_record opens it only while Ally is stopped, and it writes numbers, not pictures.
@@ -617,6 +618,19 @@ class Setup:
         self.t0 = None
         self._score_sent = False
 
+    def start_check(self, now: float, wall: float) -> None:
+        """Five check dots only. The model is already fit; these frames are not used to fit it."""
+        points = validation_points(self.rng)
+        self.val_targets = [_Dot("validation", i, x, y, VAL_SETTLE, VAL_COLLECT) for i, (x, y) in enumerate(points)]
+        self.order = list(self.val_targets)
+        self.pos = 0
+        self.t0 = None
+        self.stage = "validate" if self.order else "done"
+        self._score_sent = False
+        self._fit_sent = True
+        if self.order:
+            self._begin(now, wall)
+
     def start_drift(self, rng: random.Random | None = None) -> None:
         """Five new check dots, phase "drift". Not used for fitting."""
         rng = rng or self.rng
@@ -647,6 +661,7 @@ class Calibration:
         self.w, self.h = size
         self.setup = Setup(size, rng=rng, ready_seconds=ready_seconds, on_target=on_target)
         self.last_face = time.monotonic()
+        self.check_only = False
         self.result: dict | None = None
         self.lines: list[str] = []
         self.base = np.full((self.h, self.w, 3), 32, dtype=np.uint8)
@@ -667,8 +682,18 @@ class Calibration:
     def start_drift(self, rng: random.Random | None = None) -> None:
         self.lines = []
         self.result = None
+        self.check_only = False
         self.last_face = time.monotonic()
         self.setup.start_drift(rng)
+        self.reopen()
+
+    def begin_check(self) -> None:
+        """Open the screen on the 5 check dots. Does not fit a new model."""
+        self.lines = []
+        self.result = None
+        self.check_only = True
+        self.last_face = time.monotonic()
+        self.setup.start_check(time.monotonic(), time.time())
         self.reopen()
 
     def _text(self, img, text: str, y: float, scale: float = 1.0) -> None:
@@ -997,6 +1022,30 @@ CARD = "Ally card"
 CARD_SCALES = {"tiny": 0.4, "normal": 1.15, "large": 1.9}
 
 
+def parse_choose(arg: str) -> dict | None:
+    """The JSON after `choose`: 2 to 4 option strings. None when the line is unusable."""
+    try:
+        spec = json.loads(arg)
+    except ValueError:
+        return None
+    if not isinstance(spec, dict):
+        return None
+    options = spec.get("options")
+    if not isinstance(options, list) or not 2 <= len(options) <= 4:
+        return None
+    texts = []
+    for item in options:
+        text = " ".join(str(item).split())
+        if not text:
+            return None
+        texts.append(text[:80])
+    try:
+        seconds = float(spec.get("seconds") or 8)
+    except (TypeError, ValueError):
+        seconds = 8.0
+    return {"options": texts, "seconds": max(0.5, min(60.0, seconds))}
+
+
 def parse_card(arg: str) -> dict | None:
     """The JSON after `card`. None when the line is missing text or is not JSON."""
     try:
@@ -1030,6 +1079,13 @@ def classify_command(cmd: str) -> tuple[str, object]:
             return "stop", None
         if cmd == "calibrate":
             return "calibrate", None
+        if cmd == "check":
+            return "check", None
+        if cmd == "choose off":
+            return "choose_off", None
+        if cmd.startswith("choose"):
+            spec = parse_choose(cmd[6:].strip())
+            return ("choose", spec) if spec else ("ignore", None)
         if cmd.startswith("click "):
             parts = cmd.split()
             if len(parts) != 4:
@@ -1286,6 +1342,95 @@ def look(landmarker, mp, cv2, frame, t_ms: int, model=None) -> dict:
     return {"w": w, "h": h, "feat": feat, "lms": lms, "bs": bs, "mat": mat, "face": face, "light": light}
 
 
+class ChoiceBoard:
+    """Large cards, one per option, each in its own part of the screen. 2 options: left and right."""
+
+    def __init__(self, cv2, spec: dict, screen: tuple[int, int]):
+        self.cv2 = cv2
+        self.spec = spec
+        self.screen = screen
+        self.names: list[str] = []
+        self.alive = True
+        self.start = time.monotonic()
+        self._open()
+
+    def _boxes(self) -> list[tuple[int, int, int, int]]:
+        w, h = int(self.screen[0]), int(self.screen[1])
+        n = len(self.spec["options"])
+        margin = 24
+        if n == 2:
+            raw = [(0, 0, w // 2, h), (w // 2, 0, w - w // 2, h)]
+        elif n == 3:
+            col = w // 3
+            raw = [(i * col, 0, col if i < 2 else w - 2 * col, h) for i in range(3)]
+        else:
+            hw, hh = w // 2, h // 2
+            raw = [(0, 0, hw, hh), (hw, 0, w - hw, hh), (0, hh, hw, h - hh), (hw, hh, w - hw, h - hh)]
+        boxes = []
+        for x, y, bw, bh in raw:
+            boxes.append((x + margin, y + margin, max(80, bw - 2 * margin), max(80, bh - 2 * margin)))
+        return boxes
+
+    def _open(self) -> None:
+        cv2 = self.cv2
+        for i, (x, y, bw, bh) in enumerate(self._boxes()):
+            name = f"Ally choice {i + 1}"
+            self.names.append(name)
+            cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(name, bw, bh)
+            try:
+                cv2.moveWindow(name, x, y)
+            except Exception:
+                pass
+            try:
+                cv2.setWindowProperty(name, cv2.WND_PROP_TOPMOST, 1)
+            except Exception:
+                pass
+        self._draw()
+
+    def step(self) -> bool:
+        if not self.alive:
+            return False
+        seconds = float(self.spec.get("seconds") or 0)
+        if seconds and time.monotonic() - self.start >= seconds:
+            self.close()
+            return False
+        self._draw()
+        return True
+
+    def _draw(self) -> None:
+        import numpy as np
+
+        cv2 = self.cv2
+        scale_0 = 2.2 if len(self.spec["options"]) <= 2 else 1.6
+        for name, text, (_x, _y, bw, bh) in zip(self.names, self.spec["options"], self._boxes()):
+            img = np.full((bh, bw, 3), 255, dtype=np.uint8)
+            scale, thick = scale_0, 3
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+            while tw > bw - 40 and scale > 0.6:
+                scale = round(scale - 0.2, 2)
+                thick = max(1, int(round(scale * 2)))
+                (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+            cv2.putText(img, text, (max(12, (bw - tw) // 2), (bh + th) // 2), cv2.FONT_HERSHEY_SIMPLEX,
+                        scale, (0, 0, 0), thick, cv2.LINE_AA)
+            cv2.imshow(name, img)
+        cv2.waitKey(1)
+
+    def close(self) -> None:
+        if not self.alive:
+            return
+        self.alive = False
+        for name in self.names:
+            try:
+                self.cv2.destroyWindow(name)
+            except Exception:
+                pass
+        try:
+            self.cv2.waitKey(1)
+        except Exception:
+            pass
+
+
 def main(argv: list[str]) -> int:
     try:
         cfg = json.loads(argv[1]) if len(argv) > 1 else {}
@@ -1349,6 +1494,7 @@ def main(argv: list[str]) -> int:
     smooth = gaze_model.OneEuro()
     calib: Calibration | None = None
     card: CardWindow | None = None
+    choices: ChoiceBoard | None = None
     t_start = time.monotonic()
     last_face_msg, misses = 0.0, 0
     while True:
@@ -1370,6 +1516,12 @@ def main(argv: list[str]) -> int:
         try:
             if kind == "calibrate" and calib is None:
                 calib = Calibration(size)
+            elif kind == "check" and calib is None:
+                if model is None:
+                    emit({"calibrated": False, "why": "The eye tracker needs a setup first."})
+                else:
+                    calib = Calibration(size)
+                    calib.begin_check()
             elif kind == "click" and corrector is not None and calib is None:
                 apply_click(corrector, recent.frames, payload[0], payload[1], payload[2])
             elif kind == "hud_off":
@@ -1389,6 +1541,14 @@ def main(argv: list[str]) -> int:
                 if card is not None:
                     card.close()
                     card = None
+            elif kind == "choose_off":
+                if choices is not None:
+                    choices.close()
+                    choices = None
+            elif kind == "choose" and calib is None:
+                if choices is not None:
+                    choices.close()
+                choices = ChoiceBoard(cv2, payload, size)
             elif kind == "card":
                 if card is not None:
                     card.close()
@@ -1407,6 +1567,8 @@ def main(argv: list[str]) -> int:
                 emit({"error": "the camera stopped sending pictures"})
                 if card is not None:
                     card.close()
+                if choices is not None:
+                    choices.close()
                 indicator.close()
                 cap.release()
                 try:
@@ -1417,9 +1579,13 @@ def main(argv: list[str]) -> int:
             time.sleep(0.05)
             continue
         misses = 0
-        # A new calibration is fit with [gaze] features. Tracking uses the saved model's own set,
-        # so an older v1 file still predicts while features is already v2.
-        probe = {"features": feature_set} if calib is not None else (model or {"features": feature_set})
+        # A new calibration is fit with [gaze] features. A check, and ordinary tracking, use the
+        # saved model's own set, so a v1 file still predicts when features is already v2.
+        checking = calib is not None and getattr(calib, "check_only", False)
+        if calib is not None and not checking:
+            probe = {"features": feature_set}
+        else:
+            probe = model or {"features": feature_set}
         seen = look(landmarker, mp, cv2, frame, int((tick - t_start) * 1000), probe)
         feat, lms, bs, mat = seen["feat"], seen["lms"], seen["bs"], seen["mat"]
         face, w, h = seen["face"], seen["w"], seen["h"]
@@ -1441,6 +1607,16 @@ def main(argv: list[str]) -> int:
                 except Exception:
                     pass
                 card = None
+        if choices is not None:
+            try:
+                if not choices.step():
+                    choices = None
+            except Exception:
+                try:
+                    choices.close()
+                except Exception:
+                    pass
+                choices = None
 
         if calib is not None:
             state = calib.step(feat, time.monotonic(), face, now)
@@ -1453,22 +1629,32 @@ def main(argv: list[str]) -> int:
                     emit(result)
                     calib.finish(result, ["Calibration didn't work.", result["why"]])
             elif state == "score":
-                try:
-                    score = validation_score(calib.model, calib.validation_samples(), size)
-                except Exception:
-                    score = {"error_px": None, "region_hits": 0, "region_total": 0}
-                lines = result_lines(result_grade(score), score, likely_cause(calib.cause_stats()))
-                checked = with_check(calib.model, score, camera)
-                result = {"calibrated": True, "error_px": checked["error_px"], "dots": checked["dots"],
-                          "validation": checked["validation"]}
-                try:
-                    gaze_model.save(checked, calib_path)
-                    model = checked
-                    corrector = gaze_model.Corrector(model) if click_learning else None
-                    recent = RecentFeatures()
-                except OSError as e:
-                    result = {"calibrated": False, "why": f"couldn't save the calibration ({e})"}
-                    lines = ["Calibration didn't work.", result["why"]]
+                scoring = model if getattr(calib, "check_only", False) else calib.model
+                if scoring is None:
+                    result = {"calibrated": False, "why": "The eye tracker needs a setup first."}
+                    lines = ["The eye tracker needs a setup first."]
+                else:
+                    try:
+                        score = validation_score(scoring, calib.validation_samples(), size)
+                    except Exception:
+                        score = {"error_px": None, "region_hits": 0, "region_total": 0}
+                    cause = likely_cause(calib.cause_stats())
+                    grade = result_grade(score)
+                    lines = result_lines(grade, score, cause)
+                    checked = with_check(scoring, score, camera)
+                    result = {"calibrated": True, "error_px": checked.get("error_px"), "dots": checked.get("dots"),
+                              "validation": checked["validation"], "grade": grade, "lines": lines, "cause": cause}
+                    if getattr(calib, "check_only", False):
+                        result["check"] = True
+                    try:
+                        gaze_model.save(checked, calib_path)
+                        model = checked
+                        corrector = gaze_model.Corrector(model) if click_learning else None
+                        recent = RecentFeatures()
+                    except OSError as e:
+                        result = {"calibrated": False, "why": f"couldn't save the calibration ({e})"}
+                        lines = ["Calibration didn't work.", result["why"]]
+                        result.pop("grade", None)
                 emit(result)
                 calib.finish(result, lines)
             elif state in ("done", "cancel"):
@@ -1507,6 +1693,8 @@ def main(argv: list[str]) -> int:
             time.sleep(spare)
     if card is not None:
         card.close()
+    if choices is not None:
+        choices.close()
     indicator.close()
     cap.release()
     try:

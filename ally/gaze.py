@@ -58,6 +58,41 @@ def download_face_model(path: Path, timeout: float = 60) -> None:
     tmp.replace(path)
 
 
+def choice_index(x: float, y: float, screen, n: int) -> int:
+    """Which large area a point is in. 2: left/right. 3: columns. 4: quadrants, top-left first."""
+    w = max(int(screen[0]), 1)
+    h = max(int(screen[1]), 1)
+    x = min(max(float(x), 0.0), w - 1.0)
+    y = min(max(float(y), 0.0), h - 1.0)
+    n = int(n)
+    if n <= 2:
+        return 0 if x < w / 2.0 else 1
+    if n == 3:
+        return min(2, int(3 * x / w))
+    col = 0 if x < w / 2.0 else 1
+    row = 0 if y < h / 2.0 else 1
+    return row * 2 + col
+
+
+def ongoing_choice(points, screen, n: int, now: float, hold: float = 0.8, gap: float = 0.4):
+    """Area index the latest points have stayed in for `hold` seconds, or None.
+
+    Region-sized areas, so this still works when the tracker is only okay.
+    """
+    now = float(now)
+    rows = [p for p in points if now - (float(hold) + 0.6) <= p[0] <= now]
+    if len(rows) < 2 or now - rows[-1][0] > gap:
+        return None
+    idx = choice_index(rows[-1][1], rows[-1][2], screen, n)
+    last = rows[-1][0]
+    window = [p for p in rows if p[0] >= last - float(hold)]
+    if not window or last - window[0][0] + 1e-9 < float(hold):
+        return None
+    if any(choice_index(p[1], p[2], screen, n) != idx for p in window):
+        return None
+    return idx
+
+
 def cursor_pos() -> tuple[int, int] | None:
     """The mouse pointer, on Windows. None when it can't be read."""
     if sys.platform != "win32":
@@ -341,7 +376,7 @@ class GazeManager:
         if s == "starting":
             return ToolError("The eye tracker is still starting. Try again in a few seconds.")
         if s == "needs calibration":
-            return ToolError("The eye tracker needs a 20-second setup first. Say: calibrate my eyes.")
+            return ToolError("The eye tracker needs a setup first. Say: calibrate my eyes.")
         return ToolError("I can't see your eyes. Face the screen and the camera, then try again.")
 
     def latest(self, max_age: float = 0.3) -> tuple[int, int] | None:
@@ -479,3 +514,39 @@ class GazeManager:
         if not self._calib_done.wait(timeout):
             raise ToolError("Calibration took too long.")
         return self._calib_result or {"calibrated": False, "why": "the eye tracker stopped"}
+
+    def check(self, timeout: float = 40) -> dict:
+        """Run only the 5 check dots and wait for the words and the saved validation numbers."""
+        if not self.wanted():
+            self.set_enabled(True)
+        end = time.monotonic() + 20
+        while not self.ready:
+            if time.monotonic() > end or (self.error and not self.running):
+                raise self.problem()
+            time.sleep(0.2)
+        self._calib_done.clear()
+        self._calib_result = None
+        if not self.send("check"):
+            raise ToolError("The eye tracker stopped. Try again in a few seconds.")
+        if not self._calib_done.wait(timeout):
+            raise ToolError("The eye tracker check took too long.")
+        return self._calib_result or {"calibrated": False, "why": "the eye tracker stopped"}
+
+    def choose(self, options, timeout: float = 8.0, hold: float = 0.8, clock=None, sleep=None):
+        """Show the options and return the one the gaze stays on for `hold` seconds, or None."""
+        options = [" ".join(str(item).split()) for item in options]
+        if not 2 <= len(options) <= 4 or not all(options):
+            raise ToolError("Choose two, three, or four options.")
+        clock = clock or time.time
+        sleep = sleep or time.sleep
+        self.send("choose " + json.dumps({"options": options, "seconds": float(timeout)}))
+        deadline = clock() + float(timeout)
+        try:
+            while clock() < deadline:
+                idx = ongoing_choice(list(self.points), self.screen, len(options), clock(), hold)
+                if idx is not None:
+                    return options[idx]
+                sleep(0.05)
+            return None
+        finally:
+            self.send("choose off")
