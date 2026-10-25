@@ -20,7 +20,8 @@ from pathlib import Path
 from helpers import ROOT  # noqa: F401  (puts the repo on sys.path)
 
 from ally.gaze_helper import (CARD_SCALES, INDICATOR_EX_STYLE, INDICATOR_TEXT, NUM_FACES, SECOND_FACE,
-                              choose_face, classify_command, face_width, note_once, parse_card)
+                              card_origin, choose_face, classify_command, face_width, note_once, parse_card,
+                              signal_line)
 from ally.senses import evaluate, matrix
 
 
@@ -97,12 +98,32 @@ class _Clock:
         self.t += float(seconds)
 
 
+def _raw_landmarks(x=0.11, y=0.22, z=-0.03):
+    return [[x, y, z] for _ in range(478)]
+
+
+def _raw_line(face=None):
+    """A signals line plus picture keys the recorder must drop."""
+    return {
+        "t": 1.0,
+        "f": _face() if face is None else face,
+        "lm": _raw_landmarks(),
+        "bs": {"eyeSquintLeft": 0.25, "eyeBlinkLeft": 0.5, "jpeg": "hidden"},
+        "mat": [round(i / 10, 4) for i in range(16)],
+        "w": 640,
+        "h": 480,
+        "frame": [0] * 50,
+        "jpeg": "data:image/jpeg;base64," + ("A" * 800),
+        "raw": "data:image/png;base64," + ("B" * 40),
+        "pixels": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+        "extra": list(range(12)),
+    }
+
+
 def _lines():
-    junk = [0] * 50
-    face = _face()
     return [
         json.dumps({"ready": True, "calibrated": False, "screen": [1920, 1080]}),
-        json.dumps({"t": 1.0, "f": face, "frame": junk, "jpeg": "data:image/jpeg;base64," + ("A" * 800)}),
+        json.dumps(_raw_line()),
         json.dumps({"t": 2.0, "face": False}),
     ]
 
@@ -198,6 +219,15 @@ class RecordTests(unittest.TestCase):
         face = next(r for r in rows if r["rec"] == "helper" and "f" in r)
         self.assertEqual(set(face["f"]), {"squint_l", "squint_r", "smile", "blink", "yaw", "pitch", "width", "light"})
         self.assertTrue(all(isinstance(v, (int, float)) for v in face["f"].values()))
+        self.assertEqual(len(face["lm"]), 478)
+        self.assertEqual(face["lm"][0], [0.11, 0.22, -0.03])
+        self.assertTrue(all(len(point) == 3 and all(isinstance(n, (int, float)) for n in point) for point in face["lm"]))
+        self.assertEqual(face["bs"], {"eyeSquintLeft": 0.25, "eyeBlinkLeft": 0.5})
+        self.assertEqual(len(face["mat"]), 16)
+        self.assertTrue(all(isinstance(n, (int, float)) for n in face["mat"]))
+        self.assertEqual((face["w"], face["h"]), (640, 480))
+        for key in ("frame", "jpeg", "raw", "pixels", "extra"):
+            self.assertNotIn(key, face)
         unknown = next(r for r in rows if r["rec"] == "input" and r.get("e") == "r")
         self.assertIsNone(unknown["clickable"])
         kind, command = self.calls[0]
@@ -205,7 +235,159 @@ class RecordTests(unittest.TestCase):
         args = json.loads(command[-1])
         self.assertFalse(args["gaze"])
         self.assertTrue(args["signals"])
+        self.assertTrue(args["raw"])
+        self.assertEqual(args["signals_fps"], 15)
         self.assertIn("ally.gaze_helper", " ".join(command))
+
+    def test_raw_line_keeps_numbers_and_drops_pictures(self):
+        nested = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+        dirty = _raw_line()
+        dirty["mat"] = nested
+        dirty["note"] = "data:image/png;base64," + ("C" * 20)
+        clean = matrix.sanitize(dirty)
+        self.assertIsNotNone(clean)
+        self.assertEqual(len(clean["lm"]), 478)
+        self.assertEqual(clean["mat"], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+        self.assertNotIn("jpeg", clean["bs"])
+        for key in ("frame", "jpeg", "raw", "pixels", "extra", "note"):
+            self.assertNotIn(key, clean)
+        self.assertNotIn("base64", json.dumps(clean))
+        short = matrix.sanitize({"t": 1, "f": _face(), "lm": [[0.0, 0.0, 0.0]] * 10, "mat": [0, 1, 2]})
+        self.assertNotIn("lm", short)
+        self.assertNotIn("mat", short)
+        empty = matrix.sanitize({"lm": "not points", "bs": ["nope"], "mat": "nope"})
+        self.assertEqual(empty, {})
+
+    def test_raw_fields_are_present_only_when_raw_is_on(self):
+        summary = _face()
+        points = [(0.123456, 0.2, -0.33333)] * 478
+        shapes = {"eyeSquintLeft": 0.123456, "eyeBlinkRight": 0.5, "jpeg": "data:image/jpeg;base64," + ("Q" * 40)}
+        grid = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        off = signal_line(summary, points, shapes, grid, 640, 480, raw=False)
+        self.assertEqual(set(off), {"f"})
+        on = signal_line(summary, points, shapes, grid, 640, 480, raw=True)
+        self.assertEqual(set(on), {"f", "lm", "bs", "mat", "w", "h"})
+        self.assertEqual(len(on["lm"]), 478)
+        self.assertEqual(on["lm"][0], [0.1235, 0.2, -0.3333])
+        self.assertEqual(on["bs"], {"eyeSquintLeft": 0.1235, "eyeBlinkRight": 0.5})
+        self.assertEqual(len(on["mat"]), 16)
+        self.assertEqual(on["mat"][0], 1.0)
+        self.assertEqual((on["w"], on["h"]), (640, 480))
+        self.assertIsNone(signal_line(summary, points, shapes, None, 640, 480, raw=True)["mat"])
+        self.assertIsNone(signal_line("nope", points, shapes, grid, 640, 480, raw=True))
+        short = signal_line(summary, [(0.0, 0.0, 0.0)] * 10, {}, None, 100, 80, raw=True)
+        self.assertNotIn("lm", short)
+        self.assertEqual((short["w"], short["h"]), (100, 80))
+        dirty = {"t": 1.5, **on, "frame": [0] * 30, "png": "data:image/png;base64," + ("Z" * 30)}
+        clean = matrix.sanitize(dirty)
+        self.assertEqual(len(clean["lm"]), 478)
+        self.assertNotIn("frame", clean)
+        self.assertNotIn("png", clean)
+        self.assertNotIn("base64", json.dumps(clean))
+
+    def test_new_parts_keep_old_names_and_expect_values(self):
+        parts = matrix.protocol(0)
+        by_name = {}
+        for part in parts:
+            by_name.setdefault(part["name"], part)
+        expected = {
+            "look_bottom": ("none", 8.0, "bottom"),
+            "look_top": ("none", 8.0, "top"),
+            "blink_fast": ("none", 8.0, "center"),
+            "tired": ("none", 8.0, "center"),
+            "wink": ("none", 8.0, "center"),
+            "squint_soft": ("squint", 8.0, "center"),
+            "read_tiny_long": ("natural", 20.0, "center"),
+            "lean_soft": ("lean", 8.0, "center"),
+            "sit_back": ("none", 8.0, "center"),
+        }
+        for name, (expect, seconds, place) in expected.items():
+            part = by_name[name]
+            self.assertEqual(part["expect"], expect, name)
+            self.assertEqual(part["seconds"], seconds, name)
+            self.assertEqual(part["place"], place, name)
+            self.assertTrue(part["text"])
+            self.assertLess(len(part["text"]), 120, name)
+        self.assertEqual(by_name["read_normal"]["expect"], "none")
+        self.assertEqual(by_name["read_tiny"]["expect"], "natural")
+        self.assertEqual(by_name["read_tiny"]["size"], "tiny")
+        self.assertEqual(by_name["act_squint"]["expect"], "squint")
+        self.assertEqual(by_name["lean"]["expect"], "lean")
+        self.assertEqual(by_name["lean_squint"]["expect"], "struggle")
+        self.assertEqual(by_name["lean_squint"]["seconds"], 10.0)
+        self.assertEqual(by_name["read_tiny_long"]["size"], "tiny")
+        squint = {"act_squint", "squint_soft", "lean_squint", "read_tiny", "read_tiny_long"}
+        acted = [part["name"] for part in parts if part["name"] != "gap"]
+        for left, right in zip(acted, acted[1:]):
+            self.assertFalse(left in squint and right in squint, (left, right))
+        kind, spec = classify_command(matrix.card_line(by_name["look_bottom"]))
+        self.assertEqual((kind, spec["place"]), ("card", "bottom"))
+        self.assertIn("bottom", spec["text"])
+        top = classify_command(matrix.card_line(by_name["look_top"]))[1]
+        self.assertEqual(top["place"], "top")
+        self.assertEqual(card_origin((1920, 1080), (1100, 160), "top"), ((1920 - 1100) // 2, 0))
+        self.assertEqual(card_origin((1920, 1080), (1100, 160), "bottom"), ((1920 - 1100) // 2, 1080 - 160))
+        self.assertEqual(card_origin((1920, 1080), (1100, 640), "center")[1], (1080 - 640) // 2)
+
+    def test_eyes_and_age_are_stored_or_refused(self):
+        code, text, _clock = self._record(eyes="hooded", age="65plus")
+        self.assertEqual(code, 0, text)
+        path = self.tmp / "senses_runs" / "test" / "ada-no-bright.jsonl"
+        meta = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(meta["eyes"], "hooded")
+        self.assertEqual(meta["age"], "65plus")
+        plain, _text, _clock = self._record()
+        self.assertEqual(plain, 0)
+        again = self.tmp / "senses_runs" / "test" / "ada-no-bright-2.jsonl"
+        skipped = json.loads(again.read_text(encoding="utf-8").splitlines()[0])
+        self.assertIsNone(skipped["eyes"])
+        self.assertIsNone(skipped["age"])
+        started = len(self.calls)
+        for eyes, age, needle in (("blue", None, "monolid"), (None, "old", "under40"), ("", "under40", "monolid")):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = matrix.record(
+                    "ada", "no", "bright", camera=0, run="bad", root=self.tmp, model=self.model,
+                    spawn=self._spawn, ally_running=lambda: False, senses={}, eyes=eyes, age=age)
+            self.assertEqual(code, 2, (eyes, age, buf.getvalue()))
+            self.assertIn(needle, buf.getvalue())
+        self.assertEqual(len(self.calls), started)
+
+    def test_repeat_and_parts(self):
+        full = [part["name"] for part in matrix.protocol(0) if part["name"] not in ("calibration", "gap")]
+        twice = [part["name"] for part in matrix.protocol(0, repeat=2) if part["name"] not in ("calibration", "gap")]
+        self.assertEqual(twice, full + full)
+        self.assertEqual(sum(1 for part in matrix.protocol(0, repeat=2) if part["name"] == "calibration"), 1)
+        self.assertEqual(matrix.parse_parts(" smile , wink , smile "), ("smile", "wink"))
+        self.assertIsNone(matrix.parse_parts(""))
+        self.assertIsNone(matrix.parse_parts(None))
+        with self.assertRaises(ValueError):
+            matrix.parse_parts("nope")
+        with self.assertRaises(ValueError):
+            matrix.parse_parts("wink,")
+        named = [part["name"] for part in matrix.protocol(0, only=matrix.parse_parts("smile,squint_soft"))
+                 if part["name"] not in ("calibration", "gap")]
+        self.assertEqual(named, ["smile", "squint_soft"])
+        code, text, _clock = self._record(repeat=2, parts="wink,squint_soft")
+        self.assertEqual(code, 0, text)
+        path = self.tmp / "senses_runs" / "test" / "ada-no-bright.jsonl"
+        labels = [row["name"] for row in (json.loads(line) for line in path.read_text(encoding="utf-8").splitlines())
+                  if row["rec"] == "label" and row["name"] != "gap"]
+        self.assertEqual(labels, ["calibration", "wink", "squint_soft", "wink", "squint_soft"])
+        expects = {row["name"]: row["expect"] for row in
+                   (json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()) if row["rec"] == "label"}
+        self.assertEqual(expects["squint_soft"], "squint")
+        self.assertEqual(expects["wink"], "none")
+        started = len(self.calls)
+        for repeat, parts, needle in ((0, None, "whole number"), (1, "nope", "Unknown part"), (2, "wink,", "commas")):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = matrix.record(
+                    "ada", "no", "bright", camera=0, run="bad", root=self.tmp, model=self.model,
+                    spawn=self._spawn, ally_running=lambda: False, senses={}, repeat=repeat, parts=parts)
+            self.assertEqual(code, 2, (repeat, parts, buf.getvalue()))
+            self.assertIn(needle, buf.getvalue())
+        self.assertEqual(len(self.calls), started)
 
     def test_cards_are_sent_and_interrupt_keeps_the_file(self):
         seen = {}
@@ -569,6 +751,7 @@ class SelfCheckTests(unittest.TestCase):
         payload = json.loads(calls[0][1][3])
         self.assertFalse(payload["gaze"])
         self.assertTrue(payload["signals"])
+        self.assertNotIn("raw", payload)
         sent = procs[0].stdin.getvalue()
         self.assertIn("card ", sent)
         self.assertIn("LEFT", sent)

@@ -6,11 +6,15 @@
     {"calibrated": true, "error_px": 140, "dots": 9, "validation": {"error_px": 120, "region_hits": 5, "region_total": 5}}
                                            calibration done ({"calibrated": false, "why": "..."} if not)
     {"t": ..., "f": {"squint_l": 0.21, ...}}     face numbers for struggle sensing (with "signals": true)
+    {"t": ..., "f": {...}, "lm": [[x, y, z], ...], "bs": {"eyeSquintLeft": 0.2}, "mat": [..16..] or null, "w": 640, "h": 480}
+                                                 same line when "raw" is true: 478 landmarks, every blendshape,
+                                                 the face matrix, and the frame size. Numbers only.
     {"camera_off": true}                         the camera-on window was clicked; the camera then closes
     {"error": "..."}                             a problem; the process then exits
 
 Settings "gaze" (default true) turns gaze points on; "signals" sends face numbers (ally.senses.face) at
-"signals_fps". Frames never leave this process and are never written to disk.
+"signals_fps". "raw" (default false) adds those extra numbers to the same line. Ally's live senses leave
+it off. Frames never leave this process and are never written to disk.
 
 Commands on stdin: "calibrate" or "calibrate 1" / "calibrate 3" (head positions); "check" runs only the 5 check dots; "stop" cancels a calibration in
 progress; "click <t> <x> <y>" notes a mouse click so the estimate can learn (the click is not
@@ -20,8 +24,10 @@ at most once a minute and on exit, and restored on start. A new calibration star
 "choice <t0> <t1> <x> <y>" learns from a look that settled on a card (features from that dwell,
 the card centre as the target);
 "hud on" / "hud off" show a live senses window, and "hud [[text, level], ...]" sets its rows;
-"card {json}" shows a readable card (text, optional title, size normal|large|tiny, seconds) and
-"card off" closes it. The card also closes itself after seconds. "dot on" / "dot off" show or hide
+"card {json}" shows a readable card (text, optional title, size normal|large|tiny, place
+center|top|bottom, seconds) and
+"card off" closes it. The card also closes itself after seconds. place top or bottom puts a
+short card on that edge of the screen so the line being read is there. "dot on" / "dot off" show or hide
 the click-through gaze circle. "view LEVEL LEFT TOP" is the magnified view, so the circle can sit
 on the glass point while zoomed in. Unknown or broken lines are ignored.
 It exits when the agent closes its stdin (like the hotkey helper),
@@ -1771,7 +1777,25 @@ def parse_card(arg: str) -> dict | None:
     except (TypeError, ValueError):
         seconds = 0.0
     title = spec.get("title") if isinstance(spec.get("title"), str) else ""
-    return {"text": text.strip(), "title": title.strip(), "size": size, "seconds": max(0.0, seconds)}
+    place = spec.get("place", "center")
+    if place not in ("center", "top", "bottom"):
+        place = "center"
+    return {"text": text.strip(), "title": title.strip(), "size": size, "seconds": max(0.0, seconds),
+            "place": place}
+
+
+def card_origin(screen: tuple[int, int], window: tuple[int, int], place: str) -> tuple[int, int]:
+    """Top-left of the card window. top and bottom pin a short card to that edge of the screen."""
+    sw, sh = int(screen[0]), int(screen[1])
+    ww, wh = int(window[0]), int(window[1])
+    x = max(0, (sw - ww) // 2)
+    if place == "top":
+        y = 0
+    elif place == "bottom":
+        y = max(0, sh - wh)
+    else:
+        y = max(0, (sh - wh) // 2)
+    return x, y
 
 
 def classify_command(cmd: str) -> tuple[str, object]:
@@ -1868,13 +1892,16 @@ class CardWindow:
         except Exception:
             pass
         try:
-            cv2.moveWindow(CARD, max(0, (int(screen[0]) - width) // 2), max(0, (int(screen[1]) - height) // 2))
+            x, y = card_origin(screen, (width, height), self.spec.get("place") or "center")
+            cv2.moveWindow(CARD, x, y)
         except Exception:
             pass
         self.step()
 
     def _window_size(self) -> tuple[int, int]:
         sw, sh = int(self.screen[0]), int(self.screen[1])
+        if self.spec.get("place") in ("top", "bottom"):
+            return min(max(sw - 80, 1), 1100), min(max(sh, 1), 160)
         if self.spec["size"] == "tiny":
             return min(max(sw, 1), 900), min(max(sh, 1), 420)
         if self.spec["size"] == "large":
@@ -2191,6 +2218,116 @@ class ChoiceBoard:
             pass
 
 
+def _xyz(point) -> tuple[float, float, float] | None:
+    try:
+        if hasattr(point, "x") and hasattr(point, "y"):
+            x, y, z = float(point.x), float(point.y), float(getattr(point, "z", 0.0))
+        else:
+            x, y = float(point[0]), float(point[1])
+            z = float(point[2]) if len(point) > 2 else 0.0
+    except (TypeError, ValueError, IndexError):
+        return None
+    if any(math.isnan(n) or math.isinf(n) for n in (x, y, z)):
+        return None
+    return x, y, z
+
+
+def _landmarks_out(landmarks) -> list[list[float]] | None:
+    """478 points as [x, y, z], 4 decimals. None when the face did not yield 478 points."""
+    try:
+        points = list(landmarks)
+    except TypeError:
+        return None
+    if len(points) < 478:
+        return None
+    out = []
+    for point in points[:478]:
+        got = _xyz(point)
+        if got is None:
+            return None
+        out.append([round(got[0], 4), round(got[1], 4), round(got[2], 4)])
+    return out
+
+
+def _blendshapes_out(blendshapes) -> dict:
+    """Every blendshape score by name, 4 decimals. Missing or unusable scores are left out."""
+    if not isinstance(blendshapes, dict):
+        return {}
+    out = {}
+    for name, score in blendshapes.items():
+        if not isinstance(name, str):
+            continue
+        try:
+            number = float(score)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(number) or math.isinf(number):
+            continue
+        out[name] = round(number, 4)
+    return out
+
+
+def _matrix_out(matrix) -> list[float] | None:
+    """The facial transformation matrix as 16 numbers, or null when there isn't one."""
+    if matrix is None:
+        return None
+    if hasattr(matrix, "tolist"):
+        try:
+            matrix = matrix.tolist()
+        except Exception:
+            pass
+    data = getattr(matrix, "data", None)
+    if data is not None and not isinstance(matrix, (list, tuple)):
+        try:
+            matrix = list(data)
+        except TypeError:
+            return None
+    try:
+        if isinstance(matrix, (list, tuple)) and matrix and isinstance(matrix[0], (list, tuple)):
+            flat = [float(n) for row in matrix for n in row]
+        else:
+            flat = [float(n) for n in matrix]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if len(flat) != 16 or any(math.isnan(n) or math.isinf(n) for n in flat):
+        return None
+    return [round(n, 4) for n in flat]
+
+
+def raw_face(landmarks, blendshapes, matrix, width, height) -> dict:
+    """Landmarks, blendshapes, the face matrix, and frame size. No pixels."""
+    try:
+        w, h = int(width), int(height)
+    except (TypeError, ValueError):
+        w, h = 0, 0
+    out = {"bs": _blendshapes_out(blendshapes), "mat": _matrix_out(matrix), "w": w, "h": h}
+    lm = _landmarks_out(landmarks)
+    if lm is not None:
+        out["lm"] = lm
+    return out
+
+
+def signal_line(summary, landmarks, blendshapes, matrix, width, height, raw: bool = False) -> dict | None:
+    """One signals object, without the timestamp. `raw` adds the raw face numbers.
+
+    Live sensing passes raw false, so the line stays `{f: ...}`. The recorder passes raw true.
+    """
+    if not isinstance(summary, dict):
+        return None
+    if not raw:
+        return {"f": summary}
+    face = raw_face(landmarks, blendshapes, matrix, width, height)
+    # lm sits next to f so a reader sees summary scores, then the points they came from.
+    ordered = {"f": summary}
+    if "lm" in face:
+        ordered["lm"] = face["lm"]
+    ordered["bs"] = face["bs"]
+    ordered["mat"] = face["mat"]
+    ordered["w"] = face["w"]
+    ordered["h"] = face["h"]
+    return ordered
+
+
 def main(argv: list[str]) -> int:
     try:
         cfg = json.loads(argv[1]) if len(argv) > 1 else {}
@@ -2209,6 +2346,7 @@ def main(argv: list[str]) -> int:
         return 3
 
     gaze_on, signals_on = bool(cfg.get("gaze", True)), bool(cfg.get("signals", False))
+    raw_on = cfg.get("raw") is True
     feature_set, live_cnn, cnn_note = resolve_live_features(cfg.get("features", "v1"), helper_state_dir(cfg))
     click_learning = bool(cfg.get("click_learning", True))
     if signals_on:
@@ -2379,8 +2517,9 @@ def main(argv: list[str]) -> int:
         if signals_on and lms is not None and now - last_sig >= sig_period:
             last_sig = now
             sig = face_signals.signals(lms, bs, mat, w, h, seen.get("light"))
-            if sig is not None:
-                emit({"t": round(now, 3), "f": sig})
+            body = signal_line(sig, lms, bs, mat, w, h, raw_on)
+            if body is not None:
+                emit({"t": round(now, 3), **body})
         if hud:
             draw_hud(cv2, frame, hud_rows)
         if card is not None:
