@@ -140,6 +140,31 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 23:43 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commits `ee1e039`, merge of `agent/cursor`, `d64e290`, `52782a3`
+
+**Changed:** up-and-down accuracy, a shorter setup, and quick calibrate. 475 tests pass.
+- **Eyelids for up and down (`ee1e039`, `ally/gaze_model.py`):**
+  - The v4 and v5 vectors now end with the iris position between the eyelids. v4 is 10 numbers
+    and v5 is 12.
+  - Calibration fits a vertical-only weight set, `coef_lid`, and keeps it only when it predicts
+    held-out dots better.
+  - On six recordings, vertical error after the user moved fell from 95 to 66 px (median).
+  - Older saved models still load and predict as before.
+  - **Anyone reading feature vectors:** don't assume a length of 9 or 11. Use `gaze_model` helpers.
+- **Cursor's merged work:**
+  - The setup is the 9-dot grid plus the two head-position rounds, about 45 s.
+  - Click learning is saved with the calibration and restored on start.
+  - A look that picks a card sends the helper a `choice t0 t1 x y` line, which teaches it.
+- **Calibration rows (`d64e290`):** the top and bottom rows sit 6% from the edge (was 10%). The worst
+  vertical errors were beyond the old rows.
+- **Quick calibrate (`52782a3`):**
+  - "Quick calibrate", "recalibrate quickly" and "check my eye tracker" run 5 check dots at 0.6 s
+    each, about 6 s, and re-tune the saved setup.
+  - Measured: an earlier session's model went from 176 to 114 px. A full setup that day scored 91 px.
+
+**Not merged yet:** Codex's Corrector rework (save and restore, refit). Replaying recorded clicks
+through it made error worse in 4 of 6 sessions, so it is under investigation.
+
 ### Oct 24, 22:27 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `0a248f1`
 
 **Changed:** reading-aid tuning after Hayden tried it. 463 tests pass.
