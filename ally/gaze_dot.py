@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import math
 import sys
+import threading
 import time
 
 log = logging.getLogger("ally.gaze.dot")
@@ -27,6 +28,12 @@ HALO_ALPHA = 0.55
 LINE_ALPHA = 0.85
 CENTRE_R = 2.5
 RING_PAD = 4  # room for the line and its halo inside the bitmap
+# Smooth motion: the window is redrawn this often, easing toward each new estimate.
+FRAME_HZ = 60
+EASE_MOVE = 0.09  # seconds; the ring settles on a new spot in about 0.25 s
+EASE_SIZE = 0.25  # the ring's size changes more slowly than its place
+EASE_FADE = 0.12
+CANVAS = int(2 * (DOT_MAX_R + 2)) + 1  # one window size, so nothing is reallocated while animating
 FADE_OUT = 0.35  # seconds to disappear after the face or the calibration is gone
 
 # WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
@@ -145,11 +152,17 @@ class GazeDot:
         self._last = None
         self._window = None
         self._unavailable = False
+        self._lock = threading.Lock()
+        self._target = None  # the latest estimate the animator eases toward
+        self._cut = False  # hide at once (turned off), no fade
+        self._animator = None
 
     def set_enabled(self, on: bool) -> None:
         self.state.enabled = bool(on)
         if not on:
             self.state.alpha = 0.0
+            with self._lock:
+                self._cut = True
             self._paint(None)
 
     def set_view(self, level, left, top) -> None:
@@ -167,6 +180,10 @@ class GazeDot:
         return spec
 
     def close(self) -> None:
+        animator, self._animator = self._animator, None
+        if animator is not None:
+            animator.stop.set()
+            animator.thread.join(timeout=1.0)
         window, self._window = self._window, None
         if window is not None:
             try:
@@ -181,6 +198,12 @@ class GazeDot:
                 draw(spec)
             except Exception:
                 log.debug("gaze dot painter failed", exc_info=True)
+            return
+        if not self._unavailable:
+            with self._lock:
+                self._target = None if spec is None else dict(spec)
+            if spec is not None and self._animator is None:
+                self._animator = _Animator(self)
             return
         if spec is None:
             if self._window is not None:
@@ -208,22 +231,50 @@ class GazeDot:
         self.close()
 
 
-def _ring(radius: float, alpha: float) -> tuple[int, bytes]:
+def _ring(radius: float, alpha: float, fx: float = 0.0, fy: float = 0.0, size: int | None = None):
     """Premultiplied BGRA: a thin dark ring on the edge of the estimate, a small centre dot, and a
     faint white edge on both so they show on dark pages too. Inside the ring stays clear, so the
-    marker never hides what the person is looking at. Top row first."""
-    r = max(RING_PAD + 2, int(round(radius)))
-    d = r * 2 + 1
+    marker never hides what the person is looking at. Top row first.
+
+    fx, fy shift the centre by a fraction of a pixel, so a slow glide never steps. `size` fixes the
+    square's side (the animated window keeps one size); by default it just fits the ring.
+    """
+    r = max(RING_PAD + 2.0, float(radius))
+    d = int(size) if size else int(math.ceil(r)) * 2 + 1
+    c = (d - 1) / 2.0
     peak = max(0.0, min(1.0, float(alpha)))
-    buf = bytearray(d * d * 4)
     ring = r - RING_PAD  # the stroke's centre line, so the halo fits inside the bitmap
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+    if np is not None:
+        grid = _GRIDS.get(d)
+        if grid is None:
+            grid = _GRIDS[d] = np.mgrid[0:d, 0:d].astype(np.float32)
+        yy, xx = grid
+        dist = np.hypot(xx - (c + fx), yy - (c + fy))
+        off = np.abs(dist - ring)
+        line = np.clip(RING_HALF + 0.5 - off, 0.0, 1.0)
+        halo = np.clip(RING_HALF + HALO + 0.5 - off, 0.0, 1.0)
+        core = np.clip(CENTRE_R + 0.5 - dist, 0.0, 1.0)
+        core_halo = np.clip(CENTRE_R + HALO + 0.5 - dist, 0.0, 1.0)
+        dark = np.maximum(line, core)
+        light = np.maximum(halo, core_halo) * HALO_ALPHA * (1.0 - dark)
+        a = (dark * LINE_ALPHA + light) * peak
+        out = np.zeros((d, d, 4), dtype=np.uint8)
+        white = np.clip(255.0 * light * peak, 0, 255).astype(np.uint8)  # premultiplied: only the halo adds colour
+        out[..., 0] = out[..., 1] = out[..., 2] = white
+        out[..., 3] = np.clip(np.rint(255.0 * a), 0, 255).astype(np.uint8)
+        out[a <= 0.004] = 0
+        return d, out.tobytes()
+    buf = bytearray(d * d * 4)
     for y in range(d):
-        dy = y - r
+        dy = y - (c + fy)
         row = y * d
         for x in range(d):
-            dist = math.hypot(x - r, dy)
+            dist = math.hypot(x - (c + fx), dy)
             off = abs(dist - ring)
-            # Coverage of each layer, anti-aliased over one pixel.
             line = max(0.0, min(1.0, RING_HALF + 0.5 - off))
             halo = max(0.0, min(1.0, RING_HALF + HALO + 0.5 - off))
             core = max(0.0, min(1.0, CENTRE_R + 0.5 - dist))
@@ -233,11 +284,90 @@ def _ring(radius: float, alpha: float) -> tuple[int, bytes]:
             a = (dark * LINE_ALPHA + light) * peak
             if a <= 0.004:
                 continue
-            white = int(255 * light * peak)  # premultiplied: only the halo adds colour
             i = (row + x) * 4
-            buf[i] = buf[i + 1] = buf[i + 2] = min(255, white)
+            buf[i] = buf[i + 1] = buf[i + 2] = min(255, int(255 * light * peak))
             buf[i + 3] = min(255, int(round(255 * a)))
     return d, bytes(buf)
+
+
+_GRIDS: dict = {}
+
+
+def ease(shown: dict | None, target: dict | None, dt: float) -> dict | None:
+    """One animation step from what is on screen toward the latest estimate.
+
+    Position, size and fade each ease exponentially (no overshoot, no jumps). A ring that was not
+    showing appears in place rather than flying in from its old spot. None once fully faded out.
+    """
+    dt = max(0.0, min(0.1, float(dt)))
+    if target is not None and (shown is None or shown["alpha"] <= 0.02):
+        shown = dict(target, alpha=0.0)  # appear where the eyes are
+    if shown is None:
+        return None
+    move = 1.0 - math.exp(-dt / EASE_MOVE)
+    grow = 1.0 - math.exp(-dt / EASE_SIZE)
+    fade = 1.0 - math.exp(-dt / EASE_FADE)
+    out = dict(shown)
+    goal_alpha = 0.0 if target is None else float(target["alpha"])
+    if target is not None:
+        out["x"] += (float(target["x"]) - out["x"]) * move
+        out["y"] += (float(target["y"]) - out["y"]) * move
+        out["radius"] += (float(target["radius"]) - out["radius"]) * grow
+    out["alpha"] += (goal_alpha - out["alpha"]) * fade
+    if target is None and out["alpha"] <= 0.02:
+        return None
+    return out
+
+class _Animator:
+    """Redraws the ring FRAME_HZ times a second on its own thread, easing toward the latest estimate.
+
+    The window is created and used only on this thread (Win32 windows belong to their thread)."""
+
+    def __init__(self, owner):
+        self.owner = owner
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._run, name="gaze-dot", daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        window = LayeredDot.open()
+        if window is None:
+            self.owner._unavailable = True
+            log_once("Eye dot skipped: no Win32 layered window. The tracker still runs.")
+            return
+        shown, drawn, hidden = None, None, True
+        last = time.monotonic()
+        period = 1.0 / FRAME_HZ
+        try:
+            while not self.stop.is_set():
+                now = time.monotonic()
+                dt, last = now - last, now
+                with self.owner._lock:
+                    target = self.owner._target
+                    cut = self.owner._cut
+                    self.owner._cut = False
+                shown = None if cut else ease(shown, target, dt)
+                if shown is None:
+                    if not hidden:
+                        window.draw(None)
+                        hidden, drawn = True, None
+                elif drawn is None or _moved(drawn, shown):
+                    window.draw(shown)
+                    hidden, drawn = False, dict(shown)
+                self.stop.wait(max(0.0, period - (time.monotonic() - now)))
+        except Exception:
+            log.debug("gaze dot animation failed", exc_info=True)
+            self.owner._unavailable = True
+            log_once("Eye dot skipped after a window error. The tracker still runs.")
+        finally:
+            window.close()
+
+
+def _moved(a: dict, b: dict) -> bool:
+    """Worth redrawing: a visible change in place, size or fade."""
+    return (abs(a["x"] - b["x"]) > 0.05 or abs(a["y"] - b["y"]) > 0.05
+            or abs(a["radius"] - b["radius"]) > 0.05 or abs(a["alpha"] - b["alpha"]) > 0.004)
+
 
 class LayeredDot:
     """The real window. open() returns None when Win32 cannot make one."""
@@ -334,13 +464,14 @@ class LayeredDot:
         if spec is None:
             user32.ShowWindow(self.hwnd, 0)  # SW_HIDE
             return
-        d, pixels = _ring(spec["radius"], spec["alpha"])
+        ix, iy = math.floor(spec["x"]), math.floor(spec["y"])
+        d, pixels = _ring(spec["radius"], spec["alpha"], spec["x"] - ix, spec["y"] - iy, size=CANVAS)
         self._ensure_bitmap(d)
         if not self._bits:
             return
         ctypes.memmove(self._bits, pixels, len(pixels))
-        x = int(round(spec["x"] - d / 2.0))
-        y = int(round(spec["y"] - d / 2.0))
+        x = int(ix) - (d - 1) // 2
+        y = int(iy) - (d - 1) // 2
 
         class POINT(ctypes.Structure):
             _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
