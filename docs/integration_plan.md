@@ -140,6 +140,31 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 21:26 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `8676b99`
+
+**Added:** a benchmark of the open-source MobileGaze model against our eye tracker. Nothing changes in
+live behavior. 449 tests pass.
+- **`ally/gaze_cnn.py`:** runs MobileGaze ONNX models (github.com/yakhyo/gaze-estimation, MIT) on
+  MediaPipe's face box, in memory only, on the installed onnxruntime with no PyTorch.
+- **Recording:** `python -m ally.gaze_record ... --cnn mobileone_s0,resnet18` stores each model's
+  yaw and pitch per frame. Pictures are never saved.
+- **Scoring:** `python -m ally.gaze_cnn evaluate state/gaze_runs` compares three approaches on the
+  same session: MobileGaze plus head geometry, a hybrid of our features plus MobileGaze's angles,
+  and our v4.
+- **Model files:** `python scripts/get_gaze_models.py` downloads them into `state/models` (4.8 MB and
+  45 MB). Measured here at 22 and 58 ms per frame.
+- **Research summary** (a Claude helper, sources in its report):
+  - Published webcam trackers reach 2–4°, and ours is about 2° per target, so the main problem was
+    frame noise. That's fixed by the smoother in the next entry down.
+  - MobileGaze was the only candidate with a permissive license, downloadable ONNX weights and CPU
+    speed. Its published accuracy is only on the wide-angle Gaze360 dataset (11–13°), so it has to be
+    measured on a laptop.
+  - Rejected for licenses or PyTorch-only weights: UniGaze, OpenFace, EyeGestures, L2CS-Net,
+    ETH-XGaze.
+
+**Next:** the user records one benchmark session; the result decides between keeping our model,
+the hybrid, or switching to MobileGaze.
+
 ### Oct 24, 21:05 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `01d34a0`
 
 **Changed:** live gaze points are now steady.
