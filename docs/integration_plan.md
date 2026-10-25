@@ -140,6 +140,21 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 23:58 PT — Ben H (via Claude Code) — branch `benh/os-layer`, integration (merge `17f57df`)
+
+**Integrated every branch into `benh/os-layer` and pushed. `main` not updated yet.**
+- Merged: `benh/voice` (4 commits), `hayden/eye-tracker` (46 new), `risk-branch` (27). Already in before:
+  `hayden/bus-fixes`, `benjamin-w/voice(-integration)`, `ganesh/risk-handoff`, `integration`, `main`.
+- Conflicts resolved: `ally/platforms/base.py` + `windows.py` (Hayden's eye-pan changes kept next to the
+  reading-card/text-box/DPI code), `rules.py` help text, `agent.py` shutdown, change log (every entry kept).
+- **Wired:** `BusVoice` is now the Coordinator's voice (offers asked and answered out loud, "say undo" after a
+  fix). Ganesh's overlay loads as the Coordinator's UI; `RiskWire` attaches on start.
+- **Tests (Windows VM):** all 43 modules pass, incl. both browser suites and every risk/overlay/voice/gaze suite.
+  Ally starts with overlay, risk, voice and gaze on; config valid.
+- **Hayden:** recalibrate the eye tracker once (old calibrations are v1).
+- Decisions still open (Ben H): how many Yes/No surfaces per offer (overlay bubble + gaze cards + voice), offer
+  timeout 8 s vs ~20 s, one confidence gate vs two, when to merge into `main`.
+
 ### Oct 24, 23:45 PT — Ben H (via Claude Code) — branch `benh/os-layer`, open issues (docs only)
 
 **Pushed `benh/os-layer` to origin. Not merged to `main`.** Open issues to fix next (measured in the Windows VM):
