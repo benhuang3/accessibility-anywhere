@@ -1,160 +1,328 @@
 """Webcam gaze math: face landmarks -> eye features -> screen point. Pure numpy, no camera.
 
-Features per video frame: where each iris sits between its eye corners, MediaPipe's
-eye-direction scores (eyeLookIn/Out/Up/Down), and head pose (turn, tilt, position).
-Calibration fits a small ridge regression from those features to screen pixels, using the
-frames recorded while the user looked at known dots. The fit is checked by leaving out one
-dot at a time, which gives an honest accuracy estimate in pixels.
+Features combine iris position, eye-direction scores, and head pose. Calibration fits ridge
+regression from those features to screen pixels and checks accuracy by holding out each dot.
 """
-
 from __future__ import annotations
-
 import json
 import math
 import time
+from collections import deque
 from pathlib import Path
-
 import numpy as np
 
 # MediaPipe Face Landmarker (478 points): corners, lids and iris centers of each eye.
-RIGHT_EYE = {"outer": 33, "inner": 133, "top": 159, "bottom": 145, "iris": 468}
-LEFT_EYE = {"outer": 263, "inner": 362, "top": 386, "bottom": 374, "iris": 473}
-FEATURES = ["h", "v", "look_h", "look_v", "yaw", "pitch", "tx", "ty", "tz"]
+RIGHT_EYE = {'outer': 33, 'inner': 133, 'top': 159, 'bottom': 145, 'iris': 468}
+LEFT_EYE = {'outer': 263, 'inner': 362, 'top': 386, 'bottom': 374, 'iris': 473}
+FEATURES = ['h', 'v', 'look_h', 'look_v', 'yaw', 'pitch', 'tx', 'ty', 'tz']
+FEATURES_V2 = ['right_h', 'right_v', 'left_h', 'left_v', 'left_lid', 'right_lid', 'up_left', 'down_left', 'up_right', 'down_right', 'yaw', 'pitch', 'roll', 'tx', 'ty', 'tz']
 MODEL_VERSION = 1
-
+DEFAULT_FEATURE_SET = 'v1'
 
 def _eye(pts: np.ndarray, idx: dict) -> tuple[float, float, float]:
-    """Iris position across (h) and up/down (v) the eye, in eye widths, and how open the eye is."""
-    inner, outer = pts[idx["inner"], :2], pts[idx["outer"], :2]
+    """Return iris offsets across/up the eye and its openness, all in eye widths."""
+    inner, outer = (pts[idx['inner'], :2], pts[idx['outer'], :2])
     axis = outer - inner
-    width = float(np.hypot(*axis)) or 1e-6
+    width = float(np.hypot(*axis)) or 1e-06
     ux = axis / width
     uy = np.array([-ux[1], ux[0]])
-    if uy[1] < 0:  # "down" in the image for both eyes (their corner axes point opposite ways)
-        uy = -uy
-    rel = pts[idx["iris"], :2] - (inner + outer) / 2
-    openness = float(np.hypot(*(pts[idx["top"], :2] - pts[idx["bottom"], :2]))) / width
-    return float(rel @ ux) / width, float(rel @ uy) / width, openness
+    if uy[1] < 0:
+        uy = -uy  # Both eyes use image-down as the positive vertical direction.
+    rel = pts[idx['iris'], :2] - (inner + outer) / 2
+    return (float(rel @ ux) / width, float(rel @ uy) / width, float(np.hypot(*pts[idx['top'], :2] - pts[idx['bottom'], :2])) / width)
 
-
-def features(landmarks, blendshapes: dict | None, matrix, width: int, height: int) -> tuple[list[float], float] | None:
-    """One frame -> (feature vector, eye openness). landmarks: 478 (x, y, z) normalized to the image."""
+def _frame_parts(landmarks, blendshapes, matrix, width, height):
+    """Extract both feature versions, openness, and the six head-pose values."""
     pts = np.asarray(landmarks, dtype=float)
     if pts.shape[0] < 478:
         return None
-    pts = pts * np.array([width, height, width])  # pixels, so x and y use the same units
+    pts = pts * np.array([width, height, width])
     rh, rv, ro = _eye(pts, RIGHT_EYE)
     lh, lv, lo = _eye(pts, LEFT_EYE)
-    # The two eyes' corner axes point opposite ways (outward); flip one so "h" means the same direction.
-    h, v = (lh - rh) / 2, (lv + rv) / 2
     b = blendshapes or {}
-    look_h = (b.get("eyeLookInLeft", 0) + b.get("eyeLookOutRight", 0) - b.get("eyeLookOutLeft", 0)
-              - b.get("eyeLookInRight", 0)) / 2
-    look_v = (b.get("eyeLookUpLeft", 0) + b.get("eyeLookUpRight", 0) - b.get("eyeLookDownLeft", 0)
-              - b.get("eyeLookDownRight", 0)) / 2
     if matrix is not None:
         m = np.asarray(matrix, dtype=float).reshape(4, 4)
-        fwd = m[:3, :3] @ np.array([0.0, 0.0, 1.0])
-        yaw, pitch = math.atan2(fwd[0], fwd[2]), math.atan2(fwd[1], fwd[2])
-        tx, ty, tz = (float(x) for x in m[:3, 3])
-    else:  # rough head pose from the nose tip and the face's place in the image
-        yaw, pitch = float(pts[1, 0] / width - 0.5), float(pts[1, 1] / height - 0.5)
-        tx, ty, tz = yaw, pitch, float(np.hypot(*(pts[263, :2] - pts[33, :2]))) / width
-    blink = max(b.get("eyeBlinkLeft", 0), b.get("eyeBlinkRight", 0))
-    openness = min(lo, ro) * (1.0 - blink)
-    return [h, v, look_h, look_v, yaw, pitch, tx, ty, tz], openness
+        rot = m[:3, :3]
+        fwd = rot @ np.array([0.0, 0.0, 1.0])
+        yaw = math.atan2(fwd[0], fwd[2])
+        pitch = math.atan2(fwd[1], fwd[2])
+        roll = math.atan2(rot[1, 0], rot[0, 0])
+        tx, ty, tz = map(float, m[:3, 3])
+    else:
+        yaw = float(pts[1, 0] / width - 0.5)
+        pitch = float(pts[1, 1] / height - 0.5)
+        roll = 0.0
+        tx, ty, tz = (yaw, pitch, float(np.hypot(*pts[263, :2] - pts[33, :2])) / width)
+    blink = max(b.get('eyeBlinkLeft', 0), b.get('eyeBlinkRight', 0))
+    openness = min(lo, ro) * (1 - blink)
+    v1 = [(lh - rh) / 2, (lv + rv) / 2, (b.get('eyeLookInLeft', 0) + b.get('eyeLookOutRight', 0) - b.get('eyeLookOutLeft', 0) - b.get('eyeLookInRight', 0)) / 2, (b.get('eyeLookUpLeft', 0) + b.get('eyeLookUpRight', 0) - b.get('eyeLookDownLeft', 0) - b.get('eyeLookDownRight', 0)) / 2, yaw, pitch, tx, ty, tz]
+    v2 = [rh, rv, lh, lv, lo, ro, b.get('eyeLookUpLeft', 0), b.get('eyeLookDownLeft', 0), b.get('eyeLookUpRight', 0), b.get('eyeLookDownRight', 0), yaw, pitch, roll, tx, ty, tz]
+    return (v1, v2, openness, (yaw, pitch, roll, tx, ty, tz))
 
+def features(landmarks, blendshapes: dict | None, matrix, width: int, height: int) -> tuple[list[float], float] | None:
+    """Return the v1 feature vector and eye openness for one normalized landmark frame."""
+    p = _frame_parts(landmarks, blendshapes, matrix, width, height)
+    return None if p is None else (p[0], p[2])
 
-def expand(f) -> np.ndarray:
-    """Feature vector -> regression inputs (adds the curved terms gaze needs near the screen edges)."""
+def features_for_model(model, landmarks, blendshapes, matrix, width, height):
+    """Return the selected model's feature vector and eye openness, or None for bad landmarks."""
+    p = _frame_parts(landmarks, blendshapes, matrix, width, height)
+    return None if p is None else (p[1] if model.get('features', 'v1') == 'v2' else p[0], p[2])
+
+def expand(f, feature_set='v1'):
+    """Expand raw features with the polynomial and interaction terms used by regression."""
     f = np.atleast_2d(np.asarray(f, dtype=float))
-    h, v, lh, lv = f[:, 0], f[:, 1], f[:, 2], f[:, 3]
-    return np.column_stack([f, h * h, v * v, h * v, lh * lh, lv * lv, lh * lv])
-
+    if feature_set == 'v1':
+        h, v, lh, lv = f[:, :4].T
+        return np.column_stack([f, h * h, v * v, h * v, lh * lh, lv * lv, lh * lv])
+    # V2 includes iris-by-head interactions to model pose-dependent gaze shifts.
+    h1, v1, h2, v2 = f[:, :4].T
+    head = f[:, 10:16]
+    return np.column_stack([f, h1 * head[:, 0], v1 * head[:, 1], h2 * head[:, 0], v2 * head[:, 1], h1 * v1, h2 * v2])
 
 def _ridge(x: np.ndarray, y: np.ndarray, lam: float) -> np.ndarray:
-    a = x.T @ x + lam * np.diag([0.0] + [1.0] * (x.shape[1] - 1))  # don't shrink the intercept
-    return np.linalg.solve(a, x.T @ y)
+    """Solve ridge regression without shrinking the intercept column."""
+    penalty = np.diag([0.0] + [1.0] * (x.shape[1] - 1))
+    return np.linalg.solve(x.T @ x + lam * penalty, x.T @ y)
 
-
-def fit(samples: list[tuple[list[float], tuple[float, float]]], screen: tuple[int, int]) -> dict:
-    """samples: (feature vector, target screen point). Needs frames from at least 6 different dots."""
+def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET):
+    """Fit a model from (feature vector, target point) samples across at least six dots."""
+    if feature_set not in ('v1', 'v2'):
+        raise ValueError('feature_set must be v1 or v2')
     targets = sorted({tuple(t) for _f, t in samples})
     if len(targets) < 6:
-        raise ValueError(f"saw your eyes at only {len(targets)} of the dots")
-    raw = expand([f for f, _t in samples])
-    y = np.array([t for _f, t in samples], dtype=float)
-    mean, std = raw.mean(axis=0), raw.std(axis=0)
-    std[std < 1e-9] = 1.0
+        raise ValueError(f'saw your eyes at only {len(targets)} of the dots')
+    raw = expand([f for f, _ in samples], feature_set)
+    y = np.array([t for _, t in samples], float)
+    mean, std = (raw.mean(0), raw.std(0))
+    std[std < 1e-09] = 1
     x = np.column_stack([np.ones(len(raw)), (raw - mean) / std])
-    groups = np.array([targets.index(tuple(t)) for _f, t in samples])
+    groups = np.array([targets.index(tuple(t)) for _, t in samples])
 
-    def held_out_error(lam: float) -> float:
-        errs = []
+    def err(lam):
+        es = []
         for g in range(len(targets)):
-            train, test = groups != g, groups == g
-            coef = _ridge(x[train], y[train], lam)
-            pred = np.median(x[test] @ coef, axis=0)  # the median frame per dot, like a short fixation
-            errs.append(float(np.hypot(*(pred - y[test][0]))))
-        return float(np.median(errs))
-
-    lam, err = min(((lam, held_out_error(lam)) for lam in (0.1, 1.0, 10.0, 100.0)), key=lambda p: p[1])
+            tr, te = (groups != g, groups == g)
+            pred = np.median(x[te] @ _ridge(x[tr], y[tr], lam), axis=0)
+            es.append(float(np.hypot(*pred - y[te][0])))
+        return float(np.median(es))
+    lam, e = min(((l, err(l)) for l in (0.1, 1.0, 10.0, 100.0)), key=lambda z: z[1])
     coef = _ridge(x, y, lam)
-    return {"version": MODEL_VERSION, "screen": list(screen), "mean": mean.tolist(), "std": std.tolist(),
-            "coef": coef.tolist(), "lambda": lam, "error_px": round(err), "dots": len(targets),
-            "created": time.time()}
-
+    pose_start = 10 if feature_set == 'v2' else 4
+    pose_size = 6 if feature_set == 'v2' else 5
+    poses = np.asarray([f[pose_start:pose_start + pose_size] for f, _ in samples], dtype=float)
+    calibration_pose = np.median(poses, axis=0).tolist()
+    return {'version': MODEL_VERSION, 'features': feature_set, 'screen': list(screen), 'mean': mean.tolist(), 'std': std.tolist(), 'coef': coef.tolist(), 'lambda': lam, 'error_px': round(e), 'dots': len(targets), 'training_samples': [[list(f), list(t)] for f, t in samples], 'calibration_pose': calibration_pose, 'created': time.time()}
 
 def predict(model: dict, f) -> tuple[float, float]:
-    raw = expand(f)
-    x = np.column_stack([np.ones(len(raw)), (raw - np.array(model["mean"])) / np.array(model["std"])])
-    p = (x @ np.array(model["coef"]))[0]
-    return float(p[0]), float(p[1])
+    """Predict the screen pixel position for one feature vector."""
+    raw = expand(f, model.get('features', 'v1'))
+    x = np.column_stack([np.ones(len(raw)), (raw - np.array(model['mean'])) / np.array(model['std'])])
+    p = (x @ np.array(model['coef']))[0]
+    return (float(p[0]), float(p[1]))
 
+def clean_samples(samples, min_openness=0.12, jump_threshold=0.08, preserve_openness=False):
+    """Drop blinks and fast gaze jumps; optionally retain openness in returned triples."""
+    out = []
+    prev = None
+    for item in samples:
+        f, t = item[:2]
+        op = item[2] if len(item) > 2 else 1.0
+        a = np.asarray(f, float)
+        jump = prev is not None and np.linalg.norm(a[:2] - prev[:2]) > jump_threshold
+        if op >= min_openness and (not jump):
+            out.append((f, t, op) if preserve_openness and len(item) > 2 else (f, t))
+        prev = a
+    return out
 
-def save(model: dict, path: Path) -> None:
+def validate(model, samples):
+    """Return median held-out pixel error, 3x3 region hits, and per-target predictions."""
+    grouped = {}
+    for f, t in samples:
+        grouped.setdefault(tuple(t), []).append(predict(model, f))
+    errs = []
+    hits = 0
+    details = []
+    for t, ps in grouped.items():
+        p = np.median(np.asarray(ps), axis=0)
+        e = float(np.hypot(*p - np.asarray(t)))
+        ok = region(*p, model['screen']) == region(*t, model['screen'])
+        errs.append(e)
+        hits += ok
+        details.append({'target': list(t), 'prediction': p.tolist(), 'error_px': e, 'region_hit': bool(ok)})
+    return {'error_px': float(np.median(errs)) if errs else None, 'region_hits': hits, 'region_total': len(grouped), 'per_target': details}
+
+def region(x, y, screen):
+    """Map a screen coordinate to one of the nine named screen regions."""
+    w, h = screen
+    col = min(2, max(0, int(3 * x / w)))
+    row = min(2, max(0, int(3 * y / h)))
+    return [['top left', 'top', 'top right'], ['left', 'middle', 'right'], ['bottom left', 'bottom', 'bottom right']][row][col]
+
+def fixation(points, t0, t1, radius_px):
+    """Return the longest fixation in a time range as a point, span, count, and dispersion."""
+    pts = sorted(((float(t), float(x), float(y)) for t, x, y in points if t0 <= t <= t1))
+    best = None
+    start = 0
+    min_x, min_y, max_x, max_y = (deque(), deque(), deque(), deque())
+    for end, point in enumerate(pts):
+        for queue, value, sign, axis in ((min_x, point[1], 1, 1), (max_x, point[1], -1, 1), (min_y, point[2], 1, 2), (max_y, point[2], -1, 2)):
+            while queue and sign * pts[queue[-1]][axis] >= sign * value:
+                queue.pop()
+            queue.append(end)
+        while start < end:
+            dx = pts[max_x[0]][1] - pts[min_x[0]][1]
+            dy = pts[max_y[0]][2] - pts[min_y[0]][2]
+            if dx + dy <= radius_px:
+                break
+            if min_x[0] == start:
+                min_x.popleft()
+            if max_x[0] == start:
+                max_x.popleft()
+            if min_y[0] == start:
+                min_y.popleft()
+            if max_y[0] == start:
+                max_y.popleft()
+            start += 1
+        duration = point[0] - pts[start][0]
+        if duration >= 0.2 and (best is None or duration > best['duration']):
+            best = {'start_index': start, 'end_index': end, 'duration': duration}
+    if best is None:
+        return None
+    window = np.asarray([(p[1], p[2]) for p in pts[best['start_index']:best['end_index'] + 1]])
+    center = window.mean(axis=0)
+    spread = float(np.max(np.linalg.norm(window - center, axis=1)))
+    return {'x': float(np.median(window[:, 0])), 'y': float(np.median(window[:, 1])), 'start': pts[best['start_index']][0], 'end': pts[best['end_index']][0], 'samples': len(window), 'spread_px': spread}
+
+class Corrector:
+    """Refine a gaze model with accepted mouse-click targets."""
+
+    def __init__(self, model):
+        self.base = model
+        self.model = model
+        self.samples = []
+        self.affine = None
+
+    def add(self, features, target, t):
+        """Accept an on-target click and return whether it was stored."""
+        pred = self.predict(features)
+        if np.hypot(pred[0] - target[0], pred[1] - target[1]) >= 300:
+            return False
+        self.samples.append((features, tuple(target), float(t)))
+        self.samples = self.samples[-50:]
+        if len(self.samples) >= 8:
+            self._refine()
+        return True
+
+    def _refine(self):
+        """Fit refit and affine candidates on early clicks; select by later clicks."""
+        split = max(6, int(len(self.samples) * 0.8))
+        training = self.samples[:split]
+        held_out = self.samples[split:]
+        if len(held_out) < 2:
+            return
+        base_predictions = np.asarray([predict(self.base, f) for f, _, _ in held_out])
+        held_targets = np.asarray([target for _, target, _ in held_out])
+        best_error = float(np.median(np.linalg.norm(base_predictions - held_targets, axis=1)))
+        best_model = self.base
+        best_affine = None
+        calibration = [(f, tuple(point)) for f, point in self.base.get('training_samples', [])]
+        combined = calibration + [(f, target) for f, target, _ in training]
+        try:
+            candidate = fit(combined, self.base['screen'], self.base.get('features', 'v1'))
+            predictions = np.asarray([predict(candidate, f) for f, _, _ in held_out])
+            error = float(np.median(np.linalg.norm(predictions - held_targets, axis=1)))
+            if error < best_error:
+                best_error, best_model = error, candidate
+        except (ValueError, np.linalg.LinAlgError):
+            pass
+        train_predictions = np.asarray([predict(self.base, f) for f, _, _ in training])
+        train_targets = np.asarray([target for _, target, _ in training])
+        design = np.column_stack([train_predictions, np.ones(len(train_predictions))])
+        residual = train_targets - train_predictions
+        penalty = np.diag([1.0, 1.0, 0.01])
+        correction = np.linalg.solve(design.T @ design + penalty, design.T @ residual)
+        affine = np.vstack([np.eye(2) + correction[:2], correction[2]])
+        affine_predictions = np.column_stack([base_predictions, np.ones(len(base_predictions))]) @ affine
+        affine_error = float(np.median(np.linalg.norm(affine_predictions - held_targets, axis=1)))
+        if affine_error < best_error:
+            best_model, best_affine = self.base, affine
+        self.model = best_model
+        self.affine = best_affine
+
+    def predict(self, features):
+        """Return the current corrected screen prediction."""
+        if self.affine is not None:
+            raw = np.array(predict(self.base, features))
+            p = np.r_[raw, 1.0] @ self.affine
+        else:
+            p = np.array(predict(self.model, features))
+        return tuple(map(float, p))
+
+    def info(self):
+        """Return the accepted click count and current estimated error."""
+        return {'samples_used': len(self.samples), 'error_px': self.model.get('error_px')}
+
+def radius_px(model, features=None):
+    """Return validated error expanded by head-pose movement from calibration."""
+    base = float(model.get('error_px') or 200)
+    if features is None:
+        return base
+    f = np.asarray(features, float)
+    ix = 10 if model.get('features') == 'v2' else 4
+    calibration = np.asarray(model.get('calibration_pose', []), dtype=float)
+    pose_size = 6 if model.get('features') == 'v2' else 5
+    if len(f) < ix + pose_size or calibration.shape != (pose_size,):
+        return base
+    # v1's pose is yaw, pitch, tx, ty, tz (no roll); v2's is yaw, pitch, roll, tx, ty, tz.
+    angles = 3 if model.get('features') == 'v2' else 2
+    rotation_delta = float(np.linalg.norm(f[ix:ix + angles] - calibration[:angles]))
+    rotation_delta = math.degrees(rotation_delta)
+    distance = max(abs(float(calibration[-1])), 1e-06)
+    translation_delta = float(np.linalg.norm(f[ix + angles:ix + pose_size] - calibration[angles:])) / distance
+    movement = max(rotation_delta / 10.0, translation_delta / 0.15)
+    return base * (1 + min(2.0, movement))
+
+def save(model, path):
+    """Write a model as JSON, replacing the destination atomically."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(model), encoding="utf-8")
+    tmp = path.with_suffix('.tmp')
+    tmp.write_text(json.dumps(model), encoding='utf-8')
     tmp.replace(path)
 
-
-def load(path: Path, screen: tuple[int, int] | None = None) -> dict | None:
-    """The saved calibration, or None if missing, broken, old, or made for a different screen size."""
+def load(path, screen=None):
+    """Return a compatible saved calibration, or None when it cannot be used."""
     try:
-        model = json.loads(path.read_text(encoding="utf-8"))
+        model = json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return None
-    if not isinstance(model, dict) or model.get("version") != MODEL_VERSION:
+    if not isinstance(model, dict) or model.get('version') != MODEL_VERSION:
         return None
-    if screen is not None and list(model.get("screen") or []) != list(screen):
+    if screen is not None and list(model.get('screen') or []) != list(screen):
         return None
     return model
 
-
 class OneEuro:
-    """One Euro filter: steady when the eyes rest on something, quick when they jump."""
+    """One Euro filter: steady at rest and responsive to rapid gaze changes."""
 
-    def __init__(self, min_cutoff: float = 0.8, beta: float = 0.004, d_cutoff: float = 1.0):
-        self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
-        self.x = self.dx = None
-        self.t = None
+    def __init__(self, min_cutoff=0.8, beta=0.004, d_cutoff=1.0):
+        self.min_cutoff, self.beta, self.d_cutoff = (min_cutoff, beta, d_cutoff)
+        self.x = self.dx = self.t = None
 
     @staticmethod
-    def _alpha(cutoff: float, dt: float) -> float:
-        tau = 1.0 / (2 * math.pi * cutoff)
-        return 1.0 / (1.0 + tau / dt)
+    def _alpha(cutoff, dt):
+        return 1 / (1 + 1 / (2 * math.pi * cutoff) / dt)
 
-    def __call__(self, x: np.ndarray, t: float) -> np.ndarray:
-        x = np.asarray(x, dtype=float)
-        if self.x is None or self.t is None or t - self.t > 1.0:  # first frame, or after a gap
-            self.x, self.dx, self.t = x, np.zeros_like(x), t
+    def __call__(self, x, t):
+        x = np.asarray(x, float)
+        if self.x is None or self.t is None or t - self.t > 1:
+            self.x, self.dx, self.t = (x, np.zeros_like(x), t)
             return x
-        dt = max(1e-3, t - self.t)
+        dt = max(0.001, t - self.t)
         dx = (x - self.x) / dt
-        a_d = self._alpha(self.d_cutoff, dt)
-        self.dx = a_d * dx + (1 - a_d) * self.dx
-        cutoff = self.min_cutoff + self.beta * float(np.hypot(*self.dx[:2]))
-        a = self._alpha(cutoff, dt)
-        self.x, self.t = a * x + (1 - a) * self.x, t
+        a = self._alpha(self.d_cutoff, dt)
+        self.dx = a * dx + (1 - a) * self.dx
+        a = self._alpha(self.min_cutoff + self.beta * float(np.hypot(*self.dx[:2])), dt)
+        self.x, self.t = (a * x + (1 - a) * self.x, t)
         return self.x
