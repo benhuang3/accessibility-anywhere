@@ -140,6 +140,37 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 24, 22:15 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commits `141222f`, `878a894`
+
+**Changed:** the eye-following magnifier is now a reading aid, and the live eye tracker runs the v5
+hybrid model. 462 tests pass.
+- **Reading aid (`141222f`):**
+  - In `ally/platforms/base.py`, the new `ReadingPan` notices when the eyes move forward along one
+    line in small steps. It then pans right at the reader's pace, keeping the words being read a
+    little left of the middle.
+  - At the end of a line, a jump back to the left returns the view to where the line began, eased
+    over 0.8 s.
+  - Looking around without reading leaves the view still, and edges pan as before.
+  - The Windows magnifier loop (`platforms/windows.py`) uses it and steps at 60 Hz while following
+    the eyes.
+  - "Help me read this" now starts `magnify_where_i_look` (`ally/rules.py`).
+  - Tested with a simulated reader at 1.5x to 3x, including tracker bias, jitter and the real smoother.
+- **v5 (`878a894`, merge of Cursor's branch):**
+  - `[gaze] features` defaults to `v5`: v4 plus MobileGaze `mobileone_s0` angles, run in the camera
+    helper in memory.
+  - It falls back to v4, with a sentence in the calibration result, when
+    `state/models/mobileone_s0_gaze.onnx` or onnxruntime is missing. `doctor` names both fixes, and
+    onnxruntime is in `requirements-optional.txt`.
+  - **Bug fixed along the way:** the camera helper accepted only v1 and v2, so since v4 became the
+    default, live calibrations were silently fitted as v1.
+  - On the benchmark session, v5 has a median error of 73 px after calibration (v4: 76) and 143 px
+    after moving (v4: 169).
+
+**Others:**
+- **Ben H:** a gaze calibration saved before this push is v1. Recalibrate once to get v5.
+- **Ganesh:** `README.md` and `ally/default_config.toml` also changed on `risk-branch`; a dry-run
+  merge is clean.
+
 ### Oct 24, 21:26 PT — Hayden (via Claude Code) — branch `hayden/eye-tracker`, commit `8676b99`
 
 **Added:** a benchmark of the open-source MobileGaze model against our eye tracker. Nothing changes in
