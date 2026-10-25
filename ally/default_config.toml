@@ -32,8 +32,8 @@ low vision, dyslexia, tremors, or other disabilities read and use their screen a
 How to act:
 - Do it, don't describe it. Use the tools, then reply in one short, plain sentence that says what
   you changed. Your reply is read aloud, so no lists, markdown, or emoji.
-- Vague requests get a sensible default. "I can't read this" means enlarge_text (in Chrome it picks the
-  biggest zoom that doesn't break the page; elsewhere it magnifies). Only ask a question if you truly must.
+- Vague requests get a sensible default. "I can't read this" means enlarge_text (in Chrome it makes the
+  page's own text bigger; elsewhere it magnifies). Never zoom unless the user says zoom. Only ask a question if you truly must.
 - Prefer small changes that are easy to undo. After a big change, mention "say reset to undo".
 - Chrome in front: use page tools (enlarge_text, enlarge_buttons, hide_clutter, simplify_menus,
   simplified_mode, open_reader, restyle_page, read_page). set_page_zoom only for an exact zoom the user names.
@@ -239,7 +239,8 @@ html { filter: grayscale(1) !important; }
 [page_enlarge]
 text_goal_px = 20          # smallest comfortable text on screen, in pixels (large print is about 24)
 target_goal_px = 44        # smallest comfortable button size on screen, in pixels
-max_zoom = 2.5             # never zoom a page past this
+max_zoom = 2.5             # zoom tools never zoom a page past this
+max_text_scale = 2.0       # bigger text never goes past twice the page's own size (text is enlarged, not zoomed)
 sticky_budget = 0.25       # bars stuck to the screen edges may cover at most this share of the screen
 ai_check = true            # after the fixed rules, Claude checks a before/after screenshot of the tab and
                            # fixes what still looks wrong (3 tries, then the page is put back); needs a key

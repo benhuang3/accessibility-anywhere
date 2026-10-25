@@ -7,14 +7,15 @@ together. "Simplified mode" is the four changing steps run as one, chosen by pag
 |---|---|---|---|
 | Hide clutter | `clutter` | `hide_clutter(kinds, on)` | hides cookie banners, promo pop-ups, chat bubbles, ads, share bars, animation |
 | Simplify menus | `menus` | `simplify_menus(on)` | Ally menu panel/strip with the site's links, big dropdown chooser, hover-menu grace delay |
-| Enlarge text | `text` | `enlarge_text(goal="bigger")` | the biggest Chrome zoom that doesn't break the page, plus a safe "fit" CSS layer |
+| Enlarge text | `text` | `enlarge_text(goal="bigger" or "smaller")` | the page's own font sizes, bigger (`ally_text` layer, one rule per original size), plus a safe "fit" layer; **never zooms** (only "zoom in" zooms) |
 | Enlarge buttons | `buttons` | `enlarge_buttons(on)` | bigger buttons, links and form fields (CSS layer); never changes zoom |
 | Verify | `verify` | `check_page_layout()` | read-only: did anything get worse than the page before Ally? |
 
 ## The contract (every step follows it)
 
 1. **Own pieces only.** A step owns its CSS layer names (`ally_<step>` or `ally_<step>_<part>`), its
-   attribute marks (`data-ally-<step>="<kind>"`) and its overlay hosts (ids in `AllyPage.HOSTS`). It never
+   attribute marks (`data-ally-<step>="<kind>"` and `data-ally-<step>-<part>`) and its overlay hosts (ids in
+   `AllyPage.HOSTS`). It never
    touches another step's pieces or a style the user saved.
 2. **On adds, off removes only its own pieces.** Running a step twice gives the same state as once
    (`enlarge_text("bigger")` stepping zoom up is the one documented exception).

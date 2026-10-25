@@ -19,7 +19,7 @@ except ImportError:
 from .harness import EXTENSION, AllyBrowser, FixtureServer
 
 ORDER = ["clutter", "menus", "text", "buttons"]
-OPTS = {"clutter": {}, "menus": {}, "text": {"zoom": 1.25}, "buttons": {}}
+OPTS = {"clutter": {}, "menus": {}, "text": {"scale": 1.25}, "buttons": {}}
 # Pieces each step owns (docs/page_steps.md, "Own pieces only").
 OWN_LAYERS = {"clutter": ("ally_clutter", "ally_motion"), "menus": ("ally_menus",), "text": ("ally_fit", "ally_text"),
               "buttons": ("ally_buttons",)}
@@ -79,7 +79,9 @@ def without(state: dict, step: str) -> dict:
     """The state minus one step's own pieces."""
     return {
         "layers": [n for n in state["layers"] if not owns_layer(step, n)],
-        "marks": {k: v for k, v in state["marks"].items() if k != f"data-ally-{step}"},
+        # data-ally-<step> and data-ally-<step>-... (e.g. data-ally-clutter-unlock) belong to that step
+        "marks": {k: v for k, v in state["marks"].items()
+                  if k != f"data-ally-{step}" and not k.startswith(f"data-ally-{step}-")},
         "hosts": [h for h in state["hosts"] if not owns_host(step, h)],
     }
 
@@ -246,16 +248,27 @@ class StepAloneTests(PageCase):
         self.assertAlmostEqual(out["original"], 1.1, places=3)
         self.assertAlmostEqual(ally.zoom(page), 1.1, places=3, msg="audit didn't restore the zoom")
 
-    def test_text_sets_zoom_and_fit(self):
+    def test_text_makes_fonts_bigger_without_zoom(self):
         self.need("text")
         page = fresh()
-        r = ally.action("stepOn", {"step": "text", "opts": {"zoom": 1.5}})
-        self.assertAlmostEqual(ally.zoom(page), 1.5, places=3)
-        self.assertAlmostEqual(r["zoom"], 1.5, places=3)
-        self.assertIn("ally_fit", ally.styles(page))
+        size = "() => parseFloat(getComputedStyle(document.querySelector('main p, p')).fontSize)"
+        h1 = "() => parseFloat(getComputedStyle(document.querySelector('h1')).fontSize)"
+        before, h1_before = page.evaluate(size), page.evaluate(h1)
+        zoom = ally.zoom(page)
+        r = ally.action("stepOn", {"step": "text", "opts": {"scale": 1.5}})
+        self.assertAlmostEqual(r["scale"], 1.5, places=3)
+        self.assertAlmostEqual(ally.zoom(page), zoom, places=3)  # never zooms
+        self.assertAlmostEqual(page.evaluate(size), round(before * 1.5), delta=1)
+        self.assertGreater(page.evaluate(h1), page.evaluate(size))  # headings stay bigger than body text
+        self.assertGreater(page.evaluate(h1), h1_before)
+        self.assertIn("ally_text", ally.styles(page))
+        again = ally.action("stepOn", {"step": "text", "opts": {"scale": 1.25}})  # re-apply starts from the page's sizes
+        self.assertAlmostEqual(page.evaluate(size), round(before * 1.25), delta=1)
+        self.assertEqual(again["scale"], 1.25)
         ally.screenshot(page, "text_on")
         ally.action("stepOff", {"step": "text", "opts": {}})
-        self.assertNotIn("ally_fit", ally.styles(page))
+        self.assertNotIn("ally_text", ally.styles(page))
+        self.assertAlmostEqual(page.evaluate(size), before, delta=0.5)
 
     def test_buttons_adds_layer_without_zoom(self):
         self.need("buttons")

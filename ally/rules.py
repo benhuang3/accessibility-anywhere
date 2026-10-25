@@ -104,19 +104,23 @@ RULES = [
     Rule("check_layout", [("check_page_layout", {})],
          full=r"check (the )?(page|layout|page layout)|does (this|the) page look (right|ok|okay)|is (anything|something) cut off",
          loose=r"\b(check (the )?(page )?layout|is (anything|something) cut off)\b"),
+    # Only an explicit "zoom" zooms; "bigger", "too small" and the like make the text itself bigger.
     Rule("zoom_in", [("zoom_in", {})],
-         full=r"(zoom in|zoom|bigger|larger|enlarge|increase|make (it|this|that|the text|text|things|everything) "
-              r"(bigger|larger)|bigger please|i can't (see|read)( (this|that|it))?|too small|it's too small)",
-         loose=r"\b(bigger|larger|zoom in|enlarge|too (small|tiny)|tiny|can't (see|read)|hard to (see|read))\b"),
+         full=r"zoom( in)?( please)?|zoom in (more|again)",
+         loose=r"\bzoom in\b"),
     Rule("zoom_out", [("zoom_out", {})],
-         full=r"(zoom out|smaller|shrink|make (it|this|that|the text|text|things|everything) smaller|too big|"
-              r"it's too big)",
-         loose=r"\b(smaller|zoom out|too big|shrink)\b"),
-    Rule("enlarge_this", [("enlarge_text", {"goal": "bigger"})],
-         full=r"(enlarge|blow up) (this|this text|the text)( here| please)?|"
-              r"make (this text|the words?) (bigger|larger)|"
-              r"make (this|the text) (bigger|larger) (here|in front( of me)?)",
-         loose=r"\b(enlarge this|make (this|the text) bigger here)\b"),
+         full=r"zoom out( please)?|zoom out (more|again)",
+         loose=r"\bzoom out\b"),
+    Rule("text_bigger", [("enlarge_text", {"goal": "bigger"})],
+         full=r"(bigger|larger|enlarge|increase|make (it|this|that|the text|text|things|everything|the words?|this text) "
+              r"(bigger|larger)( here| please| in front( of me)?)?|bigger please|i can't (see|read)( (this|that|it))?|"
+              r"too small|it's too small|(enlarge|blow up) (this|this text|the text)( here| please)?|"
+              r"(bigger|larger) (text|font|letters|writing))",
+         loose=r"\b(bigger|larger|enlarge|too (small|tiny)|tiny|can't (see|read)|hard to (see|read))\b"),
+    Rule("text_smaller", [("enlarge_text", {"goal": "smaller"})],
+         full=r"(smaller|shrink|make (it|this|that|the text|text|things|everything) smaller|too big|it's too big|"
+              r"smaller (text|font))",
+         loose=r"\b(smaller|too big|shrink)\b"),
     Rule("read_selection", [("read_selection", {})],
          full=r"read (the |my )?(selection|selected( text)?|highlighted( text)?|this text)( to me| aloud| out loud)?",
          loose=r"\bread\b.*\b(selection|selected|highlighted)\b"),

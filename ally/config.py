@@ -66,7 +66,8 @@ SPEC = {
                   "camera_index": int, "context_poll_seconds": NUM},
     "profile": {"page_zoom": NUM, "min_font_px": int, "page_styles": list, "screen_magnify": NUM,
                 "color_filter": ("none", "invert", "grayscale", "high_contrast")},
-    "page_enlarge": {"text_goal_px": NUM, "target_goal_px": NUM, "max_zoom": NUM, "sticky_budget": NUM,
+    "page_enlarge": {"text_goal_px": NUM, "target_goal_px": NUM, "max_zoom": NUM, "max_text_scale": NUM,
+                     "sticky_budget": NUM,
                      "ai_check": bool, "ai_background": bool},
     "tools": {"disabled": list, "timeout_seconds": NUM},
     "plugins": {"folder": str},
@@ -94,6 +95,7 @@ RANGES = {
     ("proactive", "context_poll_seconds"): (0.5, 30),
     ("page_enlarge", "text_goal_px"): (12, 48), ("page_enlarge", "target_goal_px"): (24, 96),
     ("page_enlarge", "max_zoom"): (1, 5), ("page_enlarge", "sticky_budget"): (0, 1),
+    ("page_enlarge", "max_text_scale"): (1, 3),
 }
 
 

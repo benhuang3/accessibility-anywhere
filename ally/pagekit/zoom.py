@@ -145,3 +145,30 @@ def next_step(current: float, max_zoom: float) -> float:
         if z > current + 0.01:
             return min(z, max_zoom) if z <= max_zoom + 1e-6 else current
     return current
+
+
+TEXT_SCALES = (1.15, 1.25, 1.5, 1.75, 2.0, 2.5)
+
+
+def predict_scale(metrics: dict, current: float, goal_px: float, max_scale: float) -> dict:
+    """The smallest text scale (bigger fonts, not zoom) at which the page's text reaches the goal, from one
+    measurement of its own sizes. Returns {scale, met}; a scale of 1.0 means the text is already big enough."""
+    sizes = metrics.get("textSizes") or ([[metrics["textPx"], 1.0]] if metrics.get("textPx") else [])
+    if not sizes or share_below(sizes, goal_px, 1.0) <= SMALL_TEXT_SHARE:
+        return {"scale": max(current, 1.0), "met": True}
+    for s in TEXT_SCALES:
+        if s <= current + 0.01 or s > max_scale + 1e-6:
+            continue
+        if share_below(sizes, goal_px, s) <= SMALL_TEXT_SHARE:
+            return {"scale": s, "met": True}
+    top = max([s for s in TEXT_SCALES if s <= max_scale + 1e-6] or [current])
+    return {"scale": max(top, current), "met": False}
+
+
+def next_scale(current: float, max_scale: float, up: bool = True) -> float:
+    """One text-scale step up (or down; 1.0 = the page's own size)."""
+    if up:
+        bigger = [s for s in TEXT_SCALES if s > current + 0.01 and s <= max_scale + 1e-6]
+        return bigger[0] if bigger else current
+    smaller = [s for s in TEXT_SCALES if s < current - 0.01]
+    return smaller[-1] if smaller else 1.0

@@ -107,16 +107,15 @@ def make_registry():
 
 
 class EnlargeTextTests(unittest.TestCase):
-    def test_chrome_bigger_falls_back_to_one_zoom_step_on_an_older_extension(self):
+    def test_chrome_bigger_never_zooms_even_on_an_older_extension(self):
         # FakeBrowser doesn't know pageInfo (returns None), like an extension without the page steps.
         r = make_registry()
         browser = FakeBrowser(connected=True, focused=True)
         ctx = FakeCtx(browser, FakePlatform())
         out = r.call("enlarge_text", {"goal": "bigger"}, ctx=ctx)
-        self.assertTrue(out.ok, out.error)
-        self.assertEqual(out.value["tier"], "chrome-zoom")
-        self.assertEqual(browser.calls, [("pageInfo", {}), ("zoomStep", {"direction": "in"})])
-        self.assertEqual(ctx.state.get("ui_text_edits"), [{"tier": "chrome-zoom"}])
+        self.assertFalse(out.ok)
+        self.assertIn("extension", out.error)
+        self.assertEqual(browser.calls, [("pageInfo", {})])  # no zoomStep
 
     def test_chrome_rewrite_sets_tab_title(self):
         r = make_registry()
@@ -254,11 +253,17 @@ class RuleTests(unittest.TestCase):
             self.assertIsNotNone(m, phrase)
             self.assertEqual(m.actions, [("enlarge_text", {"goal": "bigger"})], phrase)
 
-    def test_zoom_in_phrases_are_not_clobbered(self):
-        for phrase in ("bigger", "zoom in", "enlarge", "make this bigger", "make the text bigger"):
+    def test_only_zoom_phrases_zoom(self):
+        for phrase in ("zoom in", "zoom", "zoom in more"):
+            self.assertEqual(rules.match(phrase, strict=True).rule, "zoom_in", phrase)
+        self.assertEqual(rules.match("zoom out", strict=True).rule, "zoom_out")
+        for phrase in ("bigger", "enlarge", "make this bigger", "make the text bigger", "too small",
+                       "i can't read this", "bigger text"):
             m = rules.match(phrase, strict=True)
             self.assertIsNotNone(m, phrase)
-            self.assertEqual(m.rule, "zoom_in", f"{phrase} -> {m.rule}")
+            self.assertEqual(m.actions, [("enlarge_text", {"goal": "bigger"})], f"{phrase} -> {m.rule}")
+        for phrase in ("smaller", "too big", "make the text smaller"):
+            self.assertEqual(rules.match(phrase, strict=True).actions, [("enlarge_text", {"goal": "smaller"})], phrase)
 
 
 if __name__ == "__main__":

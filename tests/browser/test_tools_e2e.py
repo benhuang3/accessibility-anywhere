@@ -109,11 +109,18 @@ class ToolsEndToEnd(unittest.TestCase):
         except ToolError as e:
             self.fail(f"{name}: {e}")
 
-    def test_enlarge_text_picks_a_zoom_that_keeps_the_page_ok(self):
+    def test_enlarge_text_makes_fonts_bigger_and_keeps_the_page_ok(self):
+        size = "() => parseFloat(getComputedStyle(document.querySelector('main p, p')).fontSize)"
+        before, zoom = self.page.evaluate(size), ally.zoom(self.page)
         out = self.call("enlarge_text", {"goal": "bigger"})
-        self.assertEqual(out["tier"], "chrome-fit")
-        self.assertGreater(ally.zoom(self.page), 1.0)
-        self.assertIn("ally_fit", ally.styles(self.page))
+        self.assertEqual(out["tier"], "chrome-text")
+        self.assertAlmostEqual(ally.zoom(self.page), zoom, places=3)  # never zooms
+        self.assertGreaterEqual(self.page.evaluate(size), 20 - 0.5)  # 14px body text reaches the 20px goal
+        self.assertGreater(self.page.evaluate(size), before)
+        self.assertIn("ally_text", ally.styles(self.page))
+        smaller = self.call("enlarge_text", {"goal": "smaller"})
+        self.assertEqual(smaller["tier"], "chrome-text")
+        self.assertLess(self.page.evaluate(size), 21)
         self.assertIn("looks fine", self.call("check_page_layout"))
         ally.screenshot(self.page, "e2e_enlarge_text")
 

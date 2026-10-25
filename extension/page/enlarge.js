@@ -7,7 +7,7 @@
 
   P.modules.enlarge = {
     measure() {
-      return P.withPaused(["buttons"], P.measure);
+      return P.withPaused(["buttons", "text"], P.measure);
     },
   };
 })();

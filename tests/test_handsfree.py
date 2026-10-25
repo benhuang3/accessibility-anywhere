@@ -301,7 +301,7 @@ class HandsFreeConfigTests(unittest.TestCase):
         self.assertEqual(rules.match("check my eye tracker").actions, [("check_eye_tracker", {})])
         self.assertEqual(rules.match("turn off the camera").actions, [("eye_tracking", {"on": False})])
         self.assertEqual(rules.match("follow my eyes").actions, [("magnifier_follow", {"target": "eyes"})])
-        self.assertEqual(rules.match("make it bigger").actions, [("zoom_in", {})])
+        self.assertEqual(rules.match("make it bigger").actions, [("enlarge_text", {"goal": "bigger"})])
 
     def test_settings(self):
         errors, _w = config_mod.validate(config_mod.merge({"voice": {"wake_words": []}}))

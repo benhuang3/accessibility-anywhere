@@ -36,11 +36,12 @@ class FakeExtension:
         self.connected = True
         self.focused = True
         self.zoom = 1.0
+        self.text_scale = 1.0
         self.layers: set[str] = set()
         self.marks: dict[str, set[str]] = {}
         self.hosts: set[str] = set()
         self.page_type = page_type
-        self.breaks_above = breaks_above  # zoom above which the page overflows
+        self.breaks_above = breaks_above  # text scale above which the page overflows
         self.buttons_break = buttons_break
         self.calls: list[tuple] = []
         self.simple = {}
@@ -51,12 +52,13 @@ class FakeExtension:
         return getattr(self, "a_" + action)(**{k: v for k, v in args.items() if k != "tabId"})
 
     def state(self):
-        return (round(self.zoom, 3), frozenset(self.layers), frozenset((k, frozenset(v)) for k, v in self.marks.items()),
+        return (round(self.zoom, 3), round(self.text_scale, 3), frozenset(self.layers), frozenset((k, frozenset(v)) for k, v in self.marks.items()),
                 frozenset(self.hosts))
 
     # ---- actions
     def a_pageInfo(self):
         return {"tabId": 7, "url": "https://example.test/", "zoom": self.zoom, "defaultZoom": 1.0,
+                "textScale": self.text_scale,
                 "type": self.page_type, "reasons": ["this page handles payments"] if self.page_type == "excluded" else []}
 
     def a_pageBaseline(self, force=False):
@@ -85,8 +87,8 @@ class FakeExtension:
             self.layers.add("ally_menus")
             return {"said": "put the menu in one big list"}
         if step == "text":
-            self.zoom = opts["zoom"]
-            self.layers.add("ally_fit")
+            self.text_scale = opts["scale"]
+            self.layers |= {"ally_text", "ally_fit"}
             return {"said": ""}
         if step == "buttons":
             self.layers.add("ally_buttons")
@@ -109,20 +111,19 @@ class FakeExtension:
             self.hosts -= {"ally-menu-host", "ally-menu-strip"}
             self.layers.discard("ally_menus")
         elif step == "text":
-            self.layers.discard("ally_fit")
-            if (opts or {}).get("restoreZoom"):
-                self.zoom = 1.0
+            self.layers -= {"ally_text", "ally_fit"}
+            self.text_scale = 1.0
         elif step == "buttons":
             self.layers.discard("ally_buttons")
         elif step == "simple":
             self.layers.clear()
             self.marks.clear()
             self.hosts.clear()
-            self.zoom = 1.0
+            self.text_scale = 1.0
         return {"said": ""}
 
     def a_pageVerify(self, stickyBudget=0.25):
-        overflow = bool(self.breaks_above and self.zoom > self.breaks_above + 1e-6)
+        overflow = bool(self.breaks_above and self.text_scale > self.breaks_above + 1e-6)
         buttons = self.buttons_break and "ally_buttons" in self.layers
         return {"ok": not (overflow or buttons),
                 "checks": {"overflow": {"ok": not overflow}, "covered": {"ok": not buttons},
@@ -210,11 +211,13 @@ class CompositionTests(unittest.TestCase):
             self.assertEqual(ext.marks, expected.marks, step)
             self.assertEqual(ext.hosts, expected.hosts, step)
 
-    def test_text_picks_a_measured_zoom_and_says_so(self):
+    def test_text_makes_the_fonts_bigger_and_never_zooms(self):
         ext = FakeExtension()
         report = core.run_steps(Ctx(ext), ["text"])
-        self.assertGreater(ext.zoom, 1.0)
-        self.assertIn("ally_fit", ext.layers)
+        self.assertGreater(ext.text_scale, 1.0)
+        self.assertEqual(ext.zoom, 1.0)
+        self.assertIn("ally_text", ext.layers)
+        self.assertNotIn("setZoomSettled", [c[0] for c in ext.calls])
         self.assertTrue(any("bigger" in s for s in report["said"]))
 
     def test_steps_after_a_failure_still_run(self):
@@ -241,26 +244,31 @@ class VerifyBackOffTests(unittest.TestCase):
         self.assertIn("buttons", report["backed_off"])
         self.assertTrue(report["verify"]["ok"])
 
-    def test_zoom_backs_off_when_verify_fails(self):
+    def test_text_backs_off_when_verify_fails(self):
         ext = FakeExtension(breaks_above=1.25)  # 14px text predicts 150%, but the page breaks above 125%
         report = core.run_steps(Ctx(ext), ["text"])
-        self.assertAlmostEqual(ext.zoom, 1.25)
+        self.assertAlmostEqual(ext.text_scale, 1.25)
         self.assertTrue(report["backed_off"])
         self.assertTrue(report["verify"]["ok"])
+        self.assertEqual(ext.zoom, 1.0)
 
-    def test_text_zoom_is_predicted_without_trying_levels(self):
+    def test_text_scale_is_predicted(self):
         ext = FakeExtension()
         core.run_steps(Ctx(ext), ["text"])
-        self.assertAlmostEqual(ext.zoom, 1.5)  # 14px x 1.5 = 21px >= 20px goal
-        self.assertNotIn("auditAtZooms", [c[0] for c in ext.calls])
+        self.assertAlmostEqual(ext.text_scale, 1.5)  # 14px x 1.5 = 21px >= 20px goal
 
-    def test_a_zoom_chrome_remembers_is_kept_unless_asked_bigger(self):
+    def test_bigger_again_and_smaller(self):
         ext = FakeExtension()
-        ext.zoom = 1.75  # Chrome already zooms this site
-        core.run_steps(Ctx(ext), ["text"])
-        self.assertAlmostEqual(ext.zoom, 1.75)
-        core.run_steps(Ctx(ext), ["text"], opts={"text": {"step_up": True}})
-        self.assertAlmostEqual(ext.zoom, 2.0)
+        core.run_steps(Ctx(ext), ["text"], opts={"text": {"direction": "up"}})
+        self.assertAlmostEqual(ext.text_scale, 1.5)
+        core.run_steps(Ctx(ext), ["text"], opts={"text": {"direction": "up"}})
+        self.assertAlmostEqual(ext.text_scale, 1.75)
+        core.run_steps(Ctx(ext), ["text"], opts={"text": {"direction": "down"}})
+        self.assertAlmostEqual(ext.text_scale, 1.5)
+        for _ in range(4):
+            core.run_steps(Ctx(ext), ["text"], opts={"text": {"direction": "down"}})
+        self.assertAlmostEqual(ext.text_scale, 1.0)
+        self.assertNotIn("ally_text", ext.layers)
 
     def test_verify_reads_only(self):
         ext = FakeExtension()
@@ -296,16 +304,17 @@ class ToolTests(unittest.TestCase):
         ext = FakeExtension()
         out = registry().call("enlarge_text", {"goal": "bigger", "buttons": True}, ctx=Ctx(ext))
         self.assertTrue(out.ok, out.error)
-        self.assertEqual(out.value["tier"], "chrome-fit")
+        self.assertEqual(out.value["tier"], "chrome-text")
         self.assertIn("ally_buttons", ext.layers)
-        self.assertGreater(ext.zoom, 1.0)
+        self.assertGreater(ext.text_scale, 1.0)
+        self.assertEqual(ext.zoom, 1.0)
 
     def test_enlarge_text_in_browser_flag_works_without_focus(self):
         ext = FakeExtension()
         ext.focused = False  # e.g. the user answered by clicking the dashboard
         out = registry().call("enlarge_text", {"goal": "bigger", "in_browser": True}, ctx=Ctx(ext))
         self.assertTrue(out.ok, out.error)
-        self.assertEqual(out.value["tier"], "chrome-fit")
+        self.assertEqual(out.value["tier"], "chrome-text")
 
     def test_simplified_mode_leaves_excluded_pages_alone(self):
         ext = FakeExtension(page_type="excluded")
@@ -332,7 +341,7 @@ class ToolTests(unittest.TestCase):
         out = registry().call("simplified_mode", {}, ctx=Ctx(ext))
         self.assertTrue(out.ok, out.error)
         self.assertIn("ally-reader-host", ext.hosts)
-        self.assertEqual(ext.zoom, 1.0)
+        self.assertEqual(ext.text_scale, 1.0)
 
     def test_simplified_mode_form_page_skips_menus(self):
         ext = FakeExtension(page_type="form")

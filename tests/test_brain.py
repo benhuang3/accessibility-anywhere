@@ -31,8 +31,8 @@ class RulesTests(unittest.TestCase):
 
     def test_strict_matches(self):
         cases = {
-            "zoom in": "zoom_in", "bigger please": "zoom_in", "I can't read this": "zoom_in",
-            "smaller": "zoom_out", "stop": "stop", "be quiet": "stop", "reset everything": "reset",
+            "zoom in": "zoom_in", "zoom out": "zoom_out", "bigger please": "text_bigger",
+            "I can't read this": "text_bigger", "smaller": "text_smaller", "stop": "stop", "be quiet": "stop", "reset everything": "reset",
             "back to normal": "reset", "read this page": "read_page", "read it to me": "read_page",
             "read the selection": "read_selection", "what's on my screen?": "describe",
             "high contrast": "contrast", "dark mode": "dark", "reader mode": "reader", "invert colors": "invert",
@@ -50,7 +50,7 @@ class RulesTests(unittest.TestCase):
             self.assertIsNone(rules.match(text, strict=True), text)
 
     def test_loose_offline(self):
-        self.assertEqual(rules.match("ugh this website is way too tiny", strict=False).rule, "zoom_in")
+        self.assertEqual(rules.match("ugh this website is way too tiny", strict=False).rule, "text_bigger")
         self.assertEqual(rules.match("could you read me the article", strict=False).rule, "read_page")
 
     def test_levels(self):
@@ -155,7 +155,7 @@ class BrainTests(unittest.TestCase):
         reply = self.agent.brain.handle("ugh, everything is way too tiny on here")
         self.assertEqual(reply.mode, "offline")
         self.assertTrue(reply.error)
-        self.assertEqual(reply.actions[0]["tool"], "zoom_in")
+        self.assertEqual(reply.actions[0]["tool"], "enlarge_text")
         self.assertFalse(self.agent.brain.online)
 
 

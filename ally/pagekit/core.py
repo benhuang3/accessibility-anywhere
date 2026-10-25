@@ -17,8 +17,8 @@ STEP_ORDER = ("clutter", "menus", "text", "buttons")
 CLUTTER_KINDS = ("cookie", "promo", "chat", "ads", "share", "motion")
 FORM_CLUTTER = ("cookie", "promo", "chat")
 ZOOM_STEPS = (1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0)
-DEFAULTS = {"text_goal_px": 20, "target_goal_px": 44, "max_zoom": 2.5, "sticky_budget": 0.25, "ai_check": True,
-            "ai_background": True}
+DEFAULTS = {"text_goal_px": 20, "target_goal_px": 44, "max_zoom": 2.5, "max_text_scale": 2.0, "sticky_budget": 0.25,
+            "ai_check": True, "ai_background": True}
 LAYOUT_STEPS = ("clutter", "menus", "text", "buttons")  # what the AI checker looks at afterwards
 GOALS = {"clutter": "hide pop-ups, ads and other clutter", "menus": "add a big, simple menu",
          "text": "make the text bigger", "buttons": "make the buttons bigger"}
@@ -88,39 +88,43 @@ class PageSession:
         return float(self.call("pageInfo").get("zoom") or 1.0)
 
 
-def choose_text_zoom(session: PageSession, cfg: dict, step_up: bool = False) -> dict:
-    """Predict the zoom from one measurement (no trying level after level), keep a zoom Chrome already
-    remembers for this site, and go one step bigger when the user asked for "bigger" again.
-    Verify and back-off afterwards catch a zoom that breaks the page."""
-    from .zoom import next_step, predict_zoom
+def choose_text_scale(session: PageSession, cfg: dict, direction: str = "") -> dict:
+    """How much bigger the page's own text should get (never zoom): predicted from one measurement of its
+    sizes; direction "up" = one step bigger than now, "down" = one step smaller. Verify and back-off
+    afterwards catch a size that breaks the page."""
+    from .zoom import next_scale, predict_scale
 
-    current = float(session.info.get("zoom") or 1.0)
-    default = float(session.info.get("defaultZoom") or 1.0)
-    base = session.call("pageBaseline") or {}
-    metrics = base.get("metrics") or {}
-    guess = predict_zoom(metrics, current, float(cfg["text_goal_px"]), float(cfg["max_zoom"]))
-    zoom, why = guess["zoom"], "predicted"
-    if step_up and zoom <= current + 0.01:
-        zoom, why = next_step(current, float(cfg["max_zoom"])), "one step bigger"
-    elif not step_up and current > default + 0.01 and zoom <= current + 0.01:
-        zoom, why = current, "kept the zoom Chrome remembers for this site"
-    return {"zoom": zoom, "original": current, "met": guess["met"], "why": why,
+    current = float(session.info.get("textScale") or 1.0)
+    top = float(cfg["max_text_scale"])
+    if direction == "down":
+        return {"scale": next_scale(current, top, up=False), "original": current, "met": True, "why": "one step smaller"}
+    metrics = (session.call("pageBaseline") or {}).get("metrics") or {}
+    guess = predict_scale(metrics, current, float(cfg["text_goal_px"]), top)
+    scale, why = guess["scale"], "predicted"
+    if direction == "up" and scale <= current + 0.01:
+        scale, why = next_scale(current, top), "one step bigger"
+    return {"scale": scale, "original": current, "met": guess["met"], "why": why,
             "reader_suggested": not guess["met"] and session.info.get("type") == "article"}
 
 
-def _text_on(session: PageSession, cfg: dict, report: dict, step_up: bool = False) -> None:
-    choice = choose_text_zoom(session, cfg, step_up)
-    original, zoom = choice["original"], float(choice["zoom"])
-    report["zoom_choice"] = choice
-    session.call("stepOn", step="text", opts={"zoom": zoom})
-    report["zoom"] = zoom
-    report["original_zoom"] = original
-    if zoom > original + 0.01:
-        report["said"].append(f"made the page bigger ({round(zoom * 100)}%)")
-    elif choice["why"].startswith("kept"):
-        report["said"].append(f"kept this site at {round(zoom * 100)}% and made it fit")
+def _text_on(session: PageSession, cfg: dict, report: dict, direction: str = "") -> None:
+    choice = choose_text_scale(session, cfg, direction)
+    original, scale = choice["original"], float(choice["scale"])
+    report["text_choice"] = choice
+    report["original_scale"] = original
+    if scale <= 1.0 + 0.01:
+        session.call("stepOff", step="text", opts={})
+        report["scale"] = 1.0
+        report["said"].append("put the text back to its normal size" if original > 1.01 else "left the text at its size")
+        return
+    session.call("stepOn", step="text", opts={"scale": scale, "goalPx": cfg["text_goal_px"]})
+    report["scale"] = scale
+    if scale > original + 0.01:
+        report["said"].append(f"made the text bigger ({round(scale * 100)}%)")
+    elif scale < original - 0.01:
+        report["said"].append(f"made the text a bit smaller ({round(scale * 100)}%)")
     else:
-        report["said"].append("made the page fit better")
+        report["said"].append("the text is already as big as it gets without breaking the page")
     if choice.get("reader_suggested"):
         report["offer_reader"] = True
 
@@ -135,24 +139,29 @@ def _back_off(session: PageSession, applied: list[str], report: dict, budget: fl
             session.call("stepOff", step="buttons")
             report["backed_off"].append("buttons")
         elif step == "text":
-            original = report.get("original_zoom", 1.0)
+            from .zoom import next_scale
+
             for _ in range(MAX_ZOOM_BACKOFFS):
-                current = session.zoom()
-                lower = [z for z in ZOOM_STEPS if original + 0.01 < z < current - 0.01]
-                target = max(lower) if lower else original
-                if abs(target - current) < 0.01:
+                current = float(report.get("scale") or 1.0)
+                target = next_scale(current, 99, up=False)
+                if target <= report.get("original_scale", 1.0) + 0.01:
                     break
-                session.call("setZoomSettled", zoom=target)
-                report["zoom"] = target
-                report["backed_off"].append(f"zoom {round(target * 100)}%")
+                session.call("stepOn", step="text", opts={"scale": target})
+                report["scale"] = target
+                report["said"] = [f"made the text bigger ({round(target * 100)}%)" if x.startswith("made the text bigger")
+                                  else x for x in report["said"]]
+                report["backed_off"].append(f"text {round(target * 100)}%")
                 verdict = session.call("pageVerify", stickyBudget=budget)
                 if verdict.get("ok"):
                     break
-            if not verdict.get("ok") and abs(session.zoom() - original) > 0.01:
-                # Still broken after the small steps: Ally's zoom made it worse, so put the user's zoom back.
-                session.call("setZoomSettled", zoom=original)
-                report["zoom"] = original
-                report["backed_off"].append(f"zoom {round(original * 100)}%")
+            if not verdict.get("ok"):
+                # Still broken: bigger text made it worse, so put the page's own sizes back.
+                session.call("stepOff", step="text", opts={})
+                report["scale"] = 1.0
+                report["backed_off"].append("text")
+                report["said"] = [x for x in report["said"] if not x.startswith("made the text bigger")]
+                report["notes"].append("Bigger text would break this page, so I left it at its size. "
+                                       "Try 'reader mode' for just the text.")
                 verdict = session.call("pageVerify", stickyBudget=budget)
             report["verify"] = verdict
             continue
@@ -170,12 +179,11 @@ def revert(session: PageSession, report: dict) -> None:
     """Undo everything this run did: its steps (newest first), the AI fixes and the zoom."""
     for step in reversed(report["applied"]):
         try:
-            session.call("stepOff", step=step, opts={"restoreZoom": report.get("start_zoom", 1.0)} if step == "text" else {})
+            session.call("stepOff", step=step, opts={})
         except ToolError as e:
             log.warning("revert %s failed: %s", step, e)
     try:
         session.call("stepOff", step="fix", opts={})
-        session.call("setZoomSettled", zoom=report.get("start_zoom", 1.0))
     except ToolError as e:
         log.warning("revert failed: %s", e)
     report["reverted"] = True
@@ -212,6 +220,7 @@ def _review(ctx, session: PageSession, cfg: dict, report: dict, reviewer, after_
     from .review import Cancelled
 
     steps_on = [s for s in report["applied"] if s not in report["backed_off"]]
+    reviewer.scale = float(report.get("scale") or reviewer.scale)
     try:
         result = reviewer.run(steps_on, report["verify"])
     except Cancelled:
@@ -253,7 +262,7 @@ def run_steps(ctx, steps, on: bool = True, opts: dict | None = None, verify: boo
     if not on:
         for step in reversed(names):
             try:
-                r = session.call("stepOff", step=step, opts=dict(opts.get(step) or {}, restoreZoom=step == "text"))
+                r = session.call("stepOff", step=step, opts=dict(opts.get(step) or {}))
                 report["said"].append((r or {}).get("said", ""))
                 report["applied"].append(step)
             except ToolError as e:
@@ -275,7 +284,8 @@ def run_steps(ctx, steps, on: bool = True, opts: dict | None = None, verify: boo
     for step in names:
         try:
             if step == "text":
-                _text_on(session, cfg, report, step_up=bool((opts.get("text") or {}).get("step_up")))
+                t = opts.get("text") or {}
+                _text_on(session, cfg, report, direction=t.get("direction") or ("up" if t.get("step_up") else ""))
             else:
                 r = session.call("stepOn", step=step, opts=dict(opts.get(step) or {}))
                 report["said"].append((r or {}).get("said", ""))
@@ -310,7 +320,7 @@ def summary(report: dict, done_fallback: str = "Done.") -> str:
         text = f"I {said}." if said else ""
     else:
         text = "Put the page back." if report["applied"] else ""
-    if report["backed_off"]:
+    if report["backed_off"] and "text" not in report["backed_off"]:
         text += " I undid part of it because it was breaking the page."
     review = report.get("review") or {}
     if review.get("ok") and review.get("fixes"):

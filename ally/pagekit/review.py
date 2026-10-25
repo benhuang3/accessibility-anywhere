@@ -6,7 +6,7 @@ small safe changes, the checker looks again. After MAX_FIXES failed fixes the pa
                                        v
                               fixer --> apply --> checker ... (MAX_FIXES times) --> revert
 
-The fixer can only: change the zoom level, turn one of this run's steps off, or add CSS from a short list of
+The fixer can only: change the text size, turn one of this run's steps off, or add CSS from a short list of
 layout properties (the extension checks every rule again; see extension/steps/fix.js).
 """
 
@@ -39,11 +39,11 @@ FIX_ENUMS = {
 }
 VALUE_RE = re.compile(r"^[a-z0-9.%#(),\s-]{1,40}$", re.I)
 BAD_SELECTOR = re.compile(r"[{};@<>\\]|ally-", re.I)
-ZOOM_LEVELS = (1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0)
+TEXT_LEVELS = (1.0, 1.15, 1.25, 1.5, 1.75, 2.0, 2.5)  # text scales the fixer may pick (1.0 = the page's own size)
 
 REVIEW_PROMPT = """You check, and if needed fix, a web page that an accessibility helper changed for an older adult with
 poor eyesight. Image 1 is the page BEFORE the change. Image 2 is the page NOW.
-The helper tried to: {goal}. Current page zoom {zoom}; steps on: {steps}.
+The helper tried to: {goal}. Current text size {scale}x the page's own; steps on: {steps}.
 Automatic layout check now: {verify}
 
 First list only the things that got WORSE for the person, compared with BEFORE. Something is worse when:
@@ -58,10 +58,10 @@ These are NOT worse, never list them:
 - Ally's own black "Ally menu" bar at the top and its "Simple mode on" chip
 
 If something got worse, also give at most {max_actions} small, safe actions that fix exactly that. Prefer the smallest
-change: one targeted CSS rule, or turning off the one step that caused it. Keep the page as big as you can; only lower
-the zoom if text runs off the left or right edge. Never hide the main text, menus, forms or headings.
+change: one targeted CSS rule, or turning off the one step that caused it. Keep the text as big as you can; only make
+it smaller if text overlaps or runs off the edge. Never hide the main text, menus, forms or headings. Never zoom.
 Allowed actions (JSON objects):
-- {{"type": "zoom", "level": one of {levels}}}
+- {{"type": "text_size", "level": one of {levels}}}  (how much bigger than the page's own text; 1.0 = its own size)
 - {{"type": "step_off", "step": one of {steps}}}
 - {{"type": "css", "selector": "<a selector from the outline>", "property": "<one of: {properties}>", "value": "<plain value>"}}
 CSS values are plain (e.g. "100%", "auto", "1.5", "18px", "wrap"); display may be block, inline-block, flex, grid,
@@ -83,19 +83,19 @@ def parse_json(text: str) -> dict:
     return json.loads(m.group(0))
 
 
-def valid_action(a, steps_on: list[str], max_zoom: float) -> dict | None:
+def valid_action(a, steps_on: list[str], max_scale: float) -> dict | None:
     """A cleaned action, or None if it isn't allowed."""
     if not isinstance(a, dict):
         return None
     kind = a.get("type")
-    if kind == "zoom":
+    if kind == "text_size":
         try:
             level = float(a.get("level"))
         except (TypeError, ValueError):
             return None
-        if level not in ZOOM_LEVELS or level > max_zoom + 1e-6:
+        if level not in TEXT_LEVELS or level > max_scale + 1e-6:
             return None
-        return {"type": "zoom", "level": level}
+        return {"type": "text_size", "level": level}
     if kind == "step_off":
         step = a.get("step")
         return {"type": "step_off", "step": step} if step in steps_on else None
@@ -140,6 +140,7 @@ class Review:
         self.step_opts = step_opts or {}  # how each step was turned on, to turn it back on when undoing a round
         self.cancel = cancel  # a threading.Event set when a newer request on this tab starts
         self.rules: list[dict] = []  # the fixer's CSS rules currently on the page
+        self.scale = float(session.info.get("textScale") or 1.0)  # the text step's scale right now
         self.before: bytes | None = None
         self.outline = None
         self.log: list[str] = []
@@ -171,9 +172,9 @@ class Review:
             self.outline = (self.session.call("pageOutline", timeout=20) or {}).get("items") or []
         after = self.shot()
         prompt = REVIEW_PROMPT.format(
-            goal=self.goal, zoom=self.session.zoom(), steps=", ".join(steps_on) or "none",
+            goal=self.goal, scale=self.scale, steps=", ".join(steps_on) or "none",
             verify=_verify_text(verify), max_actions=MAX_ACTIONS,
-            levels=", ".join(str(z) for z in ZOOM_LEVELS if z <= self.cfg["max_zoom"]),
+            levels=", ".join(str(z) for z in TEXT_LEVELS if z <= self.cfg["max_text_scale"]),
             properties=", ".join(sorted(FIX_PROPERTIES)), outline=_short(self.outline, 5000))
         self._check_cancel()
         answer = parse_json(self.ctx.ask(prompt, images=[(self.before, "image/jpeg"), (after, "image/jpeg")],
@@ -184,7 +185,7 @@ class Review:
         else:  # {"ok": ..., "problems": [...]} also understood
             problems = [str(p)[:200] for p in answer.get("problems") or []][:6]
             ok = bool(answer.get("ok"))
-        actions = [] if ok else [a for a in (valid_action(x, steps_on, float(self.cfg["max_zoom"]))
+        actions = [] if ok else [a for a in (valid_action(x, steps_on, float(self.cfg["max_text_scale"]))
                                              for x in (answer.get("actions") or [])[:MAX_ACTIONS]) if a]
         self.log.append(f"look: {'ok' if ok else '; '.join(problems) or 'not ok'}"
                         + ("" if ok else f" -> {len(actions)} fix(es): {str(answer.get('why', ''))[:100]}"))
@@ -196,8 +197,12 @@ class Review:
         css = [{k: a[k] for k in ("selector", "property", "value")} for a in actions if a["type"] == "css"]
         for a in actions:
             try:
-                if a["type"] == "zoom":
-                    self.session.call("setZoomSettled", zoom=a["level"])
+                if a["type"] == "text_size":
+                    if a["level"] <= 1.0:
+                        self.session.call("stepOff", step="text", opts={})
+                    else:
+                        self.session.call("stepOn", step="text", opts={"scale": a["level"], "goalPx": self.cfg["text_goal_px"]})
+                    self.scale = a["level"]
                     done += 1
                 elif a["type"] == "step_off":
                     self.session.call("stepOff", step=a["step"], opts={})
@@ -223,10 +228,10 @@ class Review:
         return done
 
     def snapshot(self, steps_on: list[str]) -> dict:
-        return {"rules": list(self.rules), "zoom": self.session.zoom(), "steps": list(steps_on)}
+        return {"rules": list(self.rules), "scale": self.scale, "steps": list(steps_on)}
 
     def restore(self, snap: dict, steps_on: list[str]) -> None:
-        """Undo a fix round that made things worse: the CSS rules, the zoom and any step it turned off."""
+        """Undo a fix round that made things worse: the CSS rules, the text size and any step it turned off."""
         try:
             self.session.call("stepOff", step="fix", opts={})
             self.rules = []
@@ -234,11 +239,17 @@ class Review:
                 self.session.call("stepOn", step="fix", opts={"rules": snap["rules"]})
                 self.rules = list(snap["rules"])
             for step in snap["steps"]:
-                if step not in steps_on:
-                    opts = {"zoom": snap["zoom"]} if step == "text" else dict(self.step_opts.get(step) or {})
-                    self.session.call("stepOn", step=step, opts=opts)
+                if step not in steps_on and step != "text":
+                    self.session.call("stepOn", step=step, opts=dict(self.step_opts.get(step) or {}))
                     steps_on.append(step)
-            self.session.call("setZoomSettled", zoom=snap["zoom"])
+            if "text" in snap["steps"] and abs(snap["scale"] - self.scale) > 0.01:
+                if snap["scale"] > 1.0:
+                    self.session.call("stepOn", step="text", opts={"scale": snap["scale"], "goalPx": self.cfg["text_goal_px"]})
+                else:
+                    self.session.call("stepOff", step="text", opts={})
+                self.scale = snap["scale"]
+                if "text" not in steps_on:
+                    steps_on.append("text")
             self.log.append("undid that round: it made things worse")
         except ToolError as e:
             self.log.append(f"couldn't undo the round: {e}")

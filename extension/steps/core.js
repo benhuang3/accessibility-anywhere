@@ -159,5 +159,6 @@ async function pageInfo(tab) {
     Object.assign(base, await STEPS.classify.info(tabId));
   }
   if (typeof isSimpleSite === "function") base.simple = await isSimpleSite(tab.url);
+  if (STEPS.text && typeof STEPS.text.scaleOf === "function") base.textScale = await STEPS.text.scaleOf(tabId);
   return base;
 }

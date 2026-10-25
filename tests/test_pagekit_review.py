@@ -20,7 +20,7 @@ class ReviewExtension(FakeExtension):
         self.fix_rules = []
 
     def a_pageScreenshot(self, quality=60):
-        return {"mediaType": "image/jpeg", "data": base64.b64encode(f"shot@{self.zoom}".encode()).decode()}
+        return {"mediaType": "image/jpeg", "data": base64.b64encode(f"shot@{self.text_scale}".encode()).decode()}
 
     def a_pageOutline(self):
         return {"items": [{"key": "header>nav", "why": "landmark", "tag": "nav", "box": [0, 0, 1280, 60]}]}
@@ -63,7 +63,7 @@ def ctx_with(ext, script, ai_check=True):
 
 
 FIX_ACTIONS = [{"type": "css", "selector": "header", "property": "position", "value": "static"},
-               {"type": "zoom", "level": 1.25},
+               {"type": "text_size", "level": 1.25},
                {"type": "css", "selector": "body", "property": "background", "value": "url(x)"}]
 BAD = {"worse": ["the menu bar covers the heading"], "actions": FIX_ACTIONS, "why": "unstick the header"}
 GOOD = {"worse": [], "actions": []}
@@ -87,7 +87,7 @@ class ReviewLoopTests(unittest.TestCase):
         self.assertTrue(report["review"]["ok"])
         self.assertEqual(report["review"]["fixes"], 1)
         self.assertEqual(ext.fix_rules, [{"selector": "header", "property": "position", "value": "static"}])
-        self.assertEqual(ext.zoom, 1.25)  # the background:url() rule was refused, the rest applied
+        self.assertEqual(ext.text_scale, 1.25)  # the background:url() rule was refused, the rest applied
         self.assertIn("ally_fix", ext.layers)
         self.assertIn("fixed it", core.summary(report))
 
@@ -115,7 +115,7 @@ class ReviewLoopTests(unittest.TestCase):
         ext = ReviewExtension()
         report = core.run_steps(ctx_with(ext, ClaudeScript(ToolError("This needs Claude."))), ["text"])
         self.assertIn("skipped", report["review"])
-        self.assertGreater(ext.zoom, 1.0)
+        self.assertGreater(ext.text_scale, 1.0)
 
     def test_switched_off_in_config(self):
         ext = ReviewExtension()
@@ -159,17 +159,17 @@ class KeepBestTests(unittest.TestCase):
         ext = ReviewExtension()
         rule_a = {"type": "css", "selector": "header", "property": "position", "value": "static"}
         rule_b = {"type": "css", "selector": "main", "property": "max-width", "value": "100%"}
-        script = ClaudeScript({"worse": ["menu overlaps the title"], "actions": [rule_a, {"type": "zoom", "level": 1.1}]},
+        script = ClaudeScript({"worse": ["menu overlaps the title"], "actions": [rule_a, {"type": "text_size", "level": 1.15}]},
                               {"worse": ["menu overlaps", "text cut off at the right", "buttons jumbled"],
-                               "actions": [{"type": "zoom", "level": 1.1}]},
+                               "actions": [{"type": "text_size", "level": 1.15}]},
                               {"worse": ["menu overlaps the title"], "actions": [rule_b]},
                               {"worse": []})
         report = core.run_steps(ctx_with(ext, script), ["text", "buttons"])
-        chosen_zoom = report["zoom"]
+        chosen = report["scale"]
         self.assertTrue(report["review"]["ok"])
         self.assertIn("undid that round: it made things worse", report["review"]["log"])
         self.assertEqual(ext.fix_rules, [{k: rule_b[k] for k in ("selector", "property", "value")}])
-        self.assertEqual(ext.zoom, chosen_zoom)  # the zoom change from the bad round was undone too
+        self.assertEqual(ext.text_scale, chosen)  # the text-size change from the bad round was undone too
 
     def test_undo_turns_a_step_back_on(self):
         ext = ReviewExtension()
@@ -243,13 +243,14 @@ class BackgroundTests(unittest.TestCase):
 class ActionRulesTests(unittest.TestCase):
     def test_only_safe_actions_pass(self):
         steps = ["text", "buttons"]
-        ok = [{"type": "zoom", "level": 1.5}, {"type": "step_off", "step": "buttons"},
+        ok = [{"type": "text_size", "level": 1.5}, {"type": "step_off", "step": "buttons"},
               {"type": "css", "selector": "main p", "property": "font-size", "value": "20px"},
               {"type": "css", "selector": ".ad-rail", "property": "display", "value": "none"},
               {"type": "css", "selector": "header", "property": "position", "value": "static"}]
         for a in ok:
             self.assertIsNotNone(valid_action(a, steps, 2.5), a)
-        bad = [{"type": "zoom", "level": 4}, {"type": "zoom", "level": 1.33}, {"type": "step_off", "step": "clutter"},
+        bad = [{"type": "text_size", "level": 4}, {"type": "text_size", "level": 1.33}, {"type": "zoom", "level": 1.5},
+               {"type": "step_off", "step": "clutter"},
                {"type": "css", "selector": "#ally-menu-strip", "property": "display", "value": "none"},
                {"type": "css", "selector": "body", "property": "background", "value": "red"},
                {"type": "css", "selector": "img", "property": "width", "value": "url(evil)"},

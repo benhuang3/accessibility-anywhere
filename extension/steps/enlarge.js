@@ -1,15 +1,24 @@
 // Enlarge steps for the service worker (see docs/page_steps.md).
-// text: Chrome zoom plus a safe "fit" layer. buttons: bigger buttons and form fields; never changes zoom.
-// auditAtZooms measures the page at several zoom levels so Python (ally/pagekit/zoom.py) can pick one.
+// text: bigger fonts (the page's own text, via page/text.js and the "ally_text" layer) plus a safe "fit"
+// layer; never zooms. buttons: bigger buttons and form fields; never zooms. Only the zoom tools zoom.
+// auditAtZooms (measuring at several zoom levels) is kept for diagnostics; the text step doesn't use it.
 
-PAGE_FILES.push("page/enlarge.js");
+PAGE_FILES.push("page/enlarge.js", "page/text.js");
+const TEXT_PAUSE = 'html:not([data-ally-pause~="text"])';
+
+// One rule per original size: 14px text becomes 21px, 32px headings 48px, and so on.
+function textCss(sizes) {
+  return Object.entries(sizes || {})
+    .map(([px, to]) => `${TEXT_PAUSE} [data-ally-text="${px}"] { font-size: ${to}px !important; line-height: 1.4 !important; }`)
+    .concat([`${TEXT_PAUSE} [data-ally-text-grow] { height: auto !important; max-height: none !important; }`])
+    .join("\n");
+}
 
 const AUDIT_LEVELS = [1.1, 1.25, 1.5, 1.75, 2, 2.5];
 const FIT_PAUSE = 'html:not([data-ally-pause~="fit"])';
 const BUTTONS_PAUSE = 'html:not([data-ally-pause~="buttons"])';
 
 const enlargeBusy = new Set(); // tab ids with a zoom audit running
-const textZoom = new Map(); // tabId -> the zoom the text step set
 
 function prefixed(pause, selectors) {
   return selectors.map((s) => `${pause} ${s}`).join(",\n");
@@ -104,34 +113,27 @@ async function auditAtZooms(tab, args = {}) {
 }
 
 STEPS.text = {
+  // opts.scale: how much bigger (1.25 = a quarter bigger); goalPx: the size small body text should reach.
   async on(tabId, opts = {}) {
-    assertNotAuditing(tabId);
-    const before = await chrome.tabs.getZoom(tabId);
-    let zoom = before;
-    if (Number(opts.zoom) > 0) {
-      zoom = await setZoomSettled(tabId, Number(opts.zoom));
-      textZoom.set(tabId, zoom);
-    }
+    const scale = Math.min(3, Math.max(1, Number(opts.scale) || 1.25));
+    const r = await inPage(tabId, "text.apply", { scale, goalPx: Number(opts.goalPx) || 20, maxPx: Number(opts.maxPx) || 72 });
+    await layerOn(tabId, "ally_text", textCss(r.sizes));
     await layerOn(tabId, "ally_fit", FIT_CSS);
-    const pct = Math.round(zoom * 100);
-    return { zoom, before, said: zoom !== before ? `made the page ${pct}% size` : "made the page fit better" };
+    const grown = await inPage(tabId, "text.grow").catch(() => 0); // after the layer: needs the new layout
+    return { scale, marked: r.marked, grown, said: `made the text ${Math.round((scale - 1) * 100)}% bigger` };
   },
-  async off(tabId, opts = {}) {
-    assertNotAuditing(tabId);
-    const removed = await layerOff(tabId, "ally_fit");
-    const set = textZoom.get(tabId);
-    textZoom.delete(tabId);
-    let zoom = await chrome.tabs.getZoom(tabId);
-    let restored = false;
-    const restoreTo = Number(opts.restoreZoom);
-    if (restoreTo > 0 && set !== undefined && Math.abs(zoom - set) < 0.001) {
-      zoom = await setZoomSettled(tabId, restoreTo);
-      restored = true;
+  async off(tabId) {
+    const removed = await layerOff(tabId, "ally_text");
+    await layerOff(tabId, "ally_fit");
+    await inPage(tabId, "text.clear").catch(() => {});
+    return { scale: 1, said: removed ? "put the text back to its size" : "" };
+  },
+  async scaleOf(tabId) {
+    try {
+      return (await inPage(tabId, "text.state")).scale || 1;
+    } catch {
+      return 1;
     }
-    return { zoom, restored, said: restored ? "put the page size back" : removed ? "stopped fitting the page" : "" };
-  },
-  async teardown(tabId) {
-    textZoom.delete(tabId);
   },
 };
 
@@ -146,4 +148,3 @@ STEPS.buttons = {
   },
 };
 
-chrome.tabs.onRemoved.addListener((tabId) => textZoom.delete(tabId));
