@@ -140,6 +140,14 @@ Show it as captions and a "Listening" light. Nothing else changes in `contracts.
 Newest first. Each entry: date and time, who, branch and commit, what changed, and what others need
 to know or do. Agents: read the newest entries before starting work.
 
+### Oct 25, 05:30 PT — Ben H (via Claude Code) — branch `benh/os-layer`
+
+**Pushed to `benh/os-layer`.** "Switch back to facebook" / "go back to my email" now switch tabs by name without the
+word "tab" ("go back", "go back to normal", "switch to dark mode", "go back to the top" keep their meaning; plain
+"go to X" still goes to Claude). Demo page: the story is one sentence and the photo is capped at 300 px, so after
+simple mode the headline, text, button and photo fit on one screen. Demo voice script: "Ally, simple mode", then
+"click show image" (not "show the image", which means the picture viewer).
+
 ### Oct 25, 05:00 PT — Ben H (via Claude Code) — branch `benh/os-layer`, commits `eab8109`, `95f78bc`
 
 **Pushed to `benh/os-layer` only (not `main`).**
