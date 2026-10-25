@@ -54,6 +54,9 @@ class Senses:
         self._auto: list[dict] = []
         self._calib: list[dict] | None = None
         self._calib_until = 0.0
+        self._calib_parts: dict[str, list[dict]] = {}
+        self._calib_phase = ""
+        self._calib_mode = False
         self._calib_done = threading.Event()
         self._calib_result: dict | None = None
         self._last_struggle_t = -1e9
@@ -162,8 +165,8 @@ class Senses:
             log.warning("couldn't save the face baseline: %s", e)
 
     def calibrate(self, seconds: float | None = None) -> dict:
-        """Collect face numbers while the user reads normally; returns {"ok", "baseline"} or {"ok": False, "why"}."""
-        seconds = float(seconds or self.cfg.get("calibrate_seconds", 15))
+        """Collect labelled reading and expression samples for a personal baseline."""
+        requested = float(seconds or self.cfg.get("calibrate_seconds", 35))
         if not self.vision_wanted():
             self.set_vision(True)
         end = time.monotonic() + 20
@@ -174,25 +177,119 @@ class Senses:
                        "Face the screen and the camera, with light on your face.")
                 raise ToolError(why)
             time.sleep(0.2)
+        gaze = getattr(self.agent, "gaze", None)
+        if seconds is not None and requested <= 5:
+            return self._calibrate_quick(requested, gaze)
+        phases = [
+            ("neutral", 15, "Read normally with the card in the middle.", "middle"),
+            ("top", 5, "Read while looking at the top of the screen.", "top"),
+            ("bottom", 5, "Read while looking at the bottom of the screen.", "bottom"),
+            ("smile", 3, "Smile naturally while you read.", "middle"),
+            ("squint", 3, "Squint at the small text.", "middle"),
+            ("rest", 2, "Relax your eyes for a moment.", "middle"),
+            ("squint", 3, "Squint at the small text once more.", "middle"),
+        ]
+        if requested != 35:
+            scale = requested / 36.0
+            phases = [(name, duration * scale, text, place) for name, duration, text, place in phases]
+        with self.lock:
+            self._calib_parts = {}
+            self._calib_result = None
+            self._calib_mode = True
+        try:
+            for name, duration, prompt, place in phases:
+                phase_name = name[0] if isinstance(name, tuple) else name
+                if phase_name == "rest":
+                    time.sleep(duration)
+                    continue
+                self._begin_calibration_phase(phase_name, duration)
+                if gaze is not None:
+                    gaze.send(f"card place {place}")
+                    gaze.send("card " + json.dumps({
+                        "title": "Face setup",
+                        "text": prompt,
+                        "size": "normal",
+                        "seconds": duration,
+                    }))
+                if not self._calib_done.wait(duration + 10):
+                    raise ToolError("I lost sight of your face during setup. Try again facing the screen.")
+            return self._finish_personal_calibration()
+        finally:
+            with self.lock:
+                self._calib = None
+                self._calib_phase = ""
+                self._calib_mode = False
+            if gaze is not None:
+                gaze.send("card off")
+
+    def _calibrate_quick(self, seconds: float, gaze) -> dict:
+        """Keep the short explicit calibration hook used by tests and scripted setup."""
         with self.lock:
             self._calib_done.clear()
             self._calib_result = None
-            self._calib, self._calib_until = [], self._face_t + seconds
-        gaze = getattr(self.agent, "gaze", None)
+            self._calib_phase = "neutral"
+            self._calib_mode = False
+            self._calib = []
+            self._calib_until = self._face_t + seconds
         if gaze is not None:
-            gaze.send('card ' + json.dumps({"title": "Face setup", "text": "Read this paragraph normally. Keep your usual posture and relaxed face while you read. This helps Ally learn how your eyes and face look when reading comfortably.", "size": "normal", "seconds": seconds}))
+            gaze.send("card " + json.dumps({"title": "Face setup", "text": "Read normally.",
+                                             "size": "normal", "seconds": seconds}))
         try:
             if not self._calib_done.wait(seconds + 10):
-                with self.lock:
-                    self._calib = None
-                raise ToolError("I lost sight of your face during the setup. Try again facing the screen.")
+                raise ToolError("I lost sight of your face during setup. Try again facing the screen.")
         finally:
             if gaze is not None:
                 gaze.send("card off")
         return self._calib_result or {"ok": False, "why": "the camera stopped"}
 
+    def _begin_calibration_phase(self, name: str, seconds: float) -> None:
+        with self.lock:
+            self._calib_done.clear()
+            self._calib_phase = name
+            self._calib = []
+            self._calib_until = self._face_t + seconds
+
+    def _finish_personal_calibration(self) -> dict:
+        with self.lock:
+            parts = dict(self._calib_parts)
+        neutral = parts.get("neutral", [])
+        try:
+            self.baseline = Baseline.from_samples(neutral, time.time(), "calibrated")
+        except ValueError as error:
+            return {"ok": False, "why": str(error)}
+        model_parts = {
+            "neutral": parts.get("neutral", []),
+            "top": parts.get("top", []),
+            "bottom": parts.get("bottom", []),
+            "smile": parts.get("smile", []),
+            "squint": parts.get("squint", []),
+        }
+        model = PersonalSquintDetector.fit(model_parts)
+        if self.baseline.feature_stats is None:
+            self.baseline.feature_stats = {}
+        self.baseline.feature_stats["personal_model"] = model
+        self._save_baseline()
+        self._reset_vision()
+        message = "Face baseline set."
+        if not model.get("enabled"):
+            message = "Squint sensing is off for you because the deliberate squint was not distinct. Lean and other signals still work."
+        self._calib_result = {"ok": True, "baseline": self.baseline.to_dict(),
+                              "squint_enabled": bool(model.get("enabled")), "why": model.get("why", "")}
+        self.agent.events.add("senses", message)
+        return self._calib_result
+
     def _finish_calibration(self, t: float) -> None:
         samples, self._calib = self._calib or [], None
+        if self._calib_mode:
+            self._calib_parts.setdefault(self._calib_phase, []).extend(samples)
+            self._calib_phase = ""
+            self._calib_done.set()
+            return
+        if self._calib_phase and self._calib_phase != "neutral":
+            self._calib_parts.setdefault(self._calib_phase, []).extend(samples)
+            self._calib_phase = ""
+            self._calib_done.set()
+            return
         try:
             self.baseline = Baseline.from_samples(samples, t, "calibrated")
             self._save_baseline()
