@@ -399,7 +399,9 @@ Logs: `logs/ally.log` and `logs/supervisor.log`.
   rebinding) and the Origin; the WebSocket only accepts Chrome extensions (lock it to your extension ID
   with `security.allowed_extension_ids`).
 - Claude only gets: your request, a short context (tab title and site, the app in front, current zoom),
-  page text or a screenshot only when a tool asks for it. Turn off `share_tab_info` / `include_active_app`
+  page text or a screenshot only when a tool asks for it. After Ally makes a web page bigger or simpler, it
+  sends Claude a small screenshot of the visible tab from before and after, to check the result (never on
+  sign-in, payment or bank pages). Turn this off with `ai_check = false` under `[page_enlarge]`. Turn off `share_tab_info` / `include_active_app`
   in `[brain]` if you prefer.
 - Claude can only run registered tools. It can't type arbitrary shell commands; `shell` steps are fixed in your config.
 - The dashboard's mic button uses Chrome's speech recognition, which sends audio to Google.
