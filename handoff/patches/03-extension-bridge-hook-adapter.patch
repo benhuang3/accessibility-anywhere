@@ -1,0 +1,369 @@
+diff --git a/ally/agent.py b/ally/agent.py
+index 83d64f0..32f073f 100644
+--- a/ally/agent.py
++++ b/ally/agent.py
+@@ -87,6 +87,7 @@ class Agent:
+                                      voice=VoiceConfirm(self), events=self.events)
+         self.sensors: list = []
+         self.overlay = None
++        self.risk = None  # ally.risk.wire attachment
+         self.httpd = None
+         self.started = time.time()
+         self.last_tick = time.time()
+@@ -330,6 +331,8 @@ class Agent:
+                 if not s.start():
+                     self.events.add("error", s.error)
+         self.proactive.start()
++        from .risk.wire import attach
++        self.risk = attach(self)
+         self.events.add("start", "Proactive help is on.")
+ 
+     def publish_event(self, data: dict) -> dict:
+@@ -395,7 +398,7 @@ class Agent:
+     def close(self) -> None:
+         self._stop.set()
+         log.info("Ally stopping (code %s)", self.exit_code)
+-        extra = [self.proactive.stop] + [s.stop for s in self.sensors] + ([self.overlay.stop] if self.overlay else [])
++        extra = [self.proactive.stop] + [s.stop for s in self.sensors] + ([self.overlay.stop] if self.overlay else []) + ([self.risk.stop] if self.risk else [])
+         for step in (*extra, self.hotkeys.stop, self.listener.stop, self.gaze.stop, self.speaker.stop,
+                      self.platform.shutdown, self.bridge.close_all):
+             try:
+diff --git a/ally/bridge.py b/ally/bridge.py
+index b7f0ee3..845bcae 100644
+--- a/ally/bridge.py
++++ b/ally/bridge.py
+@@ -41,6 +41,7 @@ class Bridge:
+     def __init__(self, on_command=None, on_connect=None):
+         self.on_command = on_command  # (text) -> reply text
+         self.on_connect = on_connect  # (client) -> None
++        self.on_page = None  # (page dict) -> None; set by ally.risk.wire
+         self.clients: list[Client] = []
+         self._lock = threading.Lock()
+         self._ids = itertools.count(1)
+@@ -114,6 +115,10 @@ class Bridge:
+                 box["msg"] = msg
+                 box["event"].set()
+         elif kind == "event":
++            if msg.get("name") == "page":
++                if self.on_page:  # page text from extension/risk.js
++                    threading.Thread(target=self._safe_page, args=(msg,), daemon=True).start()
++                return
+             self._apply_focus(client, msg)
+         elif kind == "command" and self.on_command:
+             threading.Thread(target=self._run_command, args=(client, msg), daemon=True).start()
+@@ -133,6 +138,12 @@ class Bridge:
+         except Exception as e:
+             log.warning("on_connect failed: %s", e)
+ 
++    def _safe_page(self, msg: dict) -> None:
++        try:
++            self.on_page(msg)
++        except Exception as e:
++            log.warning("on_page failed: %s", e)
++
+     def _run_command(self, client: Client, msg: dict) -> None:
+         try:
+             text = self.on_command(str(msg.get("text", "")))
+diff --git a/ally/risk/wire.py b/ally/risk/wire.py
+index 17cf085..46a7b0d 100644
+--- a/ally/risk/wire.py
++++ b/ally/risk/wire.py
+@@ -5,6 +5,14 @@ from . import BANNERS, Deduper, enable_demo_brands, scan_page
+ from .process import check_process_names, running_process_names
+ 
+ 
++_SEVERITY = {"high": 0, "medium": 1, "low": 2}
++_KIND = {"scam_popup": 0, "remote_access": 1, "untrusted_site": 2, "payment_field": 3}
++
++
++def _rank(risk):
++    return (_SEVERITY.get(risk.severity, 3), _KIND.get(risk.kind, 9))
++
++
+ class _Attachment:
+     def __init__(self, agent):
+         self.agent = agent
+@@ -22,9 +30,12 @@ class _Attachment:
+     def _on_page(self, page):
+         if self.done.is_set() or not isinstance(page, dict):
+             return
+-        for risk in scan_page(page.get("url"), page.get("text"), page.get("fields")):
+-            if self.deduper.fresh(risk):
+-                self.agent.bus.publish("risk", risk)
++        # One warning per page scan: the most important new one. A card plus a spoken line for every
++        # signal on the same page would be a lot to take in.
++        fresh = [r for r in sorted(scan_page(page.get("url"), page.get("text"), page.get("fields")), key=_rank)
++                 if self.deduper.fresh(r)]
++        if fresh:
++            self.agent.bus.publish("risk", fresh[0])
+ 
+     def _warning(self, message):
+         if self.done.is_set():
+diff --git a/extension/background.js b/extension/background.js
+index b85b84d..b8ace91 100644
+--- a/extension/background.js
++++ b/extension/background.js
+@@ -321,6 +321,17 @@ const ACTIONS = {
+   async getTab() {
+     return await tabInfo();
+   },
++  // Agent found a risk on a page: show the in-page banner on the tab(s) with that URL.
++  async showRiskBanner({ url, kind, text }) {
++    const tabs = await chrome.tabs.query({});
++    let shown = 0;
++    for (const t of tabs) {
++      if (t.url === url) {
++        await chrome.tabs.sendMessage(t.id, { kind: "allyRiskBanner", risk: kind, text }).then(() => { shown += 1; }, () => {});
++      }
++    }
++    return { shown };
++  },
+   async setZoom({ factor }) {
+     const t = await activeTab();
+     await chrome.tabs.setZoom(t.id, clamp(Number(factor) || 1, 0.25, 5));
+@@ -514,7 +525,13 @@ async function handlePopup(msg) {
+   }
+ }
+ 
+-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
++chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
++  if (msg && msg.kind === "pageRisk") {
++    // From extension/risk.js: pass the page to the agent over the existing bridge.
++    const { url, title, text, fields } = msg;
++    sendResponse({ ok: send({ type: "event", name: "page", url, title, text, fields }) });
++    return false;
++  }
+   if (!msg || msg.kind !== "popup") return false;
+   handlePopup(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: friendlyError(e) }));
+   return true; // answer asynchronously
+diff --git a/extension/demo/risk-demo.html b/extension/demo/risk-demo.html
+new file mode 100644
+index 0000000..14237f9
+--- /dev/null
++++ b/extension/demo/risk-demo.html
+@@ -0,0 +1,30 @@
++<!doctype html>
++<html lang="en">
++<head>
++  <meta charset="utf-8">
++  <title>Pinecrest Savings: Secure Sign In (DEMO)</title>
++  <meta name="viewport" content="width=device-width, initial-scale=1">
++  <style>
++    body { font: 20px/1.5 system-ui, sans-serif; max-width: 640px; margin: 80px auto; padding: 0 16px; color: #1a1a1a; }
++    .alert { background: #fdecea; border: 2px solid #b3261e; padding: 16px; border-radius: 8px; }
++    label { display: block; margin-top: 12px; font-weight: 600; }
++    input { font-size: 20px; padding: 8px; width: 100%; box-sizing: border-box; }
++    small { color: #555; }
++  </style>
++</head>
++<body>
++  <p><small>Ally demo page. "Pinecrest Savings" is an invented brand. Nothing here is real.</small></p>
++  <h1>Pinecrest Savings</h1>
++  <div class="alert">
++    <strong>Your account has been suspended.</strong>
++    Your computer has been locked and virus detected. Do not close this window.
++    Call Pinecrest support immediately at 1-800-555-0100 and have your gift cards ready.
++  </div>
++  <form action="about:blank" method="get">
++    <label for="cc">Card number</label>
++    <input id="cc" name="cardnumber" autocomplete="cc-number" inputmode="numeric">
++    <label for="cv">Security code</label>
++    <input id="cv" name="cvv" autocomplete="cc-csc" inputmode="numeric">
++  </form>
++</body>
++</html>
+diff --git a/extension/manifest.json b/extension/manifest.json
+index bb27ee9..d68e830 100644
+--- a/extension/manifest.json
++++ b/extension/manifest.json
+@@ -7,6 +7,9 @@
+   "background": { "service_worker": "background.js" },
+   "permissions": ["scripting", "fontSettings", "storage", "alarms", "tts"],
+   "host_permissions": ["<all_urls>"],
++  "content_scripts": [
++    { "matches": ["http://*/*", "https://*/*"], "js": ["risk.js"], "run_at": "document_idle", "all_frames": false }
++  ],
+   "action": {
+     "default_title": "Ally",
+     "default_popup": "popup.html",
+diff --git a/extension/risk.js b/extension/risk.js
+new file mode 100644
+index 0000000..51d2c06
+--- /dev/null
++++ b/extension/risk.js
+@@ -0,0 +1,128 @@
++// Ally risk content script: sends what the page says to the agent (via background.js and the
++// existing WebSocket bridge) and shows a calm warning banner when the agent reports a risk.
++// It never calls the agent's HTTP API itself and never reads what the user types into fields.
++(() => {
++  if (window.__allyRisk) return;
++  window.__allyRisk = true;
++
++  const loc = location;
++  const skip =
++    !/^https?:$/.test(loc.protocol) ||
++    ((loc.hostname === "127.0.0.1" || loc.hostname === "localhost") && loc.port === "8765");
++  if (skip || window.top !== window) return;
++
++  const MAX_TEXT = 20000;
++  const MAX_RESENDS = 3;
++  const PAYMENT_RE = /card.?(num|no)|cc.?(num|no)|cvv|cvc|security.?code|expir|exp.?(date|month|year)/i;
++
++  function detectFields() {
++    let payment = false;
++    let password = false;
++    for (const el of document.querySelectorAll("input")) {
++      const ac = (el.getAttribute("autocomplete") || "").toLowerCase();
++      const hint = `${el.name || ""} ${el.id || ""} ${el.placeholder || ""}`;
++      if (ac.startsWith("cc-") || PAYMENT_RE.test(hint)) payment = true;
++      if (el.type === "password") password = true;
++    }
++    return { payment, password, http: loc.protocol === "http:" };
++  }
++
++  function snapshot() {
++    const text = ((document.body && document.body.innerText) || "").replace(/\n{3,}/g, "\n\n").slice(0, MAX_TEXT);
++    return { kind: "pageRisk", url: loc.href, title: document.title || "", text, fields: detectFields() };
++  }
++
++  let lastSig = "";
++  let resends = 0;
++
++  function report(isResend) {
++    const snap = snapshot();
++    const sig = `${snap.text.length}:${snap.fields.payment}:${snap.fields.password}`;
++    if (sig === lastSig) return;
++    if (isResend && resends >= MAX_RESENDS) return;
++    if (isResend) resends += 1;
++    lastSig = sig;
++    try {
++      chrome.runtime.sendMessage(snap, (reply) => {
++        void chrome.runtime.lastError;
++        // The agent may not be connected yet (worker just woke up): try once more shortly.
++        if (!reply || !reply.ok) setTimeout(() => { lastSig = ""; report(true); }, 3000);
++      });
++    } catch {
++      /* extension was reloaded; nothing to do */
++    }
++  }
++
++  let timer = null;
++  function schedule() {
++    clearTimeout(timer);
++    timer = setTimeout(() => report(true), 2000);
++  }
++
++  report(false);
++  if (document.body) {
++    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true });
++  }
++
++  // ---------------------------------------------------------------- warning banner
++
++  const STYLE = `
++    :host { all: initial; }
++    .bar {
++      position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
++      box-sizing: border-box; padding: 18px 24px;
++      display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
++      background: #fff4c2; color: #1a1a1a; border-bottom: 4px solid #8a5a00;
++      font: 600 26px/1.35 "Segoe UI", system-ui, sans-serif;
++      box-shadow: 0 4px 16px rgba(0,0,0,.25);
++    }
++    .msg { flex: 1 1 320px; }
++    button {
++      font: 700 22px "Segoe UI", system-ui, sans-serif; padding: 12px 22px; cursor: pointer;
++      border-radius: 8px; border: 3px solid #1a1a1a; background: #ffffff; color: #1a1a1a;
++    }
++    button.primary { background: #1a1a1a; color: #ffffff; }
++    button:focus-visible { outline: 4px solid #0b57d0; outline-offset: 3px; }
++  `;
++
++  const PRIORITY = { scam_popup: 4, remote_access: 3, untrusted_site: 2, payment_field: 1 };
++  let shownPriority = 0;
++
++  function showBanner(text, kind) {
++    const priority = PRIORITY[kind] || 0;
++    const old = document.getElementById("ally-risk-banner");
++    if (old && priority < shownPriority) return; // never let a smaller warning replace a bigger one
++    if (old) old.remove();
++    shownPriority = priority;
++    const host = document.createElement("div");
++    host.id = "ally-risk-banner";
++    const root = host.attachShadow({ mode: "closed" });
++    const style = document.createElement("style");
++    style.textContent = STYLE;
++    const bar = document.createElement("div");
++    bar.className = "bar";
++    bar.setAttribute("role", "alert");
++    bar.tabIndex = -1;
++    const msg = document.createElement("div");
++    msg.className = "msg";
++    msg.textContent = String(text || "This page might not be safe.");
++    const back = document.createElement("button");
++    back.className = "primary";
++    back.textContent = "Take me back to safety";
++    back.addEventListener("click", () => {
++      if (history.length > 1) history.back();
++      else loc.href = "about:blank";
++    });
++    const ok = document.createElement("button");
++    ok.textContent = "I understand";
++    ok.addEventListener("click", () => { host.remove(); shownPriority = 0; });
++    bar.append(msg, back, ok);
++    root.append(style, bar);
++    (document.documentElement || document.body).append(host);
++    bar.focus();
++  }
++
++  chrome.runtime.onMessage.addListener((msg) => {
++    if (msg && msg.kind === "allyRiskBanner") showBanner(msg.text, msg.risk);
++  });
++})();
+diff --git a/tests/test_risk.py b/tests/test_risk.py
+index 6ab3591..494859b 100644
+--- a/tests/test_risk.py
++++ b/tests/test_risk.py
+@@ -196,7 +196,8 @@ class IntegrationTests(unittest.TestCase):
+                 page = {'url': 'https://paypa1.com', 'title': 'title', 'text': '', 'fields': {'payment': True}}
+                 agent.bridge.on_page(page)
+                 agent.bridge.on_page(page)
+-                self.assertEqual(len(risks), 2)
++                self.assertEqual(len(risks), 1)  # one warning per page: the most important
++                self.assertEqual(risks[0].kind, 'untrusted_site')
+                 agent.bus.publish('risk_warning', {'risk': risks[0].to_dict(), 'text': 'unused'})
+                 agent.bus.publish('risk_warning', Risk('remote_access'))
+                 self.assertEqual(calls, [('showRiskBanner', {'url': page['url'], 'kind': 'untrusted_site',
+@@ -222,11 +223,21 @@ class IntegrationTests(unittest.TestCase):
+         self.assertEqual([r.app for r in risks], ['rustdesk'])
+ 
+ 
+-if __name__ == '__main__':
+-    unittest.main()
+-
+ 
+ class HardeningTests(unittest.TestCase):
++    def test_one_warning_per_page_most_important_first(self):
++        got = []
++        agent = SimpleNamespace(bus=EventBus(), bridge=SimpleNamespace(on_page=None, broadcast=lambda *a: None))
++        agent.bus.subscribe('risk', got.append)
++        with patch('ally.risk.wire.running_process_names', return_value=[]):
++            handle = attach(agent)
++            try:
++                agent.bridge.on_page({'url': 'https://paypa1.com/x', 'fields': {'payment': True},
++                                      'text': 'Your computer is locked. Do not close. Account suspended'})
++            finally:
++                handle.stop()
++        self.assertEqual([r.kind for r in got], ['scam_popup'])
++
+     def test_scan_page_tolerates_bad_types(self):
+         from ally.risk import scan_page
+         self.assertEqual(scan_page(None, 5, "payment"), [])
+@@ -252,3 +263,7 @@ class HardeningTests(unittest.TestCase):
+         finally:
+             enable_demo_brands(False)
+         self.assertEqual(check_url(url), [])
++
++
++if __name__ == '__main__':
++    unittest.main()

@@ -1,0 +1,426 @@
+diff --git a/dashboard/app.js b/dashboard/app.js
+index 0706bcc..4a24adb 100644
+--- a/dashboard/app.js
++++ b/dashboard/app.js
+@@ -155,6 +155,7 @@ async function pollStatus() {
+   ];
+   if (s.config.error) items.push(chip("Settings", "error, see below", "bad"));
+   $("chips").replaceChildren(...items);
++  renderProactive(s.proactive);
+   $("version").textContent = `${s.name} ${s.version} on ${s.platform} · up ${Math.round(s.uptime / 60)} min`;
+ 
+   const list = s.hotkeys.keys.map((k) => el("li", {}, el("kbd", { text: k.keys }), " " + k.action.replaceAll("_", " ")));
+@@ -174,7 +175,9 @@ async function pollEvents() {
+       lastEvent = Math.max(lastEvent, ev.id);
+       const time = new Date(ev.ts * 1000).toLocaleTimeString();
+       log.prepend(el("li", { class: "ev ev-" + ev.kind }, el("time", { text: time }), el("b", { text: ev.kind }), " " + ev.text));
++      recordEvent(ev);
+     }
++    if (events.length) renderTrace();
+     while (log.children.length > 150) log.lastChild.remove();
+   } catch {
+     /* status chip shows the problem */
+@@ -212,6 +215,7 @@ async function loadTools() {
+ async function loadConfig() {
+   const c = await api("GET", "/api/config");
+   savedConfig = c.text;
++  readConfigNumbers(c.text);
+   $("config").value = c.text;
+   showConfigMessages(c.errors || [], c.warnings || [], c.error ? "The file on disk has errors; the last good settings are active." : "");
+ }
+@@ -229,6 +233,7 @@ $("save").addEventListener("click", async () => {
+   const r = await api("POST", "/api/config", { text: $("config").value });
+   if (r.ok) {
+     savedConfig = $("config").value;
++    readConfigNumbers(savedConfig);
+     showConfigMessages([], r.warnings || [], "Saved. New settings are on.");
+     loadTools();
+   } else {
+@@ -252,12 +257,250 @@ $("shutdown").addEventListener("click", async () => {
+   showReply("Ally stopped. Start it again with: python run.py", "warn");
+ });
+ 
++// ---------------------------------------------------------------- proactive help
++
++const SIGNALS = [
++  ["squint", "Squinting"],
++  ["lean", "Leaning in"],
++  ["rage_click", "Rapid clicking"],
++  ["hesitation", "Hesitating"],
++  ["retype", "Retyping"],
++];
++const SIGNAL_LIFE = 10; // seconds a reading stays visible while it fades out
++const TRACE_MAX = 14;
++const TRACE_LABEL = {
++  struggle: ["Noticed", "info"],
++  offer: ["Asked", "info"],
++  applied: ["Did it", "good"],
++  proactive: ["Held back", "muted"],
++  risk: ["Warned", "warn"],
++  error: ["Problem", "bad"],
++};
++const SENSOR_NAME = { BehaviorSensor: "Mouse and keyboard", VisionSensor: "Camera" };
++
++let minConfidence = 0.6; // read from config.toml, same default as the agent
++let autoAfter = 2;
++const readings = {}; // kind -> { value, ts }
++let fusedReading = { value: 0, ts: 0, kinds: "" };
++let offerShown = { id: null, since: 0, sent: false };
++const trace = [];
++
++function setMeter(meter, value) {
++  const v = Math.max(0, Math.min(1, value));
++  meter.querySelector(".fill").style.width = `${Math.round(v * 100)}%`;
++  meter.setAttribute("aria-valuenow", v.toFixed(2));
++  meter.setAttribute("aria-valuetext", `${Math.round(v * 100)} percent`);
++  meter.classList.toggle("hot", v >= minConfidence);
++}
++
++function buildSignals() {
++  const rows = SIGNALS.map(([kind, label]) => {
++    const meter = el("div", { class: "meter", role: "meter", "aria-valuemin": "0", "aria-valuemax": "1", "aria-valuenow": "0",
++      "aria-label": label }, el("div", { class: "fill" }));
++    return el("li", { "data-kind": kind }, el("span", { class: "sig-label", text: label }), meter,
++      el("span", { class: "meter-value", text: "0.00" }));
++  });
++  $("signals").replaceChildren(...rows);
++}
++
++function fade(reading, now) {
++  if (!reading) return 0;
++  const age = now - reading.ts;
++  return age >= SIGNAL_LIFE ? 0 : reading.value * (1 - age / SIGNAL_LIFE);
++}
++
++function renderMeters() {
++  const now = Date.now() / 1000;
++  for (const li of $("signals").children) {
++    const v = fade(readings[li.dataset.kind], now);
++    setMeter(li.querySelector(".meter"), v);
++    li.querySelector(".meter-value").textContent = v.toFixed(2);
++  }
++  const f = fade(fusedReading, now);
++  setMeter($("fused-meter"), f);
++  $("fused-value").textContent = f.toFixed(2);
++  $("fused-tick").style.left = `${Math.round(minConfidence * 100)}%`;
++  $("fused-note").textContent = f >= minConfidence
++    ? "That is enough for Ally to offer help."
++    : f > 0.05 ? "Ally is watching. It only asks when the overall level passes the line." : "All calm.";
++}
++
++function recordEvent(ev) {
++  const kind = ev.kind;
++  const d = ev.data || {};
++  if (kind === "struggle") {
++    // "squint 0.45 (fused 0.62 from lean, squint)"; structured fields win if the agent adds them
++    const m = /^(\w+) ([\d.]+) \(fused ([\d.]+) from ([^)]*)\)/.exec(ev.text);
++    const sk = d.kind || (m && m[1]);
++    const conf = d.confidence !== undefined ? Number(d.confidence) : m ? Number(m[2]) : NaN;
++    const fz = d.fused !== undefined ? Number(d.fused) : m ? Number(m[3]) : NaN;
++    if (sk && !Number.isNaN(conf)) readings[sk] = { value: conf, ts: ev.ts };
++    if (!Number.isNaN(fz)) fusedReading = { value: fz, ts: ev.ts, kinds: m ? m[4] : "" };
++  }
++  if (!TRACE_LABEL[kind]) return;
++  trace.unshift({ id: ev.id, ts: ev.ts, kind: kind === "offer" && ev.text.startsWith("answer:") ? "answer" : kind, text: ev.text });
++  trace.length = Math.min(trace.length, TRACE_MAX);
++  if (kind === "applied" || kind === "offer") scheduleHabits();
++}
++
++let habitsTimer = null;
++function scheduleHabits() {
++  clearTimeout(habitsTimer);
++  habitsTimer = setTimeout(loadHabits, 300);
++}
++
++const WHY = { accepted: "you said yes", habit: "like last time" };
++const RISK_NAME = {
++  scam_popup: "Possible scam",
++  untrusted_site: "Unfamiliar website",
++  remote_access: "Remote-control tool",
++  payment_field: "Payment details",
++};
++
++function plainTrace(t) {
++  if (t.kind === "struggle") {
++    return t.text.replace(/^(\w+) ([\d.]+) \(fused ([\d.]+) from ([^)]*)\)/, (_, k, c, f, kinds) => {
++      const list = kinds.split(", ");
++      return `${k.replaceAll("_", " ")} at ${c} · overall ${f}${list.length > 1 ? ` (${list.map((x) => x.replaceAll("_", " ")).join(" + ")})` : ""}`;
++    });
++  }
++  if (t.kind === "answer") return t.text.replace(/^answer: (\w+).*/, (_, c) => `You said ${c}`);
++  if (t.kind === "risk") {
++    return t.text.replace(/^(\w+) \[\w+\] ?/, (_, k) => `${RISK_NAME[k] || "Possible risk"}${t.text.length > _.length ? ": " : ""}`);
++  }
++  if (t.kind === "applied") return t.text.replace(/ \((\w+)\)$/, (m, why) => (WHY[why] ? `, ${WHY[why]}` : m));
++  return t.text;
++}
++
++function renderTrace() {
++  if (!trace.length) {
++    $("trace").replaceChildren(el("li", { class: "empty", text: "Nothing yet. When Ally notices you struggling, each step shows up here." }));
++    return;
++  }
++  $("trace").replaceChildren(...trace.map((t) => {
++    const [label, tone] = t.kind === "answer" ? ["You answered", "info"] : TRACE_LABEL[t.kind];
++    return el("li", { class: "step " + tone },
++      el("time", { text: new Date(t.ts * 1000).toLocaleTimeString() }),
++      el("b", { class: "step-label", text: label }),
++      el("span", { text: plainTrace(t) }));
++  }));
++}
++
++async function answerOffer(choice) {
++  const offer = lastOffer;
++  if (!offer || offerShown.sent) return;
++  offerShown.sent = true;
++  $("offer-actions").hidden = true;
++  $("offer-text").textContent = choice === "yes" ? "Thank you. Doing it now." : "Okay, I will leave it.";
++  try {
++    await api("POST", "/api/event", { type: "answer", choice, offer_id: offer.id });
++  } catch (e) {
++    $("offer-text").textContent = "Could not send your answer: " + e.message;
++  }
++  pollStatus();
++}
++
++let lastOffer = null;
++
++function renderProactive(p) {
++  if (!p) return;
++  const sensorBits = (p.sensors || []).map((s) => (s.error ? `${SENSOR_NAME[s.name] || s.name}: ${s.error}` : null)).filter(Boolean);
++  const where = p.context && p.context !== "unknown" ? `Watching ${p.context}` : "Watching";
++  const state = $("pro-state");
++  state.textContent = sensorBits.length ? `${where} · ${sensorBits.join(" · ")}` : where;
++  state.classList.toggle("warn", sensorBits.length > 0);
++
++  const pending = p.pending;
++  lastOffer = pending;
++  if (pending) {
++    if (offerShown.id !== pending.id) offerShown = { id: pending.id, since: performance.now(), sent: false };
++    if (!offerShown.sent) {
++      $("offer-text").textContent = pending.prompt;
++      $("offer-actions").hidden = false;
++      const total = Math.max(1, Number(pending.timeout) || 8) * 1000;
++      $("offer-timer").value = Math.min(1, (performance.now() - offerShown.since) / total);
++    }
++    $("offer").classList.add("open");
++  } else {
++    offerShown = { id: null, since: 0, sent: false };
++    $("offer-actions").hidden = true;
++    $("offer-text").textContent = "Nothing to ask right now. Ally will speak up if you seem to be struggling.";
++    $("offer").classList.remove("open");
++  }
++}
++
++async function loadHabits() {
++  let habits = {};
++  try {
++    habits = (await api("GET", "/api/habits")).habits || {};
++  } catch {
++    return;
++  }
++  const box = $("habits");
++  const contexts = Object.entries(habits).filter(([, acc]) => Object.keys(acc).length);
++  $("forget-all").hidden = !contexts.length;
++  if (!contexts.length) {
++    box.replaceChildren(el("p", { class: "empty", text: "Nothing yet. Say yes to a suggestion a couple of times and Ally will remember what you like on that site." }));
++    return;
++  }
++  box.replaceChildren(...contexts.map(([ctx, accs]) => {
++    const forget = el("button", { class: "small", text: "Forget this site", "aria-label": `Forget what Ally learned on ${ctx}` });
++    forget.addEventListener("click", async () => {
++      await api("POST", "/api/habits", { forget: true, context: ctx });
++      loadHabits();
++    });
++    const rows = Object.values(accs).map((a) => {
++      const auto = a.accepted >= autoAfter && a.accepted > a.declined;
++      const label = (a.accommodation && a.accommodation.label) || "an adjustment";
++      return el("li", {}, el("span", { text: `${label[0].toUpperCase()}${label.slice(1)}` }),
++        el("span", { class: "hint", text: ` · you said yes ${a.accepted}×, no ${a.declined}×` }),
++        auto ? el("span", { class: "tag ai", text: "does this on its own" }) : "");
++    });
++    return el("div", { class: "habit" }, el("div", { class: "habit-head" }, el("h4", { text: ctx }), forget), el("ul", {}, ...rows));
++  }));
++}
++
++$("offer-yes").addEventListener("click", () => answerOffer("yes"));
++$("offer-no").addEventListener("click", () => answerOffer("no"));
++
++$("forget-all").addEventListener("click", async () => {
++  if (!confirm("Make Ally forget everything it learned about you?")) return;
++  await api("POST", "/api/habits", { forget: true });
++  loadHabits();
++});
++
++const DEMOS = {
++  squint: [{ type: "struggle", kind: "squint", confidence: 0.45 }, { type: "struggle", kind: "lean", confidence: 0.4 }],
++  rage: [{ type: "struggle", kind: "rage_click", confidence: 0.85 }],
++  scam: [{ type: "risk", kind: "scam_popup", severity: "high", evidence: "the page says your computer is locked" }],
++};
++for (const btn of document.querySelectorAll("[data-demo]")) {
++  btn.addEventListener("click", async () => {
++    for (const body of DEMOS[btn.dataset.demo]) await api("POST", "/api/event", { ...body, source: "dashboard demo" });
++    pollEvents();
++    pollStatus();
++  });
++}
++
++function readConfigNumbers(text) {
++  const min = /^\s*min_confidence\s*=\s*([\d.]+)/m.exec(text || "");
++  const auto = /^\s*auto_apply_after\s*=\s*(\d+)/m.exec(text || "");
++  if (min) minConfidence = Number(min[1]);
++  if (auto) autoAfter = Number(auto[1]);
++}
++
+ // ---------------------------------------------------------------- start
+ 
++buildSignals();
++renderTrace();
++renderMeters();
+ pollStatus();
+ pollEvents();
++loadHabits();
+ loadTools().catch(() => {});
+ loadConfig().catch(() => {});
+-setInterval(pollStatus, 3000);
+-setInterval(pollEvents, 1500);
++setInterval(pollStatus, 1000);
++setInterval(pollEvents, 1000);
++setInterval(renderMeters, 250);
++setInterval(loadHabits, 5000);
+ $("ask-input").focus();
+diff --git a/dashboard/index.html b/dashboard/index.html
+index af47e6f..32745f0 100644
+--- a/dashboard/index.html
++++ b/dashboard/index.html
+@@ -16,6 +16,52 @@
+   </header>
+ 
+   <main>
++    <section aria-labelledby="pro-title" class="card pro" id="proactive">
++      <div class="pro-head">
++        <h2 id="pro-title">Proactive help</h2>
++        <p id="pro-state" class="pro-state"></p>
++      </div>
++
++      <div id="offer" class="offer" aria-live="polite">
++        <p id="offer-text" class="offer-text"></p>
++        <div id="offer-actions" class="offer-actions" hidden>
++          <button id="offer-yes" class="primary big">Yes, please</button>
++          <button id="offer-no" class="big">No thanks</button>
++          <progress id="offer-timer" max="1" value="0" aria-label="Time left to answer"></progress>
++        </div>
++      </div>
++
++      <h3>What Ally notices</h3>
++      <div class="fused">
++        <span class="fused-label" id="fused-label">Overall struggle</span>
++        <div class="meter" id="fused-meter" role="meter" aria-labelledby="fused-label" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0">
++          <div class="fill"></div><div class="tick" id="fused-tick" title="Ally offers help above this line"></div>
++        </div>
++        <span class="meter-value" id="fused-value">0.00</span>
++      </div>
++      <ul id="signals" class="signals" aria-label="Individual signals"></ul>
++      <p id="fused-note" class="hint"></p>
++
++      <h3>What Ally just did</h3>
++      <ol id="trace" class="trace" aria-label="Decision trace, newest first"></ol>
++
++      <h3>What Ally has learned</h3>
++      <div id="habits" class="habits"></div>
++      <div class="row">
++        <button id="forget-all" class="small danger">Forget everything it learned</button>
++      </div>
++
++      <details class="demo">
++        <summary>Try it without a camera</summary>
++        <p class="hint">These send the same messages the camera and mouse sensors would.</p>
++        <div class="demo-actions">
++          <button data-demo="squint">Squinting and leaning in</button>
++          <button data-demo="rage">Clicking in frustration</button>
++          <button data-demo="scam">Scam pop-up</button>
++        </div>
++      </details>
++    </section>
++
+     <section aria-labelledby="ask-title" class="card">
+       <h2 id="ask-title">Ask __ALLY_NAME__</h2>
+       <form id="ask" autocomplete="off">
+diff --git a/dashboard/style.css b/dashboard/style.css
+index d860edb..406d490 100644
+--- a/dashboard/style.css
++++ b/dashboard/style.css
+@@ -21,6 +21,7 @@
+ @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+ 
+ * { box-sizing: border-box; }
++[hidden] { display: none !important; }
+ html { font-size: 112.5%; }
+ body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.5 system-ui, -apple-system, "Segoe UI", Arial, sans-serif; }
+ main { max-width: 980px; margin: 0 auto; padding: 0 16px 32px; }
+@@ -61,8 +62,8 @@ button[aria-pressed="true"] { background: var(--bad); border-color: var(--bad);
+ .reply.warn { color: var(--warn); }
+ .reply.error { color: var(--bad); }
+ 
+-.quick { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+-.quick button { min-height: 56px; }
++.quick, .demo-actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
++.quick button, .demo-actions button { min-height: 56px; }
+ 
+ .log { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; font-size: 0.95rem; }
+ .log li { padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 35%, transparent); }
+@@ -95,3 +96,54 @@ textarea { width: 100%; font-size: 0.92rem; line-height: 1.45; padding: 12px; bo
+ 
+ footer { max-width: 980px; margin: 0 auto; padding: 0 16px 40px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; color: var(--muted); }
+ footer span { flex: 1 1 auto; }
++
++/* ---- proactive help */
++.pro { border-width: 2px; }
++.pro-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
++.pro-state { margin: 0; color: var(--muted); }
++.pro h3 { margin: 22px 0 8px; font-size: 1.1rem; }
++.pro h4 { margin: 0; font-size: 1.05rem; }
++
++.offer { margin-top: 12px; padding: 14px 16px; border: 2px dashed var(--line); border-radius: 12px; }
++.offer.open { border-style: solid; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
++.offer-text { margin: 0; font-size: 1.5rem; line-height: 1.35; font-weight: 600; }
++.offer:not(.open) .offer-text { font-size: 1.1rem; font-weight: 400; color: var(--muted); }
++.offer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 14px; }
++button.big { min-height: 64px; padding: 12px 32px; font-size: 1.35rem; }
++#offer-timer { flex: 1 1 140px; height: 14px; accent-color: var(--accent); }
++
++.fused, .signals li { display: grid; grid-template-columns: 11rem 1fr 3.2rem; align-items: center; gap: 12px; }
++.fused { margin-bottom: 4px; font-weight: 700; }
++.signals { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
++.sig-label { font-weight: 600; }
++.meter { position: relative; height: 18px; border: 2px solid var(--line); border-radius: 999px; background: var(--bg); overflow: hidden; }
++.meter .fill { height: 100%; width: 0; background: var(--accent); transition: width 0.25s linear; }
++.meter.hot .fill { background: var(--warn); }
++.meter .tick { position: absolute; top: -2px; bottom: -2px; width: 3px; margin-left: -1px; background: var(--fg); }
++.meter-value { font-variant-numeric: tabular-nums; text-align: right; }
++
++.trace { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 3px solid var(--line); display: grid; gap: 8px; }
++.trace .step { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; position: relative; }
++.trace .step::before { content: ""; position: absolute; left: -22px; top: 0.55em; width: 11px; height: 11px; border-radius: 50%;
++  background: var(--card); border: 3px solid currentColor; }
++.trace time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.9rem; }
++.step-label { min-width: 6.5rem; }
++.step.info { color: var(--accent); }
++.step.good { color: var(--good); }
++.step.warn { color: var(--warn); }
++.step.bad { color: var(--bad); }
++.step.muted { color: var(--muted); }
++.step span:last-child { color: var(--fg); }
++.empty { color: var(--muted); margin: 0; }
++
++.habit { padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 35%, transparent); }
++.habit-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
++.habit ul { list-style: none; margin: 6px 0 0; padding: 0; }
++.habit li { padding: 2px 0; }
++.demo { margin-top: 18px; }
++.demo summary { cursor: pointer; font-weight: 600; }
++
++@media (max-width: 560px) {
++  .fused, .signals li { grid-template-columns: 1fr 3.2rem; }
++  .fused-label, .sig-label { grid-column: 1 / -1; }
++}

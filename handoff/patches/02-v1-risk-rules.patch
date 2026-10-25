@@ -1,0 +1,686 @@
+diff --git a/ally/risk/__init__.py b/ally/risk/__init__.py
+index 3732a67..be3b748 100644
+--- a/ally/risk/__init__.py
++++ b/ally/risk/__init__.py
+@@ -1,69 +1,55 @@
+-"""Risk detection + warning wording. Owner: Ganesh.
+-
+-Starter heuristics only. Real signals come from extension/ content scripts (page text, form fields)
+-posting {"type": "risk", ...} to /api/event, or from Python checks here calling bus.publish("risk", Risk(...)).
+-"""
+-
+-from __future__ import annotations
+-
+-import re
+-import urllib.parse
+-
+-from ..contracts import Risk
++"""Local risk signals and calm warnings."""
++import threading
++import time
++from .text import check_text, redact
++from .domains import check_url, normalize_host, enable_demo_brands, BRANDS
++from .process import check_process_names, running_process_names, REMOTE_TOOLS
++from .fields import check_fields
+ 
+ WARNINGS = {
+-    "scam_popup": ("This looks like a scam warning. Real companies never ask you to call a number from a pop-up.",
+-                   "Careful. This pop-up looks like a scam. Don't call any number on it."),
+-    "untrusted_site": ("This website may not be what it claims to be.",
+-                       "Careful, this website might not be trustworthy."),
+-    "remote_access": ("Someone may be trying to control your computer. Only allow this if YOU called them.",
+-                      "Careful. This lets someone else control your computer."),
+-    "payment_field": ("You're about to enter payment details. Check the web address first.",
+-                      "You're about to type card details. Make sure this is the right website."),
++    "scam_popup": ("This might be a scam message. Please check with a trusted source.",) * 2,
++    "untrusted_site": ("This website might be imitating another site. Please check the address.",) * 2,
++    "remote_access": ("This tool can allow remote access. Please check who requested it.",) * 2,
++    "payment_field": ("This page might need a closer look before sharing payment details.",) * 2,
+ }
+-
+-SCAM_PHRASES = [
+-    r"call (microsoft|apple|windows) support", r"your computer (is|has been) (infected|locked|blocked)",
+-    r"do not (close|restart|turn off) (this|your)", r"virus(es)? (detected|found)",
+-    r"(buy|purchase) (gift|itunes|google play) cards?", r"your (account|bank) (is|has been) (suspended|frozen)",
+-]
+-REMOTE_TOOLS = ["anydesk", "teamviewer", "ultraviewer", "quickassist", "supremo", "logmein", "screenconnect"]
+-BRANDS = ["paypal", "chase", "wellsfargo", "bankofamerica", "amazon", "apple", "microsoft", "irs", "medicare"]
+-
+-
+-def warning_for(r: Risk) -> tuple[str, str]:
+-    text, spoken = WARNINGS.get(r.kind, ("This might be risky.", "Careful, this might be risky."))
+-    if r.evidence:
+-        text = f"{text}\n\nWhy: {r.evidence}"
+-    return text, spoken
+-
+-
+-def check_text(text: str, url: str = "") -> list[Risk]:
+-    t = (text or "").lower()
+-    out = []
+-    for pat in SCAM_PHRASES:
+-        m = re.search(pat, t)
+-        if m:
+-            out.append(Risk("scam_popup", "high", f'page says "{m.group(0)}"', url=url, source="text"))
+-            break
+-    return out
+-
+-
+-def check_url(url: str) -> list[Risk]:
+-    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+-    out = []
+-    if any(tool in host for tool in REMOTE_TOOLS):
+-        out.append(Risk("remote_access", "high", f"{host} is a remote-control tool", url=url, source="url"))
+-    for b in BRANDS:  # brand name in host but not the brand's real domain, e.g. paypal-secure-login.xyz
+-        if b in host.replace("-", "").replace(".", "") and not re.search(rf"(^|\.){b}\.(com|gov)$", host):
+-            out.append(Risk("untrusted_site", "medium", f"{host} uses the name '{b}' but isn't {b}'s website",
+-                            url=url, source="url"))
+-            break
+-    if re.match(r"^\d+\.\d+\.\d+\.\d+$", host):
+-        out.append(Risk("untrusted_site", "medium", "the address is just numbers", url=url, source="url"))
+-    return out
+-
+-
+-def check_process_names(names: list[str]) -> list[Risk]:
+-    found = [n for n in names if any(tool in n.lower().replace(" ", "") for tool in REMOTE_TOOLS)]
+-    return [Risk("remote_access", "high", f"{found[0]} is running", app=found[0], source="process")] if found else []
++BANNERS = {kind: wording[0].split(". ")[0] + ("." if ". " in wording[0] else "")
++           for kind, wording in WARNINGS.items()}
++
++
++def warning_for(risk):
++    text, spoken = WARNINGS.get(risk.kind, ("This might need a closer look.",) * 2)
++    if risk.evidence:
++        text += "\n\nWhy: " + redact(risk.evidence)
++    return redact(text), redact(spoken)
++
++
++def scan_page(url, text, fields=None):
++    url, text = (url if isinstance(url, str) else ""), (text if isinstance(text, str) else "")
++    fields = fields if isinstance(fields, dict) else {}
++    risks = check_url(url) + check_text(text, url)
++    return risks + check_fields(url, fields, risks)
++
++
++class Deduper:
++    """Suppress repeats per (site, kind) for `window_seconds`. A later, worse signal on the same
++    site (medium, then high) is also suppressed; call reset() to warn again (handy between demos)."""
++    def __init__(self, window_seconds=1800, clock=time.time):
++        self.window_seconds = window_seconds
++        self.clock = clock
++        self._seen = {}
++        self._lock = threading.Lock()
++
++    def reset(self):
++        with self._lock:
++            self._seen.clear()
++
++    def fresh(self, risk):
++        key = (normalize_host(risk.url) or risk.app, risk.kind)
++        with self._lock:
++            now = self.clock()
++            self._seen = {k: t for k, t in self._seen.items()
++                          if 0 <= now - t < self.window_seconds}
++            if key in self._seen:
++                return False
++            self._seen[key] = now
++            return True
+diff --git a/ally/risk/domains.py b/ally/risk/domains.py
+new file mode 100644
+index 0000000..85392f2
+--- /dev/null
++++ b/ally/risk/domains.py
+@@ -0,0 +1,120 @@
++"""Conservative domain identity checks; no network requests."""
++import ipaddress
++import re
++import unicodedata
++from urllib.parse import urlsplit
++from ..contracts import Risk
++from .text import redact
++from .process import REMOTE_TOOLS
++
++BRANDS = {
++    "paypal": ("paypal.com",), "chase": ("chase.com",),
++    "wellsfargo": ("wellsfargo.com",), "bankofamerica": ("bankofamerica.com",),
++    "amazon": ("amazon.com", "amazon.co.uk", "amazon.ca", "amazon.de", "amazon.in", "amazon.com.au", "amazon.co.jp"), "apple": ("apple.com", "icloud.com"),
++    "microsoft": ("microsoft.com", "live.com", "office.com"),
++    "irs": ("irs.gov",), "medicare": ("medicare.gov",), "ssa": ("ssa.gov",),
++}
++# Short brands (irs, ssa, apple, chase) sit one edit from real words (usa, apply, case), so only the
++# exact-skeleton and whole-token checks apply to them; edit distance is for longer, distinctive names.
++FUZZY_MIN = 6
++# An invented brand for the local demo page only (never a real organization). Off unless enabled.
++DEMO_BRANDS = {"pinecrest": ("pinecrest.example",)}
++
++
++def enable_demo_brands(on=True):
++    for brand, domains in DEMO_BRANDS.items():
++        if on:
++            BRANDS[brand] = domains
++        else:
++            BRANDS.pop(brand, None)
++
++SECOND_LEVELS = {"co", "com", "org", "gov", "net", "ac"}
++# Common Cyrillic and Greek visual substitutes, including lowercase forms.
++FOLDS = str.maketrans(dict(zip(
++    "\u0430\u0435\u043e\u0440\u0441\u0443\u0445\u0456\u0458\u0455\u043a\u043c\u0442\u0432\u043d\u04cf\u0501\u051b"
++    "\u03b1\u03b2\u03b5\u03b9\u03ba\u03bd\u03bf\u03c1\u03c4\u03c5\u03c7\u03f2" + "0135",
++    "aeopcyxijskmtbhldq" + "abeikvoptyxc" + "oles")))
++
++
++def normalize_host(url):
++    try:
++        host = urlsplit(url if "://" in url or url.startswith("//") else "//" + url).hostname or ""
++        labels = []
++        for label in host.lower().rstrip(".").split("."):
++            labels.append(label.encode("ascii").decode("idna") if label.startswith("xn--") else label)
++        return ".".join(labels).lower().removeprefix("www.")
++    except (ValueError, UnicodeError):
++        return ""
++
++
++def registrable_domain(host):
++    labels = host.split(".")
++    count = 3 if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in SECOND_LEVELS else 2
++    return ".".join(labels[-count:])
++
++
++def skeleton(label):
++    return label.lower().translate(FOLDS).replace("rn", "m").replace("vv", "w")
++
++
++def mixed_scripts(label):
++    scripts = set()
++    for char in label:
++        if char.isalpha():
++            name = unicodedata.name(char, "")
++            scripts.add(next((s for s in ("LATIN", "CYRILLIC", "GREEK") if s in name), "OTHER"))
++    return len(scripts) > 1
++
++
++def distance(a, b):
++    """Damerau-Levenshtein distance, including adjacent transpositions."""
++    # Unrestricted algorithm with last-seen character positions.
++    size = len(a) + len(b)
++    d = [[0] * (len(b) + 2) for _ in range(len(a) + 2)]
++    d[0][0] = size
++    for i in range(len(a) + 1):
++        d[i + 1][0], d[i + 1][1] = size, i
++    for j in range(len(b) + 1):
++        d[0][j + 1], d[1][j + 1] = size, j
++    last = {}
++    for i, ca in enumerate(a, 1):
++        match = 0
++        for j, cb in enumerate(b, 1):
++            i1, j1 = last.get(cb, 0), match
++            cost = int(ca != cb)
++            if not cost:
++                match = j
++            d[i + 1][j + 1] = min(d[i][j] + cost, d[i + 1][j] + 1, d[i][j + 1] + 1,
++                                  d[i1][j1] + i - i1 - 1 + 1 + j - j1 - 1)
++        last[ca] = i
++    return d[-1][-1]
++
++
++def check_url(url):
++    host = normalize_host(url)
++    if not host:
++        return []
++    # A trusted domain and every subdomain are exempt from identity heuristics.
++    if any(host == real or host.endswith("." + real) for domains in BRANDS.values() for real in domains):
++        return []
++    labels = host.split(".")
++    tokens = re.split(r"[.-]", host)
++    if any(tool in skeleton(token) for tool in REMOTE_TOOLS for token in tokens):
++        return [Risk("remote_access", "high", redact("The address refers to a remote access tool"), url=url, source="url")]
++    reason, severity = "", "medium"
++    try:
++        if isinstance(ipaddress.ip_address(host), ipaddress.IPv4Address):
++            reason = "The address uses an IP address instead of a website name"
++    except ValueError:
++        pass
++    if any(mixed_scripts(label) for label in labels):
++        reason, severity = "An address label mixes writing systems", "high"
++    elif any(skeleton(label) == brand and label != brand for label in labels for brand in BRANDS):
++        reason, severity = "An address label resembles a known organization outside its usual domain", "high"
++    elif any(skeleton(token) in BRANDS for token in tokens):
++        reason = "The address uses an organization name outside its usual domain"
++    elif any(distance(skeleton(label), brand) <= (2 if len(brand) >= 8 else 1)
++             for label in labels for brand in BRANDS if len(brand) >= FUZZY_MIN
++             if abs(len(skeleton(label)) - len(brand)) <= (2 if len(brand) >= 8 else 1)):
++        reason = "The address closely resembles a known organization"
++    return [Risk("untrusted_site", severity, redact(reason), url=url, source="url")] if reason else []
+diff --git a/ally/risk/fields.py b/ally/risk/fields.py
+new file mode 100644
+index 0000000..eb60fff
+--- /dev/null
++++ b/ally/risk/fields.py
+@@ -0,0 +1,10 @@
++"""Payment fields require another concern."""
++from ..contracts import Risk
++from .text import redact
++
++
++def check_fields(url, fields, other_risks):
++    if fields.get("payment") and (fields.get("http") or other_risks):
++        return [Risk("payment_field", "medium", redact("Payment details requested on a page with other risk signals"),
++                     url=url, source="fields")]
++    return []
+diff --git a/ally/risk/process.py b/ally/risk/process.py
+new file mode 100644
+index 0000000..6008511
+--- /dev/null
++++ b/ally/risk/process.py
+@@ -0,0 +1,35 @@
++"""Remote tool signals and optional Windows process inventory."""
++import csv
++import io
++import re
++import subprocess
++import sys
++from ..contracts import Risk
++from .text import redact
++
++REMOTE_TOOLS = ("anydesk", "teamviewer", "ultraviewer", "quickassist", "supremo",
++                "logmein", "screenconnect", "rustdesk", "splashtop", "aeroadmin",
++                "ammyy", "zohoassist", "getscreen")
++
++
++def check_process_names(names):
++    found = {}
++    for name in names:
++        normalized = re.sub(r"\s+", "", str(name).lower()).removesuffix(".exe")
++        for tool in REMOTE_TOOLS:
++            if tool in normalized:
++                found.setdefault(tool, Risk("remote_access", "high", redact(tool + " is running"),
++                                           app=tool, source="process"))
++    return list(found.values())
++
++
++def running_process_names():
++    if sys.platform != "win32":
++        return []
++    try:
++        result = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True,
++                                text=True, timeout=5, check=True,
++                                creationflags=subprocess.CREATE_NO_WINDOW)
++        return [row[0] for row in csv.reader(io.StringIO(result.stdout)) if row]
++    except Exception:
++        return []
+diff --git a/ally/risk/text.py b/ally/risk/text.py
+new file mode 100644
+index 0000000..e5d9d3d
+--- /dev/null
++++ b/ally/risk/text.py
+@@ -0,0 +1,39 @@
++"""Category scoring without quoting sensitive page text."""
++import re
++import unicodedata
++from ..contracts import Risk
++
++PHONE = re.compile(r"\+?(?:\(?\d[\s().-]*){6,}\d\)?")
++
++
++def redact(s):
++    return PHONE.sub("a phone number", str(s or ""))
++
++
++def normalize(text):
++    text = unicodedata.normalize("NFKC", text or "")
++    return " ".join("".join(c for c in text if unicodedata.category(c) != "Cf").lower().split())
++
++
++CATEGORIES = {
++    "technical support request": r"\b(?:call|contact)\s+(?:microsoft|apple|windows|tech(?:nical)?\s+support)\b",
++    "computer locked or infected": r"\bcomputer\s+(?:(?:is|has been)\s+)?(?:infected|locked|blocked)\b|\bvirus(?:es)?\s+(?:detected|found)\b",
++    "request to keep the page open": r"\bdo not\s+(?:close|restart|turn off)\b|\bdon't\s+(?:close|restart|turn off)\b",
++    "unusual payment request": r"\bgift\s+cards?\b|\bwire\s+transfer\b|\bbitcoin\s+atm\b|\bcrypto(?:currency)?\b",
++    "account suspension claim": r"\baccount\s+(?:(?:is|has been)\s+)?(?:suspended|frozen|blocked)\b",
++    "government impersonation claim": r"\b(?:irs|medicare|social security)\b.{0,100}\b(?:arrest\w*|owe\w*|suspend\w*)\b|\b(?:arrest\w*|owe\w*|suspend\w*)\b.{0,100}\b(?:irs|medicare|social security)\b",
++    "urgent deadline": r"\bimmediately\b|\bwithin\s+24\s+hours\b|\bfinal notice\b",
++}
++
++
++def check_text(text, url=""):
++    text = normalize(text)
++    categories = [name for name, pattern in CATEGORIES.items() if re.search(pattern, text)]
++    core = [c for c in categories if c != "urgent deadline"]  # urgency alone never makes a scam
++    high = (("technical support request" in categories and (PHONE.search(text) or len(categories) >= 2))
++            or len(core) >= 3 or ("unusual payment request" in categories and len(core) >= 2))
++    gov_urgent = "government impersonation claim" in categories and len(categories) > len(core)
++    if not high and len(core) < 2 and not gov_urgent:
++        return []
++    return [Risk("scam_popup", "high" if high else "medium",
++                 redact("Page signals: " + "; ".join(categories)), url=url, source="text")]
+diff --git a/ally/risk/wire.py b/ally/risk/wire.py
+new file mode 100644
+index 0000000..17cf085
+--- /dev/null
++++ b/ally/risk/wire.py
+@@ -0,0 +1,66 @@
++"""Duck-typed integration, independent of the agent and bridge modules."""
++import threading
++from ..contracts import Risk
++from . import BANNERS, Deduper, enable_demo_brands, scan_page
++from .process import check_process_names, running_process_names
++
++
++class _Attachment:
++    def __init__(self, agent):
++        self.agent = agent
++        cfg = getattr(agent, "proactive_cfg", None)
++        enable_demo_brands(bool(cfg and cfg().get("demo_brands", False)))
++        self.done = threading.Event()
++        self.deduper = Deduper()
++        self.previous = getattr(agent.bridge, "on_page", None)
++        self.on_page = self._on_page
++        agent.bridge.on_page = self.on_page
++        self.unsubscribe = agent.bus.subscribe("risk_warning", self._warning)
++        self.thread = threading.Thread(target=self._poll, name="ally-risk-processes", daemon=True)
++        self.thread.start()
++
++    def _on_page(self, page):
++        if self.done.is_set() or not isinstance(page, dict):
++            return
++        for risk in scan_page(page.get("url"), page.get("text"), page.get("fields")):
++            if self.deduper.fresh(risk):
++                self.agent.bus.publish("risk", risk)
++
++    def _warning(self, message):
++        if self.done.is_set():
++            return
++        risk = message.get("risk", message) if isinstance(message, dict) else message
++        url = risk.get("url", "") if isinstance(risk, dict) else risk.url
++        kind = risk.get("kind", "") if isinstance(risk, dict) else risk.kind
++        if url and kind in BANNERS:
++            self.agent.bridge.broadcast("showRiskBanner", {"url": url, "kind": kind, "text": BANNERS[kind]})
++
++    def _poll(self):
++        seen = set()
++        while not self.done.is_set():
++            try:
++                for risk in check_process_names(running_process_names()):
++                    if self.done.is_set():
++                        return
++                    if risk.app not in seen:
++                        seen.add(risk.app)
++                        self.agent.bus.publish("risk", risk)
++            except Exception:
++                events = getattr(self.agent, "events", None)
++                if events is not None:
++                    events.add("risk", "The remote access tool check was unavailable.")
++            if self.done.wait(10):
++                break
++
++    def stop(self):
++        self.done.set()
++        if callable(self.unsubscribe):
++            self.unsubscribe()
++        if self.agent.bridge.on_page is self.on_page:
++            self.agent.bridge.on_page = self.previous
++        if threading.current_thread() is not self.thread:
++            self.thread.join(timeout=6)
++
++
++def attach(agent):
++    return _Attachment(agent)
+diff --git a/tests/test_risk.py b/tests/test_risk.py
+new file mode 100644
+index 0000000..6ab3591
+--- /dev/null
++++ b/tests/test_risk.py
+@@ -0,0 +1,254 @@
++"""Risk rules and integration, without a live browser or process inventory."""
++import re
++import sys
++import threading
++import unittest
++from types import SimpleNamespace
++from unittest.mock import patch
++from pathlib import Path
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++from ally.contracts import Risk, EventBus, RISK_KINDS
++from ally.risk import (check_url, check_text, check_process_names, scan_page,
++                       warning_for, redact, Deduper, WARNINGS, BANNERS)
++from ally.risk.domains import normalize_host, registrable_domain, skeleton, distance
++from ally.risk.fields import check_fields
++from ally.risk.process import running_process_names, REMOTE_TOOLS
++from ally.risk.wire import attach
++
++
++class DomainTests(unittest.TestCase):
++    def test_digit_lookalike(self):
++        self.assertEqual(check_url('https://paypa1.com')[0].severity, 'high')
++
++    def test_letter_pair(self):
++        self.assertEqual(check_url('https://rnicrosoft.com')[0].severity, 'high')
++
++    def test_cyrillic_and_idna(self):
++        host = '\u0430pple.com'
++        for h in (host, host.encode('idna').decode()):
++            self.assertEqual(check_url('https://' + h)[0].severity, 'high')
++
++    def test_mixed_scripts(self):
++        self.assertEqual(check_url('https://abc\u0430def.net')[0].severity, 'high')
++
++    def test_typo(self):
++        self.assertEqual(check_url('https://paypall.com')[0].severity, 'medium')
++
++    def test_short_brands_not_fuzzy(self):
++        # one edit from real words: usa, apply, case, its, chases
++        for h in ('usa.gov', 'apply.com', 'case.edu', 'its.com', 'chases.com'):
++            self.assertEqual(check_url('https://' + h), [], h)
++
++    def test_regional_real_domains_and_digit_tokens(self):
++        for h in ('www.amazon.co.uk', 'www.amazon.ca'):
++            self.assertEqual(check_url('https://' + h), [], h)
++        self.assertEqual(check_url('https://amaz0n-help.com')[0].severity, 'medium')
++
++    def test_tokens(self):
++        for h in ('paypal-verify.net', 'paypal.com.secure-login.xyz'):
++            self.assertEqual(check_url('https://' + h)[0].severity, 'medium')
++
++    def test_ip(self):
++        self.assertEqual(check_url('http://192.168.1.1')[0].severity, 'medium')
++
++    def test_clean_unrelated(self):
++        for h in ('pineapple.com', 'chaseoutdoors.com', 'applebees.com', 'recipes.net'):
++            self.assertEqual(check_url('https://' + h), [], h)
++
++    def test_clean_real_domains(self):
++        for h in ('www.paypal.com', 'smile.amazon.com', 'login.live.com', 'icloud.com',
++                  'help.office.com', 'ssa.gov', 'www.medicare.gov', 'paypa1.amazon.com'):
++            self.assertEqual(check_url('https://' + h), [], h)
++
++    def test_remote_hosts(self):
++        for tool in REMOTE_TOOLS:
++            self.assertEqual(check_url('https://' + tool + '.com/download')[0].kind, 'remote_access')
++
++    def test_normalization(self):
++        self.assertEqual(normalize_host('https://WWW.PayPal.COM./a'), 'paypal.com')
++        self.assertEqual(registrable_domain('login.bank.co.uk'), 'bank.co.uk')
++        self.assertEqual(skeleton('rn1cr0s0ft'), 'mlcrosoft')
++        self.assertEqual(distance('chase', 'chsae'), 1)
++
++    def test_malformed(self):
++        for url in ('', 'http://[bad', 'https://xn--.com'):
++            self.assertEqual(check_url(url), [])
++
++
++class TextTests(unittest.TestCase):
++    def test_clean(self):
++        self.assertEqual(check_text('Welcome to the recipe blog'), [])
++
++    def test_single_soft(self):
++        for t in ('Final notice', 'Your account is suspended', 'Buy gift cards', 'Call Microsoft Support'):
++            self.assertEqual(check_text(t), [])
++
++    def test_support_phone(self):
++        self.assertEqual(check_text('Call Microsoft support +1 (800) 555-1212')[0].severity, 'high')
++
++    def test_existing_scam(self):
++        self.assertEqual(check_text('WARNING! Your computer has been locked. Call Microsoft Support')[0].kind,
++                         'scam_popup')
++
++    def test_two_medium(self):
++        self.assertEqual(check_text('Your account is suspended. Do not close this page')[0].severity, 'medium')
++        self.assertEqual(check_text('Your account is suspended. Final notice'), [])  # urgency alone adds nothing
++
++    def test_three_high(self):
++        self.assertEqual(check_text('Your computer is locked. Do not close. Account suspended')[0].severity, 'high')
++        self.assertEqual(check_text('Your computer is locked. Do not close. Final notice')[0].severity, 'medium')
++
++    def test_payment(self):
++        self.assertEqual(check_text('Pay by wire transfer. Account suspended')[0].severity, 'high')
++        self.assertEqual(check_text('Wire transfer immediately'), [])
++
++    def test_ordinary_pages_stay_quiet(self):
++        self.assertEqual(check_text('Buy a gift card for mom. Questions? Call 555-123-4567. Order 1234567'), [])
++        self.assertEqual(check_text('Cryptocurrency prices updated immediately after each trade.'), [])
++
++    def test_government(self):
++        self.assertEqual(check_text('The IRS says you owe money. Final notice')[0].severity, 'medium')
++
++    def test_normalization(self):
++        self.assertEqual(check_text('CALL MICRO\u200bSOFT\n support. Computer is locked')[0].severity, 'high')
++        self.assertEqual(check_text('\uff23\uff41\uff4c\uff4c Microsoft support 8005551212')[0].severity, 'high')
++
++    def test_phone_alone(self):
++        self.assertEqual(check_text('Contact us 8005551212'), [])
++
++    def test_redaction(self):
++        for t in ('1234567', '+1 (800) 555-1212', '800.555.1212', '123 456 7', '\uff11' * 8):
++            self.assertEqual(redact(t), 'a phone number')
++        self.assertEqual(redact('123456'), '123456')
++
++    def test_all_evidence_and_warnings(self):
++        risks = scan_page('https://paypal-123456789.net', 'Call Apple 8005551212. Gift cards immediately',
++                          {'payment': True}) + check_process_names(['AnyDesk 8005551212.EXE'])
++        risks += [Risk(k, evidence='Contact +1 (800) 555-1212 or 123456789') for k in RISK_KINDS]
++        for risk in risks:
++            for output in (redact(risk.evidence), *warning_for(risk)):
++                self.assertIsNone(re.search(r'\d(?:[\s().-]*\d){6}', output))
++            self.assertIn('Why:', warning_for(risk)[0])
++        for risk in risks[:4]:
++            self.assertEqual(risk.evidence, redact(risk.evidence))
++        self.assertEqual(set(BANNERS), set(WARNINGS))
++
++
++class IntegrationTests(unittest.TestCase):
++    def test_deduper_window(self):
++        now = [0]
++        d = Deduper(10, lambda: now[0])
++        r = Risk('scam_popup', url='https://example.com/a')
++        self.assertTrue(d.fresh(r))
++        now[0] = 9
++        self.assertFalse(d.fresh(Risk('scam_popup', url='https://example.com/b')))
++        self.assertTrue(d.fresh(Risk('payment_field', url=r.url)))
++        now[0] = 10
++        self.assertTrue(d.fresh(r))
++
++    def test_deduper_apps(self):
++        d = Deduper()
++        self.assertTrue(d.fresh(Risk('remote_access', app='anydesk')))
++        self.assertFalse(d.fresh(Risk('remote_access', app='anydesk')))
++        self.assertTrue(d.fresh(Risk('remote_access', app='rustdesk')))
++
++    def test_fields(self):
++        for fields, risks, count in (({'payment': True}, [], 0), ({'password': True, 'http': True}, [], 0),
++                                     ({'payment': True, 'http': True}, [], 1),
++                                     ({'payment': True}, [Risk('scam_popup')], 1)):
++            result = check_fields('https://example.com', fields, risks)
++            self.assertEqual(len(result), count)
++            if result:
++                self.assertEqual((result[0].kind, result[0].severity), ('payment_field', 'medium'))
++
++    def test_scan_page(self):
++        result = scan_page('https://paypa1.com', 'Call Apple. Computer is locked', {'payment': True})
++        self.assertEqual([r.kind for r in result], ['untrusted_site', 'scam_popup', 'payment_field'])
++        self.assertEqual(scan_page('https://paypal.com', 'Welcome', {'payment': True}), [])
++
++    def test_process_names(self):
++        names = ['AnY DeSk.EXE', 'Rust Desk.exe', 'Zoho Assist.EXE', 'notepad.exe', 'anydesk.exe']
++        self.assertEqual([r.app for r in check_process_names(names)], ['anydesk', 'rustdesk', 'zohoassist'])
++        self.assertEqual(check_process_names(['notepad.exe']), [])
++
++    def test_process_inventory(self):
++        with patch('ally.risk.process.sys.platform', 'linux'), patch('ally.risk.process.subprocess.run') as run:
++            self.assertEqual(running_process_names(), [])
++            run.assert_not_called()
++        with patch('ally.risk.process.sys.platform', 'win32'), \
++             patch('ally.risk.process.subprocess.CREATE_NO_WINDOW', 0x08000000, create=True), \
++             patch('ally.risk.process.subprocess.run', return_value=SimpleNamespace(stdout='"AnyDesk.exe","42"\n')) as run:
++            self.assertEqual(running_process_names(), ['AnyDesk.exe'])
++            self.assertEqual(run.call_args.kwargs['timeout'], 5)
++            self.assertEqual(run.call_args.kwargs['creationflags'], 0x08000000)
++        with patch('ally.risk.process.sys.platform', 'win32'), \
++             patch('ally.risk.process.subprocess.run', side_effect=OSError):
++            self.assertEqual(running_process_names(), [])
++
++    def test_wire(self):
++        calls, risks = [], []
++        agent = SimpleNamespace(bus=EventBus(), bridge=SimpleNamespace(on_page=None,
++                                broadcast=lambda *args: calls.append(args)))
++        agent.bus.subscribe('risk', risks.append)
++        with patch('ally.risk.wire.running_process_names', return_value=[]):
++            handle = attach(agent)
++            try:
++                page = {'url': 'https://paypa1.com', 'title': 'title', 'text': '', 'fields': {'payment': True}}
++                agent.bridge.on_page(page)
++                agent.bridge.on_page(page)
++                self.assertEqual(len(risks), 2)
++                agent.bus.publish('risk_warning', {'risk': risks[0].to_dict(), 'text': 'unused'})
++                agent.bus.publish('risk_warning', Risk('remote_access'))
++                self.assertEqual(calls, [('showRiskBanner', {'url': page['url'], 'kind': 'untrusted_site',
++                                                           'text': BANNERS['untrusted_site']})])
++            finally:
++                handle.stop()
++            self.assertFalse(handle.thread.is_alive())
++            self.assertIsNone(agent.bridge.on_page)
++            agent.bus.publish('risk_warning', risks[0])
++            self.assertEqual(len(calls), 1)
++
++    def test_wire_process_once(self):
++        got = threading.Event()
++        risks = []
++        agent = SimpleNamespace(bus=EventBus(), bridge=SimpleNamespace(on_page=None, broadcast=lambda *a: None))
++        agent.bus.subscribe('risk', lambda r: (risks.append(r), got.set()))
++        with patch('ally.risk.wire.running_process_names', return_value=['Rust Desk.exe', 'rustdesk.EXE']):
++            handle = attach(agent)
++            try:
++                self.assertTrue(got.wait(2))
++            finally:
++                handle.stop()
++        self.assertEqual([r.app for r in risks], ['rustdesk'])
++
++
++if __name__ == '__main__':
++    unittest.main()
++
++
++class HardeningTests(unittest.TestCase):
++    def test_scan_page_tolerates_bad_types(self):
++        from ally.risk import scan_page
++        self.assertEqual(scan_page(None, 5, "payment"), [])
++        self.assertEqual(scan_page("https://example.org", ["x"], [1]), [])
++
++    def test_deduper_reset(self):
++        from ally.contracts import Risk
++        from ally.risk import Deduper
++        d, r = Deduper(), Risk("scam_popup", "high", "x", url="https://a.example/p")
++        self.assertTrue(d.fresh(r))
++        self.assertFalse(d.fresh(r))
++        d.reset()
++        self.assertTrue(d.fresh(r))
++
++    def test_demo_brand_is_opt_in(self):
++        from ally.risk.domains import enable_demo_brands
++        url = "http://pinecrest-secure-login.localhost:8000/risk-demo.html"
++        self.assertEqual(check_url(url), [])
++        enable_demo_brands(True)
++        try:
++            self.assertEqual(check_url(url)[0].kind, "untrusted_site")
++            self.assertEqual(check_url("https://pinecrest.example/"), [])
++        finally:
++            enable_demo_brands(False)
++        self.assertEqual(check_url(url), [])
