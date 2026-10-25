@@ -315,7 +315,7 @@ def verify(args) -> None:
                         f"{filename}: horizontal overflow at {width}px")
                 page = browser.evaluate(collector)
                 if filename == "index.html":
-                    links = browser.evaluate("Array.from(document.querySelectorAll('.scenario-card'), link => link.href)")
+                    links = browser.evaluate("Array.from(document.querySelectorAll('.scenario-card:not([href^=\"fakebook/\"])'), link => link.href)")
                     require(set(links) == {page_url(base, name) for name in pages if name != "index.html"},
                             "Landing links do not isolate the scenario hosts")
                 risks = scan_page(page)

@@ -1,0 +1,30 @@
+:root { font: 18px/1.4 "Comic Sans MS", "Trebuchet MS", Arial, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #ffe600; color: #111; }
+/* A viewport-sized positioned box, like a pop-up, so Ally's overlay scan sees the text. */
+.scam-wrap { position: fixed; inset: 0; overflow-y: auto; background: repeating-linear-gradient(135deg, #ffe600, #ffe600 24px, #ffb800 24px, #ffb800 48px); }
+.flash-bar { background: #e00000; color: #fff; text-align: center; font-weight: 900; padding: 8px; letter-spacing: 2px; animation: flash 0.8s steps(2) infinite; }
+@keyframes flash { 50% { background: #111; color: #ffe600; } }
+.scam-main { max-width: 760px; margin: 18px auto; padding: 22px 28px 30px; background: #fff; border: 6px solid #e00000; box-shadow: 8px 8px 0 #111; }
+.from { margin: 0; color: #666; font-size: 15px; }
+h1 { margin: 6px 0; font-size: 38px; line-height: 1.1; color: #e00000; text-transform: uppercase; }
+.big { font-size: 28px; font-weight: 900; color: #0a8a0a; margin: 4px 0 12px; }
+.timer-row { display: flex; align-items: center; gap: 16px; background: #111; color: #fff; padding: 8px 16px; }
+.timer-row strong { font: 900 44px "Courier New", monospace; color: #ff3b3b; }
+.left-count { margin: 10px 0; font-size: 22px; color: #e00000; font-weight: 800; }
+.warn { background: #fff0f0; border: 3px dashed #e00000; padding: 10px 14px; font-weight: 700; }
+.claim-form h2 { margin: 18px 0 6px; font-size: 20px; background: #111; color: #ffe600; padding: 4px 10px; }
+label { display: block; margin: 10px 0 2px; font-weight: 700; }
+input { width: 100%; min-height: 46px; border: 3px solid #111; padding: 8px 12px; font: inherit; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.claim-btn { width: 100%; margin-top: 18px; min-height: 66px; border: 4px solid #111; background: linear-gradient(#32e03a, #0a9a12); color: #fff; font: 900 28px inherit; text-shadow: 2px 2px 0 #0007; cursor: pointer; animation: pulse 0.9s infinite alternate; }
+@keyframes pulse { to { transform: scale(1.03); } }
+.status { color: #e00000; font-weight: 700; min-height: 1.4em; }
+.fine { font-size: 14px; color: #444; margin-bottom: 0; }
+.toasts { position: fixed; right: 14px; top: 56px; width: 330px; max-height: calc(100vh - 80px); overflow: hidden; display: flex; flex-direction: column; gap: 10px; z-index: 20; pointer-events: none; }
+.toast { pointer-events: auto; padding: 12px 36px 12px 14px; background: #fff; border-left: 8px solid #e00000; box-shadow: 0 4px 14px #0008; font-weight: 800; position: relative; animation: slide 0.3s ease-out; }
+.toast.green { border-color: #0a9a12; }
+.toast button { position: absolute; top: 4px; right: 6px; border: 0; background: none; font-size: 20px; cursor: pointer; }
+@keyframes slide { from { transform: translateX(120%); } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+@media (max-width: 700px) { h1 { font-size: 28px; } .two { grid-template-columns: 1fr; } .toasts { width: 240px; } }

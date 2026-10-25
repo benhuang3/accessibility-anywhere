@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fakebook - Home</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="fakebook.css">
+<script src="hosts.js" defer></script>
+<script src="fakebook.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+<a class="logo" href="index.html" aria-label="Fakebook home"><span class="logo-mark" aria-hidden="true">f</span>fakebook</a>
+<input class="search" type="search" placeholder="Search Fakebook" aria-label="Search Fakebook">
+<div class="top-actions">
+<button class="bell" id="bell" type="button" aria-label="Notifications, 2 new">&#128276;<span class="badge" aria-hidden="true">2</span></button>
+<span class="me-chip"><span class="avatar a2" aria-hidden="true">ML</span>Margaret Lee</span>
+</div>
+</header>
+<div class="layout">
+<nav class="sidenav" aria-label="Main">
+<a class="on" href="index.html"><span class="ico" aria-hidden="true">&#127968;</span>Home</a>
+<a href="index.html"><span class="ico" aria-hidden="true">&#128101;</span>Friends</a>
+<a href="index.html"><span class="ico" aria-hidden="true">&#128247;</span>Photos</a>
+<a href="index.html"><span class="ico" aria-hidden="true">&#128197;</span>Events</a>
+<a href="index.html"><span class="ico" aria-hidden="true">&#128172;</span>Messages</a>
+</nav>
+<main>
+<div class="card composer"><span class="avatar a2" aria-hidden="true">ML</span><span>What is on your mind, Margaret?</span></div>
+<article class="card post">
+<div class="post-head"><span class="avatar a1" aria-hidden="true">PN</span><div><strong>Priya Nair</strong><small>2 hours ago</small></div></div>
+<p>Sunday at the beach with the whole gang! Wish you were here, Grandma. We saved you a seat next time.</p>
+<img class="photo" src="img/beach.svg" alt="Sunset over the beach">
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a3" aria-hidden="true">DW</span><div><strong>Dorothy Wells</strong><small>3 hours ago</small></div></div>
+<p>My tomatoes finally came in. Eleven this morning! Who wants some for sandwiches?</p>
+
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a1" aria-hidden="true">PN</span><div><strong>Priya Nair</strong><small>5 hours ago</small></div></div>
+<p>Read this at lunch and it made my whole week. Look at them!</p>
+<a class="shared" id="shared-news" href="news.html" data-host="puppynews"><img src="img/puppy-kitty.svg" alt="A puppy and a kitten cuddling"><div><small>PawsDaily News</small><strong>Puppy and kitty are best friends</strong></div></a>
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a6" aria-hidden="true">RC</span><div><strong>Robert Chen</strong><small>6 hours ago</small></div></div>
+<p>Spring garden update. The roses are showing off again this year.</p>
+<img class="photo" src="img/garden.svg" alt="Flower garden in bloom">
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a4" aria-hidden="true">EP</span><div><strong>Evelyn Park</strong><small>Yesterday</small></div></div>
+<p>Grandson Max turned five today. He blew out all the candles and then asked for a second cake. Of course I said yes.</p>
+<img class="photo" src="img/cake.svg" alt="Birthday cake with candles">
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a5" aria-hidden="true">HB</span><div><strong>Harold Brooks</strong><small>Yesterday</small></div></div>
+<p>Walked the whole lower trail this morning, 4 miles. The knees complained, but the view made up for it.</p>
+<img class="photo" src="img/hike.svg" alt="Mountain trail">
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a2" aria-hidden="true">BC</span><div><strong>Margaret&#39;s Book Club</strong><small>Yesterday</small></div></div>
+<p>Reminder: we meet Thursday at 2pm in the library annex. This month is the lighthouse mystery. Bring your questions and your favorite tea.</p>
+
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a1" aria-hidden="true">PN</span><div><strong>Priya Nair</strong><small>2 days ago</small></div></div>
+<p>Baked your oatmeal cookies from the recipe card, Grandma! They are not as good as yours but the whole apartment smells amazing.</p>
+<img class="photo" src="img/cookies.svg" alt="A tray of cookies">
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a3" aria-hidden="true">SO</span><div><strong>Susan Ortiz</strong><small>2 days ago</small></div></div>
+<p>Does anyone know a good plumber in the neighborhood? The kitchen tap has been dripping for a week and it is driving me up the wall.</p>
+
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a6" aria-hidden="true">DL</span><div><strong>Daniel Lee</strong><small>3 days ago</small></div></div>
+<p>Cousin Anika graduated today. So proud of her. Four years of hard work and she did it with honors!</p>
+<img class="photo" src="img/graduation.svg" alt="Graduation cap">
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a5" aria-hidden="true">WR</span><div><strong>Walter Reyes</strong><small>3 days ago</small></div></div>
+<p>Fishing report: nothing caught, nothing lost, one very good sandwich. A perfect Saturday on the lake.</p>
+
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a4" aria-hidden="true">LF</span><div><strong>Linda Foster</strong><small>4 days ago</small></div></div>
+<p>Look what the mail carrier left on my porch: a postcard from my sister in Portugal. She says the pastries are dangerous.</p>
+
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a1" aria-hidden="true">PN</span><div><strong>Priya Nair</strong><small>4 days ago</small></div></div>
+<p>Call you tonight after dinner, Grandma! Love you to the moon and back.</p>
+
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a2" aria-hidden="true">HA</span><div><strong>Henry Adler</strong><small>5 days ago</small></div></div>
+<p>Neighborhood walking group is back. Tuesdays and Fridays, 9am, starting at the park gate. All paces welcome, slow ones especially.</p>
+
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<article class="card post">
+<div class="post-head"><span class="avatar a6" aria-hidden="true">CS</span><div><strong>Carol Simmons</strong><small>6 days ago</small></div></div>
+<p>Finished the quilt! Three months of evenings, and it only has two crooked corners. I am calling it character.</p>
+
+<div class="reactions"><button type="button" data-like>Like</button><button type="button">Comment</button><button type="button">Share</button></div>
+</article>
+<p class="card">You are all caught up. Check back later for more from your family and friends.</p>
+</main>
+<aside class="rail" aria-label="Notifications and messages">
+<section class="card" id="notifications" tabindex="-1">
+<h2>Notifications</h2>
+<a class="notif alert" id="gift-notif" href="claim.html" data-host="gift-card-rewards"><span class="avatar sm a-odd" aria-hidden="true">Az</span><div><p><strong>Amaz0n Rewards Team</strong> sent you a message: Congratulations! You&#39;ve won a FREE $50 Amazon gift card, claim now</p><small>Just now</small></div></a>
+<a class="notif" href="index.html"><span class="avatar sm a1" aria-hidden="true">PN</span><div><p><strong>Priya Nair</strong> shared a link with you</p><small>5 hours ago</small></div></a>
+<a class="notif" href="index.html"><span class="avatar sm a4" aria-hidden="true">EP</span><div><p><strong>Evelyn Park</strong> invited you to Max&#39;s birthday</p><small>Yesterday</small></div></a>
+</section>
+<section class="card">
+<h2>Messages: Priya</h2>
+<div class="chat-log" id="chat-log">
+<div class="bubble">Hi Grandma! Did you see the video I sent?</div>
+<div class="bubble me">Not yet, dear. I will look after lunch.</div>
+<div class="bubble">It is the puppy and the kitten. You will love it!</div>
+</div>
+<form class="chat-form" id="chat-form" autocomplete="off"><input name="message" placeholder="Write to Priya" aria-label="Write to Priya"><button type="submit">Send</button></form>
+</section>
+</aside>
+</div>
+</body>
+</html>

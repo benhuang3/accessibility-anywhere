@@ -132,3 +132,28 @@ behavior flags, and new system tools are additional live-wire checks, not
 return values that `scan_page` can produce by itself. Optional AI review and
 a live trusted-person call require the presenter's configured agent and
 remain manual demo checks.
+
+## Fakebook demo script
+
+A fictional social site for the demo video, in `demo/fakebook/`. Serve `demo/` as above
+(`python -m http.server 8000`). Each scene is its own `*.localhost` host so Ally's per-host
+cooldown stays separate. The links switch hosts by themselves. Do not name the feed host
+`fakebook.localhost`: Ally's lookalike rule rightly reads "fakebook" as close to a real site and
+warns on the feed.
+
+1. "Hey Ally, open Facebook" opens the feed: **http://social.localhost:8000/fakebook/**
+   Margaret Lee's home feed, 15 posts (long enough to scroll with eye tracking), a notifications
+   card and a chat with her granddaughter Priya. Expected risk: none.
+2. Scroll, then open Priya's shared link "Puppy and kitty are best friends":
+   **http://puppynews.localhost:8000/fakebook/news.html**
+   A deliberately cluttered article (ads, sidebars, two columns, tiny text, sticky banners). Use
+   "make it easier to read". **Show image** reveals the puppy and kitten drawing and plays a soft
+   chime made with Web Audio. Expected risk: none. **Back to Fakebook** returns to the feed.
+3. Back on the feed, the bell badge and the "Amaz0n Rewards Team" notification offer a free $50
+   gift card. Click it: **http://gift-card-rewards.localhost:8000/fakebook/claim.html**
+   Countdown, "only 3 left", a cascade of in-page toasts, and fields for login, phone, card number,
+   expiry and CVV. It uses no `alert()`, downloads, fullscreen or history tricks; close the tab
+   normally. The form sends and saves nothing. Expected risk: `scam_popup HIGH` and
+   `payment_field MEDIUM`.
+
+If you rehearse, remember Ally snoozes a host after a warning; use a fresh tab or a new agent run.
