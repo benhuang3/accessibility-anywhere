@@ -33,7 +33,7 @@ BRANDS: dict[str, tuple[str, ...]] = {
     "zelle": ("zellepay.com",),
     "microsoft": ("microsoft.com", "live.com", "office.com", "outlook.com", "windows.com"),
     "apple": ("apple.com", "icloud.com"),
-    "google": ("google.com", "gmail.com"),
+    "google": ("google.com", "gmail.com", "googleblog.com", "googledomains.com", "youtube.com", "android.com"),
     "amazon": ("amazon.com", "amazon.co.uk", "amazon.ca", "amazon.de", "amazon.in",
                "amazon.com.au", "amazon.co.jp", "amazon.fr", "amazon.it", "amazon.es"),
     "netflix": ("netflix.com",),
@@ -166,6 +166,10 @@ def _distance(left: str, right: str) -> int:
     return table[-1][-1]
 
 
+def _tld(host: str) -> str:
+    return host.rsplit(".", 1)[-1]
+
+
 def check_domain(url: str, extra_brands: dict[str, tuple[str, ...]] | None = None,
                  allow: tuple[str, ...] = ()) -> DomainCheck:
     """Return deterministic local signals, with trusted domains taking precedence."""
@@ -181,6 +185,9 @@ def check_domain(url: str, extra_brands: dict[str, tuple[str, ...]] | None = Non
     trusted = TOP_SITES + allow + tuple(domain for domains in brands.values() for domain in domains)
     if any(host == domain or host.endswith("." + domain)
            for domain in (registrable_domain(item) for item in trusted) if domain):
+        return clean
+    # Brand top-level domains (m365.cloud.microsoft, share.google) can only be registered by the brand itself.
+    if _tld(host) in brands:
         return clean
     own_name = registrable.split(".")[0]
     if own_name in _REGIONAL_BRANDS and own_name in brands and registrable[len(own_name) + 1:] in _REGIONAL_SUFFIXES:

@@ -59,8 +59,9 @@ class TextScoreTests(unittest.TestCase):
         self.check_score("Windows call now 1-800-555-0100", 8, "medium")
 
     def test_allowlist_preserves_score(self):
-        for host in ("https://ftc.gov/advice", "https://support.microsoft.com/help"):
-            result = self.check_score(CLASSIC, 10, None, url=host)
+        # On Microsoft's own site "Microsoft" is not a brand claim, so the score drops by the brand's 2 points.
+        for host, score in (("https://ftc.gov/advice", 10), ("https://support.microsoft.com/help", 8)):
+            result = self.check_score(CLASSIC, score, None, url=host)
             self.assertTrue(result.allowlisted)
         self.check_score(CLASSIC, 10, "high", url="https://unknown.test")
         for host in ("https://ftc.gov@evil.example/", "https://ftc.gov.evil.example",
@@ -153,6 +154,28 @@ class OrderNumberTests(unittest.TestCase):
     def test_formatted_and_toll_free_numbers_still_count(self):
         for number in ("(415) 555-0142", "415.555.0142", "+1 415 555 0142", "8005550142"):
             self.assertIn("phone", score_text("call support now " + number).signals, number)
+
+
+class DensityTests(unittest.TestCase):
+    """Found by a 500-site sweep: real homepages scatter a brand, a phone number and security words far apart."""
+
+    def test_signals_far_apart_do_not_add_up(self):
+        filler = " ".join(["Our team builds reliable hosting for small businesses."] * 30)
+        page = "Works with Windows and Google. " + filler + " Malware protection included. " + filler + " Call 1-888-555-0123"
+        self.assertIsNone(score_text(page, "https://host.example").severity)
+
+    def test_the_same_signals_close_together_still_flag(self):
+        page = "Windows Defender: your computer is infected with malware. Call 1-888-555-0123 now."
+        self.assertEqual(score_text(page, "https://alert.example").severity, "high")
+
+    def test_a_brand_on_its_own_site_is_not_a_claim(self):
+        page = "Apple Store. Call 1-800-555-0110 to order. Visit an Apple Store near you."
+        self.assertNotIn("brand", score_text(page, "https://www.apple.com/").signals)
+        self.assertIn("brand", score_text(page, "https://apple-support.example/").signals)
+
+    def test_a_footer_tel_link_does_not_count_on_a_long_page(self):
+        long_page = "Windows tips. Malware explained. " + "Plain article text. " * 200
+        self.assertNotIn("phone", score_text(long_page, "https://blog.example", has_tel_link=True).signals)
 
 
 if __name__ == "__main__":
