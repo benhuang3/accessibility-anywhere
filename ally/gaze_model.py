@@ -85,7 +85,7 @@ def _ridge(x: np.ndarray, y: np.ndarray, lam: float) -> np.ndarray:
     penalty = np.diag([0.0] + [1.0] * (x.shape[1] - 1))
     return np.linalg.solve(x.T @ x + lam * penalty, x.T @ y)
 
-def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET):
+def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET, openness_cutoff=None):
     """Fit a model from (feature vector, target point) samples across at least six dots."""
     if feature_set not in ('v1', 'v2'):
         raise ValueError('feature_set must be v1 or v2')
@@ -112,7 +112,7 @@ def fit(samples, screen, feature_set=DEFAULT_FEATURE_SET):
     pose_size = 6 if feature_set == 'v2' else 5
     poses = np.asarray([f[pose_start:pose_start + pose_size] for f, _ in samples], dtype=float)
     calibration_pose = np.median(poses, axis=0).tolist()
-    return {'version': MODEL_VERSION, 'features': feature_set, 'screen': list(screen), 'mean': mean.tolist(), 'std': std.tolist(), 'coef': coef.tolist(), 'offset': [0.0, 0.0], 'lambda': lam, 'error_px': round(e), 'dots': len(targets), 'training_samples': [[list(f), list(t)] for f, t in samples], 'calibration_pose': calibration_pose, 'created': time.time()}
+    return {'version': MODEL_VERSION, 'features': feature_set, 'screen': list(screen), 'mean': mean.tolist(), 'std': std.tolist(), 'coef': coef.tolist(), 'offset': [0.0, 0.0], 'lambda': lam, 'error_px': round(e), 'dots': len(targets), 'training_samples': [[list(f), list(t)] for f, t in samples], 'calibration_pose': calibration_pose, 'openness_cutoff': openness_cutoff, 'created': time.time()}
 
 def retune(model, samples):
     """Return a copy translated by the median target-minus-prediction residual."""
@@ -152,6 +152,21 @@ def clean_samples(samples, min_openness=0.12, jump_threshold=0.08, preserve_open
             out.append((f, t, op) if preserve_openness and len(item) > 2 else (f, t))
         prev = a
     return out
+
+def openness_cutoff(samples, fraction=0.5):
+    """Estimate a blink cutoff from half the median of target-level openness medians."""
+    by_target = {}
+    for item in samples:
+        if len(item) < 3:
+            continue
+        _features, target, openness = item[:3]
+        by_target.setdefault(tuple(target), []).append(float(openness))
+    medians = [float(np.median(values)) for values in by_target.values() if values]
+    return float(np.median(medians) * fraction) if medians else 0.12
+
+def is_blink(model, openness):
+    """Return whether openness is below this person's calibrated blink cutoff."""
+    return float(openness) < float(model.get('openness_cutoff') or 0.12)
 
 def validate(model, samples):
     """Return median held-out pixel error, 3x3 region hits, and per-target predictions."""

@@ -121,6 +121,15 @@ class GazeModelTests(unittest.TestCase):
         self.assertEqual(selected, frames[2])
         self.assertIsNone(gaze_eval._frame_before_click([(10.01, [6])], 10.0))
 
+    def test_personal_blink_cutoff_uses_target_medians(self):
+        samples = [([0], (index // 2, 0), value)
+                   for index, value in enumerate((0.10, 0.11, 0.30, 0.32, 0.42, 0.44))]
+        cutoff = gm.openness_cutoff(samples)
+        self.assertAlmostEqual(cutoff, 0.155)
+        self.assertTrue(gm.is_blink({'openness_cutoff': cutoff}, 0.10))
+        self.assertFalse(gm.is_blink({'openness_cutoff': cutoff}, 0.20))
+        self.assertTrue(gm.is_blink({}, 0.11))
+
     def test_corrector_filter(self):
         samples = []
         for i, (x, y) in enumerate([(100, 100), (960, 100), (1820, 100), (100, 540), (960, 540), (1820, 540), (100, 980), (960, 980), (1820, 980)]):

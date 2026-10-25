@@ -29,14 +29,14 @@ def _summarize(points, screen):
             'region_hits': hits, 'region_total': len(points)}
 
 
-def _grouped_samples(targets, feats, phase):
+def _grouped_samples(targets, feats, phase, min_openness=0.12):
     groups = {}
     for target in targets:
         if target.get('phase') != phase:
             continue
         items = [(f, (target['x'], target['y']), op) for t, f, op in feats
                  if target['start'] <= t <= target['end']]
-        clean = gm.clean_samples(items, preserve_openness=True)
+        clean = gm.clean_samples(items, min_openness=min_openness, preserve_openness=True)
         if clean:
             groups.setdefault(tuple((target['x'], target['y'])), []).extend(clean)
     return groups
@@ -56,19 +56,23 @@ def evaluate(path):
             z = gm.features_for_model({'features': fs}, fr['lm'], fr.get('bs'), fr.get('mat'), fr['w'], fr['h'])
             if z:
                 feats.append((fr['t'], z[0], z[1]))
-        calibration = _grouped_samples(targets, feats, 'calibration')
+        raw_calibration = [(f, (target['x'], target['y']), op)
+                           for target in targets if target.get('phase') == 'calibration'
+                           for t, f, op in feats if target['start'] <= t <= target['end']]
+        cutoff = gm.openness_cutoff(raw_calibration)
+        calibration = _grouped_samples(targets, feats, 'calibration', cutoff)
         train = [item for group in calibration.values() for item in group]
         if len(calibration) < 6:
             continue
-        model = gm.fit([(f, target) for f, target, _ in train], screen, fs)
+        model = gm.fit([(f, target) for f, target, _ in train], screen, fs, cutoff)
         corrector = gm.Corrector(model)
         for click in sorted((r for r in rows if r.get('rec') == 'click'), key=lambda c: c['t']):
             nearest = _frame_before_click(feats, click['t'])
             if nearest:
                 corrector.add(nearest[1], (click['x'], click['y']), click['t'])
 
-        validation = _grouped_samples(targets, feats, 'validation')
-        drift = _grouped_samples(targets, feats, 'drift')
+        validation = _grouped_samples(targets, feats, 'validation', cutoff)
+        drift = _grouped_samples(targets, feats, 'drift', cutoff)
         validation_points = []
         for target, group in validation.items():
             pred = np.median([gm.predict(model, f) for f, _, _ in group], axis=0)
