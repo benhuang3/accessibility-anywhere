@@ -1,45 +1,46 @@
-# AGENTS.md: Ally (Cal Hacks 13.0)
+# Agent instructions
 
-Windows accessibility agent for older adults. Python 3.11+. Read FOUNDATION.md for message formats, the simulate CLI and ownership; don't re-derive it.
+Shared rules for every coding agent on this repo (Claude Code, Codex, Cursor). Read the README for
+what Ally does; this file is about how to work on it.
 
-## Ownership (touch only your own folders unless told otherwise)
+## Project
 
-| Owner | Area |
-|---|---|
-| Ben H | `ally/` core, `proactive.py`, `habits.py`, `contracts.py`, `agent.py`, merges |
-| Hayden | `ally/senses/` |
-| Ben W | `ally/voice_confirm.py`, voice |
-| Ganesh | `ally/overlay/`, `dashboard/`, `extension/` (risk UI), `ally/risk/` |
+- Pure Python 3.11+ core in `ally/`, no required packages. Optional extras in `requirements-optional.txt`.
+- `plugins/`: one Python function per tool. `dashboard/`: static HTML/JS/CSS served by the agent.
+  `extension/`: the Chrome extension (Manifest V3). `config.toml` / `ally/default_config.toml`: settings.
+- On Windows use `python`, not `python3`.
 
-## Contracts
+## Checks
 
-- `ally/contracts.py` is canonical (Struggle, Risk, Offer, bus topics). Never invent a parallel format.
-- The extension talks to the agent ONLY through the existing `extension/background.js` WebSocket bridge. Do not add a new extension<->agent transport.
-- Risk events enter the bus via the agent (coordinate with Ben H).
-- Content scripts must not call the HTTP API directly.
+Run the unit tests before saying a change is done:
 
-## Dashboard / extension rules
+```
+cd tests
+python -m unittest test_config test_registry test_brain test_network test_runtime test_handsfree
+```
 
-- CSP is `script-src 'self'`: NO inline `<script>` blocks, NO `onclick=` or other inline `on*=` handlers. All JS lives in separate `.js` files.
-- API calls need the `X-Ally-Token` header.
+They use a fake Claude API and need no key. Do not run `e2e_chrome.py` or start Ally (`run.py`)
+unless told to: both use port 8765, and other agents may be working at the same time.
 
-## Overlay rules
+## Working in parallel
 
-- All Tk calls happen on the single overlay thread, via its queue.
-- Keep `SetProcessDpiAwareness` before any window is created.
+Several agents work on this repo at once, each in its own git worktree and branch (`agent/<name>`).
 
-## Secrets
+- Edit only the files or folders your task names. If you need to change something outside them,
+  stop and say so in your final message instead of editing it.
+- Commit your work on your own branch with a clear message. Never push, merge, rebase or switch branches.
+- Don't touch `.env`, `state/` or `logs/`.
+- End with a short report: what you changed (files), test results, and anything left undone.
 
-- No API keys in the repo or the extension. `.env` only (it is gitignored). The repo goes public at submission.
+## Style
 
-## Copy and privacy wording
+Match the surrounding code: standard library first, small functions, type hints where the file
+already uses them, comments only where the reason isn't obvious. User-facing text is plain and short.
 
-- Warnings are calm and hedged; never include phone numbers.
-- Camera frames stay local. Screenshots for "describe screen" and voice audio go to cloud APIs. Never claim "nothing leaves your computer".
+## Ganesh's areas
 
-## Workflow
+- `ally/risk/` (scam and risk rules, warning copy), the risk parts of `extension/`, `dashboard/` and `ally/overlay/` are Ganesh's. Ask before editing them.
 
-- Small commits; tests must pass before each commit:
-  `cd tests && python -m unittest test_config test_registry test_brain test_network test_runtime test_proactive`
-- Run `/ship-check` before each merge checkpoint.
-- Deadlines: feature freeze Sat midnight, submission Sun Oct 25, 9:00 AM PDT.
+## Dashboard and extension security
+
+- The dashboard CSP is `script-src 'self'; style-src 'self'`: no inline `<script>`, no `on*=` handlers, no `style=` attributes. All JS goes in separate `.js` files, and API calls send the `X-Ally-Token` header.
