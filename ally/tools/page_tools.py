@@ -24,7 +24,7 @@ def _say_first(ctx, text: str) -> None:
             pass
 
 
-@tool(timeout=40)
+@tool(timeout=150)
 def hide_clutter(ctx, kinds: Annotated[list[ClutterKind] | None, "Which kinds to hide; leave out for all."] = None,
                  on: bool = True):
     """Hide clutter on the current web page: cookie banners, sign-up pop-ups, chat bubbles, ads, share bars, animation.
@@ -53,7 +53,7 @@ def simplify_menus(ctx, on: bool = True):
     return summary(report, "Opened the menu." if on else "Closed the menu.")
 
 
-@tool(timeout=40)
+@tool(timeout=150)
 def enlarge_buttons(ctx, on: bool = True):
     """Make buttons, links and form boxes on the current web page bigger and easier to click, without zooming.
 
@@ -89,7 +89,7 @@ def check_page_layout(ctx):
     return f"Something's off: {join_said(problems)}. Say reset to put the page back."
 
 
-@tool(timeout=120)
+@tool(timeout=240)
 def make_page_easier(ctx, steps: Annotated[list[StepName], "Steps to run: clutter, menus, text, buttons."],
                      on: bool = True):
     """Run several page steps together: hide clutter, simplify menus, bigger text, bigger buttons.
@@ -101,7 +101,7 @@ def make_page_easier(ctx, steps: Annotated[list[StepName], "Steps to run: clutte
     return summary(report)
 
 
-@tool(timeout=120)
+@tool(timeout=240)
 def simplified_mode(ctx, on: bool = True,
                     remember: Annotated[bool, "Only after the user said yes to doing this every time on this site."] = False,
                     everywhere: Annotated[bool, "With on=false: turn simple mode off on every site."] = False):
@@ -127,7 +127,11 @@ def simplified_mode(ctx, on: bool = True,
     _say_first(ctx, "One moment, I'm making this page simpler.")
     session.call("stepOn", step="simple", opts={"working": True})
     try:
-        report = run_steps(ctx, plan["steps"], opts=plan["opts"], session=session)
+        # Articles go to the reader view, which replaces what's on screen, so there's nothing to check by eye.
+        report = run_steps(ctx, plan["steps"], opts=plan["opts"], session=session, review=False if plan["reader"] else None,
+                           after_revert=lambda: session.call("stepOff", step="simple", opts={}))
+        if report.get("reverted"):
+            return summary(report)
         if plan["reader"]:
             session.call("stepOn", step="reader", opts={"withStrip": "menus" in plan["steps"]})
             report["said"].append("opened the article in big, clear text")

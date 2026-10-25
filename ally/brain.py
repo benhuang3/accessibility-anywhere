@@ -316,13 +316,14 @@ class Brain:
 
     # ---------------------------------------------------------------- one-off questions
     def ask(self, prompt: str, image: bytes | None = None, media_type: str = "image/png",
-            max_tokens: int = 600) -> str:
+            max_tokens: int = 600, images: list[tuple[bytes, str]] | None = None) -> str:
+        """One question to Claude (no tools). images: several (bytes, media_type) pictures, in order."""
         if self.mode() == "offline":
             raise ToolError("This needs Claude. Add ANTHROPIC_API_KEY to the .env file and check the internet.")
         content = []
-        if image:
-            content.append({"type": "image", "source": {"type": "base64", "media_type": media_type,
-                                                         "data": base64.b64encode(image).decode("ascii")}})
+        for data, mtype in ([(image, media_type)] if image else []) + list(images or []):
+            content.append({"type": "image", "source": {"type": "base64", "media_type": mtype,
+                                                         "data": base64.b64encode(data).decode("ascii")}})
         content.append({"type": "text", "text": prompt})
         body = {"model": self.cfg.get("model", "claude-haiku-5-5"), "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": content}]}

@@ -60,8 +60,9 @@ class Context:
         self._agent.speaker.stop()
 
     def ask(self, prompt: str, image: bytes | None = None, media_type: str = "image/png",
-            max_tokens: int = 600) -> str:
-        return self._agent.brain.ask(prompt, image=image, media_type=media_type, max_tokens=max_tokens)
+            max_tokens: int = 600, images: list | None = None) -> str:
+        return self._agent.brain.ask(prompt, image=image, media_type=media_type, max_tokens=max_tokens,
+                                     images=images)
 
     def run(self, tool_name: str, **args):
         return self._agent.call_tool(tool_name, args, source=self.source, depth=self.depth)

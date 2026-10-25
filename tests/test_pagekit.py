@@ -59,6 +59,9 @@ class FakeExtension:
         return {"tabId": 7, "url": "https://example.test/", "zoom": self.zoom, "defaultZoom": 1.0,
                 "type": self.page_type, "reasons": ["this page handles payments"] if self.page_type == "excluded" else []}
 
+    def a_pageBaseline(self, force=False):
+        return {"tabId": 7, "zoom": self.zoom, "metrics": audit_entry(self.zoom)}
+
     def a_auditAtZooms(self, levels=(), maxZoom=2.5):
         out = []
         for z in levels:
@@ -239,20 +242,25 @@ class VerifyBackOffTests(unittest.TestCase):
         self.assertTrue(report["verify"]["ok"])
 
     def test_zoom_backs_off_when_verify_fails(self):
-        ext = FakeExtension()
-        ctx = Ctx(ext)
-        core.run_steps(ctx, ["text"])
-        chosen = ext.zoom
-        # The page breaks above a lower zoom only after it was applied (e.g. late-loading content).
-        ext.zoom = 1.0
-        ext.breaks_above = 1.25
-        real = ext.a_auditAtZooms
-        ext.a_auditAtZooms = lambda levels=(), maxZoom=2.5: dict(real(levels, maxZoom), audits=[
-            audit_entry(z) for z in levels])  # the audit didn't see the breakage
-        report = core.run_steps(ctx, ["text"])
-        self.assertLessEqual(ext.zoom, 1.25 + 1e-6)
+        ext = FakeExtension(breaks_above=1.25)  # 14px text predicts 150%, but the page breaks above 125%
+        report = core.run_steps(Ctx(ext), ["text"])
+        self.assertAlmostEqual(ext.zoom, 1.25)
         self.assertTrue(report["backed_off"])
-        self.assertGreater(chosen, 1.0)
+        self.assertTrue(report["verify"]["ok"])
+
+    def test_text_zoom_is_predicted_without_trying_levels(self):
+        ext = FakeExtension()
+        core.run_steps(Ctx(ext), ["text"])
+        self.assertAlmostEqual(ext.zoom, 1.5)  # 14px x 1.5 = 21px >= 20px goal
+        self.assertNotIn("auditAtZooms", [c[0] for c in ext.calls])
+
+    def test_a_zoom_chrome_remembers_is_kept_unless_asked_bigger(self):
+        ext = FakeExtension()
+        ext.zoom = 1.75  # Chrome already zooms this site
+        core.run_steps(Ctx(ext), ["text"])
+        self.assertAlmostEqual(ext.zoom, 1.75)
+        core.run_steps(Ctx(ext), ["text"], opts={"text": {"step_up": True}})
+        self.assertAlmostEqual(ext.zoom, 2.0)
 
     def test_verify_reads_only(self):
         ext = FakeExtension()

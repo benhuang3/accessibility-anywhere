@@ -29,7 +29,11 @@ ${prefixed(FIT_PAUSE, [":focus-visible"])} {
 }
 `;
 
-const BUTTON_LIKE = ["button", "[role=button]", "input[type=submit]", "input[type=button]", "input[type=reset]"];
+// Buttons inside list items, trees and menu bars (expand arrows in a table of contents, menu toggles) are
+// compact on purpose: making them 44px tall pushes their rows apart and the list stops lining up.
+const COMPACT = ":not(li *, [role=tree] *, [role=treeitem] *, [role=menubar] *, [role=menu] *)";
+const BUTTON_LIKE = ["button", "[role=button]", "input[type=submit]", "input[type=button]", "input[type=reset]"]
+  .map((b) => `${b}${COMPACT}`);
 const FIELDS = [
   "select", "textarea", "input:not([type])", "input[type=text]", "input[type=search]", "input[type=email]",
   "input[type=tel]", "input[type=url]", "input[type=number]", "input[type=password]", "input[type=date]",

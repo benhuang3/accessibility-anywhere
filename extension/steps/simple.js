@@ -133,6 +133,7 @@ STEPS.simple = {
         errors.push(`${name}: ${(e && e.message) || e}`);
       }
     }
+    if (STEPS.fix) await STEPS.fix.off(tabId).catch(() => {}); // the AI fixes were made for these steps
     await inPage(tabId, "simple.hide").catch(() => {});
     await simpleMarkDoc(tabId);
     await setSimpleTab(tabId, null);

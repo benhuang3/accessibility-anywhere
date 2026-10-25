@@ -127,8 +127,11 @@ class AllyBrowser:
     """Playwright Chromium with the repo's extension loaded, driven through its service-worker ACTIONS."""
 
     def __init__(self, server: FixtureServer | None = None, headed: bool | None = None,
-                 extension: Path = EXTENSION) -> None:
+                 extension: Path = EXTENSION, connect_agent: bool = False) -> None:
         self.server = server
+        # Tests never talk to a running Ally: otherwise the live agent sends its own work (profile, habits,
+        # other people's commands) into the test browser. scripts/real_sites.py opts in.
+        self.connect_agent = connect_agent
         self.headed = os.environ.get("ALLY_HEADED") == "1" if headed is None else headed
         self.extension = Path(extension).resolve()
         self.user_data = ""
@@ -157,6 +160,9 @@ class AllyBrowser:
         self.context.on("weberror", lambda e: self.page_errors.append(str(e.error)))
         self.sw = self._wait_worker()
         self.sw.evaluate(_HOOK_ERRORS)
+        if not self.connect_agent:
+            # Port 1 never answers: the extension's reconnect loop stays quiet and the page actions still work.
+            self.sw.evaluate("async () => { await chrome.storage.local.set({ port: 1 }); if (ws) ws.close(); }")
         return self
 
     def _wait_worker(self, timeout: float = 20.0):

@@ -16,7 +16,7 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
 // Page steps (docs/page_steps.md). Each file is loaded on its own so one broken step can't stop the extension.
 for (const file of ["steps/core.js", "steps/classify.js", "steps/clutter.js", "steps/menus.js", "steps/enlarge.js",
-  "steps/simple.js"]) {
+  "steps/simple.js", "steps/fix.js"]) {
   try {
     importScripts(file);
   } catch (e) {
@@ -39,16 +39,24 @@ function isOpen() {
   return !!ws && ws.readyState === WebSocket.OPEN;
 }
 
+let connecting = false;
+
 async function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  // Startup fires connect() from several places at once; without this flag each one passes the check
+  // above during the await below and opens its own socket, leaving orphans the agent still talks to.
+  if (connecting) return;
+  connecting = true;
   clearTimeout(reconnectTimer);
-  const port = await getPort();
   let sock;
   try {
+    const port = await getPort();
     sock = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   } catch {
     scheduleReconnect();
     return;
+  } finally {
+    connecting = false;
   }
   ws = sock;
   sock.onopen = async () => {
@@ -542,6 +550,15 @@ const ACTIONS = {
   async pageTeardown(args = {}) {
     const tab = await resolveTab(args);
     return await withTab(tab.id, () => pageTeardown(tab.id));
+  },
+  // For the AI checker and fixer (steps/fix.js): what the user sees, and what's on the page.
+  async pageScreenshot(args = {}) {
+    const tab = await resolveTab(args);
+    return { tabId: tab.id, mediaType: "image/jpeg", data: await captureTab(tab, args.quality || 60) };
+  },
+  async pageOutline(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, () => inPage(tab.id, "fix.outline", {}));
   },
   // Simplified mode's remembered sites (steps/simple.js keeps them under the "simpleSites" key).
   async simpleRemember(args = {}) {

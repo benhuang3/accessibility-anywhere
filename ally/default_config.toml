@@ -241,6 +241,9 @@ text_goal_px = 20          # smallest comfortable text on screen, in pixels (lar
 target_goal_px = 44        # smallest comfortable button size on screen, in pixels
 max_zoom = 2.5             # never zoom a page past this
 sticky_budget = 0.25       # bars stuck to the screen edges may cover at most this share of the screen
+ai_check = true            # after the fixed rules, Claude checks a before/after screenshot of the tab and
+                           # fixes what still looks wrong (3 tries, then the page is put back); needs a key
+ai_background = true       # reply right away and run that check behind (it speaks only if it changes something)
 
 [tools]
 disabled = []              # tools to turn off, e.g. ["describe_screen"]

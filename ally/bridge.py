@@ -45,6 +45,7 @@ class Bridge:
         self._lock = threading.Lock()
         self._ids = itertools.count(1)
         self._pending: dict[int, dict] = {}
+        self._asking: Client | None = None  # the browser whose popup command is running right now
 
     # ---- status
     @property
@@ -57,6 +58,8 @@ class Bridge:
             live = [c for c in self.clients if not c.ws.closed]
         if not live:
             return None
+        if self._asking in live:  # a command typed in this browser's popup acts on this browser
+            return self._asking
         return max(live, key=lambda c: (c.focused, c.focus_changed, c.last_seen))
 
     @property
@@ -134,11 +137,15 @@ class Bridge:
             log.warning("on_connect failed: %s", e)
 
     def _run_command(self, client: Client, msg: dict) -> None:
+        self._asking = client
         try:
             text = self.on_command(str(msg.get("text", "")))
             self._send(client, {"type": "reply", "id": msg.get("id"), "ok": True, "text": text})
         except Exception as e:
             self._send(client, {"type": "reply", "id": msg.get("id"), "ok": False, "text": str(e)})
+        finally:
+            if self._asking is client:
+                self._asking = None
 
     def _send(self, client: Client, msg: dict) -> bool:
         try:

@@ -231,3 +231,30 @@ def wait_until(fn, timeout):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BridgeRoutingTests(unittest.TestCase):
+    """A command typed in one browser's popup acts on that browser, even when another one is focused."""
+
+    class FakeWS:
+        closed = False
+
+        def __init__(self):
+            self.sent = []
+
+        def send(self, text):
+            self.sent.append(json.loads(text))
+
+    def test_asking_browser_gets_the_page_actions(self):
+        from ally.bridge import Bridge, Client
+
+        seen = {}
+        bridge = Bridge(on_command=lambda text: seen.setdefault("best", bridge.best()) and "done")
+        asking, other = Client(self.FakeWS(), "chrome-extension://a"), Client(self.FakeWS(), "chrome-extension://b")
+        other.focused, other.focus_changed = True, time.time()  # the other browser looks like the better pick
+        bridge.clients += [asking, other]
+        self.assertIs(bridge.best(), other)
+        bridge._run_command(asking, {"id": 1, "text": "simple mode"})
+        self.assertIs(seen["best"], asking)
+        self.assertIs(bridge.best(), other)  # back to normal once the command is done
+        self.assertEqual(asking.ws.sent[-1]["type"], "reply")

@@ -41,7 +41,9 @@ def _enlarge_page(ctx, buttons: bool) -> dict | None:
         session = PageSession(ctx)
     except ToolError:
         return None
-    report = run_steps(ctx, ["text", "buttons"] if buttons else ["text"], session=session)
+    # "Enlarge this" always means bigger than now: the predicted zoom, or one step up if that's already reached.
+    report = run_steps(ctx, ["text", "buttons"] if buttons else ["text"], session=session,
+                       opts={"text": {"step_up": True}})
     _record(ctx, {"tier": "chrome-fit", "zoom": report.get("zoom")})
     pct = round((report.get("zoom") or 1.0) * 100)
     text = summary(report, "Made the page bigger.")
@@ -50,7 +52,7 @@ def _enlarge_page(ctx, buttons: bool) -> dict | None:
     return {"tier": "chrome-fit", "detail": f"{pct}%", "message": text}
 
 
-@tool(timeout=90)
+@tool(timeout=200)
 def enlarge_text(ctx, goal: Annotated[str, "'bigger' to magnify, or a replacement string to show instead"] = "bigger",
                  level: Annotated[float, "Magnification for native apps (2 = 200%). 0 = pick a sensible default."] = 0.0,
                  buttons: Annotated[bool, "Also make the page's buttons bigger (Chrome)."] = False,

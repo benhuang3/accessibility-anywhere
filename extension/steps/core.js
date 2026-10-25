@@ -101,7 +101,7 @@ async function zoomDefaults(tabId) {
 
 // Waits for the page's layout to follow a zoom change: a resize (or innerWidth change), two frames and
 // a short pause for the site's own debounced resize handlers. Never hangs: a hidden window may not paint.
-async function waitSettled(tabId, prevWidth, ms = 400) {
+async function waitSettled(tabId, prevWidth, ms = 150) {
   await chrome.scripting.executeScript({
     target: { tabId },
     func: (prev, wait) => new Promise((resolve) => {

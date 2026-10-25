@@ -181,5 +181,56 @@ class ToolsEndToEnd(unittest.TestCase):
             "getComputedStyle(h).display !== 'none' && h.getBoundingClientRect().width > 0; }", host_id))
 
 
+class ReviewPiecesEndToEnd(unittest.TestCase):
+    """The real extension's pieces for the AI check: screenshot, outline, and the fix layer's own checks."""
+
+    def setUp(self):
+        self.page = ally.open(GENERAL)
+        ally.action("pageTeardown")
+        ally.reset_zoom(self.page)
+
+    def test_screenshot_is_a_real_jpeg(self):
+        import base64
+        out = ally.action("pageScreenshot", {})
+        data = base64.b64decode(out["data"])
+        self.assertEqual(data[:2], b"\xff\xd8")  # JPEG start
+        self.assertGreater(len(data), 5000)
+
+    def test_outline_lists_selectors_the_page_has(self):
+        out = ally.action("pageOutline", {})
+        self.assertTrue(out["items"])
+        for item in out["items"][:10]:
+            self.assertGreaterEqual(self.page.evaluate("(k) => document.querySelectorAll(k).length", item["key"]), 1)
+
+    def test_fix_layer_applies_safe_rules_and_refuses_unsafe_ones(self):
+        ok = ally.action("stepOn", {"step": "fix", "opts": {"rules": [
+            {"selector": "header", "property": "position", "value": "static"}]}})
+        self.assertEqual(ok["rules"], 1)
+        self.assertIn("ally_fix", ally.styles(self.page))
+        self.assertEqual(self.page.evaluate("() => getComputedStyle(document.querySelector('header')).position"), "static")
+        for rule in ({"selector": "nav", "property": "display", "value": "none"},
+                     {"selector": "header", "property": "position", "value": "fixed"},
+                     {"selector": "img", "property": "background", "value": "red"}):
+            with self.assertRaises(ActionError):
+                ally.action("stepOn", {"step": "fix", "opts": {"rules": [rule]}})
+        ally.action("stepOff", {"step": "fix"})
+        self.assertNotIn("ally_fix", ally.styles(self.page))
+
+    def test_scripted_review_loop_on_the_real_extension(self):
+        import json
+        answers = [json.dumps({"worse": ["header covers text"], "actions": [
+                       {"type": "css", "selector": "header", "property": "position", "value": "static"}],
+                       "why": "unstick"}),
+                   json.dumps({"worse": []})]
+        ctx = Ctx(ally)
+        ctx.config = {"page_enlarge": {"ai_background": False}}
+        ctx.ask = lambda prompt, images=None, **kw: answers.pop(0)
+        t = registry().get("enlarge_buttons")
+        out = t.func(ctx, **registry().prepare_args(t, {}))
+        self.assertIn("fixed it", out)
+        self.assertIn("ally_fix", ally.styles(self.page))
+        self.assertIn("ally_buttons", ally.styles(self.page))
+
+
 if __name__ == "__main__":
     unittest.main()

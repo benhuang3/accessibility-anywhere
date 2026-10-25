@@ -106,3 +106,42 @@ def choose_zoom(audit: dict, goals: dict) -> dict:
     return {"zoom": best["zoom"], "met": False, "reason": reason,
             "phone_layout": best.get("vw", PHONE_VW) < PHONE_VW and best is not base,
             "reader_suggested": article, "safe_levels": safe_levels}
+
+
+ZOOM_STEPS = (1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0)
+
+
+def share_below(text_sizes, goal_px: float, zoom: float) -> float:
+    """Share of the page's text that is still smaller than goal_px on screen at this zoom.
+    text_sizes: [[css_px, share_at_or_below], ...] sorted by size, from AllyPage.measure()."""
+    share = 0.0
+    for px, at_or_below in text_sizes or []:
+        if float(px) * zoom < goal_px - 0.01:
+            share = float(at_or_below)
+    return share
+
+
+def predict_zoom(metrics: dict, current: float, goal_px: float, max_zoom: float) -> dict:
+    """The smallest Chrome zoom step at which the text reaches the goal, from one measurement at the current
+    zoom (CSS sizes don't change with zoom, so zooming multiplies them). No page changes needed; the caller
+    applies it and lets verify step back if the page breaks. Returns {zoom, met}."""
+    sizes = metrics.get("textSizes") or ([[metrics["textPx"], 1.0]] if metrics.get("textPx") else [])
+    if not sizes:
+        return {"zoom": current, "met": True}
+    if share_below(sizes, goal_px, current) <= SMALL_TEXT_SHARE:
+        return {"zoom": current, "met": True}
+    for z in ZOOM_STEPS:
+        if z <= current + 0.01 or z > max_zoom + 1e-6:
+            continue
+        if share_below(sizes, goal_px, z) <= SMALL_TEXT_SHARE:
+            return {"zoom": z, "met": True}
+    top = max([z for z in ZOOM_STEPS if z <= max_zoom + 1e-6] or [current])
+    return {"zoom": max(top, current), "met": False}
+
+
+def next_step(current: float, max_zoom: float) -> float:
+    """One Chrome zoom step bigger than current, never above max_zoom."""
+    for z in ZOOM_STEPS:
+        if z > current + 0.01:
+            return min(z, max_zoom) if z <= max_zoom + 1e-6 else current
+    return current

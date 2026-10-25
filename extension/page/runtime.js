@@ -240,7 +240,7 @@
   }
 
   // ------------------------------------------------------------ baseline and verify
-  const ALL_LAYERS = ["fit", "buttons", "clutter", "motion", "menus", "simple"];
+  const ALL_LAYERS = ["fit", "buttons", "clutter", "motion", "menus", "simple", "fix"];
   let baseline = null;
 
   function takeBaseline(meta = {}) {

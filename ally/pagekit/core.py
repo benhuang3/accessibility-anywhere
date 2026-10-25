@@ -7,6 +7,7 @@ every rule here can be tested with a fake browser.
 from __future__ import annotations
 
 import logging
+import threading
 
 from ..registry import ToolError
 
@@ -16,7 +17,11 @@ STEP_ORDER = ("clutter", "menus", "text", "buttons")
 CLUTTER_KINDS = ("cookie", "promo", "chat", "ads", "share", "motion")
 FORM_CLUTTER = ("cookie", "promo", "chat")
 ZOOM_STEPS = (1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0)
-DEFAULTS = {"text_goal_px": 20, "target_goal_px": 44, "max_zoom": 2.5, "sticky_budget": 0.25}
+DEFAULTS = {"text_goal_px": 20, "target_goal_px": 44, "max_zoom": 2.5, "sticky_budget": 0.25, "ai_check": True,
+            "ai_background": True}
+LAYOUT_STEPS = ("clutter", "menus", "text", "buttons")  # what the AI checker looks at afterwards
+GOALS = {"clutter": "hide pop-ups, ads and other clutter", "menus": "add a big, simple menu",
+         "text": "make the text bigger", "buttons": "make the buttons bigger"}
 MAX_ZOOM_BACKOFFS = 2
 
 
@@ -83,40 +88,39 @@ class PageSession:
         return float(self.call("pageInfo").get("zoom") or 1.0)
 
 
-def choose_text_zoom(session: PageSession, cfg: dict, aim: str = "text") -> dict:
-    """Measure the page at Chrome's zoom steps and pick the biggest zoom that doesn't break it."""
-    from .zoom import choose_zoom
+def choose_text_zoom(session: PageSession, cfg: dict, step_up: bool = False) -> dict:
+    """Predict the zoom from one measurement (no trying level after level), keep a zoom Chrome already
+    remembers for this site, and go one step bigger when the user asked for "bigger" again.
+    Verify and back-off afterwards catch a zoom that breaks the page."""
+    from .zoom import next_step, predict_zoom
 
     current = float(session.info.get("zoom") or 1.0)
-    audit = session.call("auditAtZooms", timeout=60, levels=audit_levels(current, float(cfg["max_zoom"])),
-                         maxZoom=float(cfg["max_zoom"]))
-    audit = dict(audit or {}, article=session.info.get("type") == "article")
-    goals = {"text_px": cfg["text_goal_px"], "target_px": cfg["target_goal_px"], "aim": aim,
-             "sticky_budget": cfg["sticky_budget"], "max_zoom": cfg["max_zoom"]}
-    choice = choose_zoom(audit, goals)
-    choice["original"] = float(audit.get("original") or current)
-    return choice
+    default = float(session.info.get("defaultZoom") or 1.0)
+    base = session.call("pageBaseline") or {}
+    metrics = base.get("metrics") or {}
+    guess = predict_zoom(metrics, current, float(cfg["text_goal_px"]), float(cfg["max_zoom"]))
+    zoom, why = guess["zoom"], "predicted"
+    if step_up and zoom <= current + 0.01:
+        zoom, why = next_step(current, float(cfg["max_zoom"])), "one step bigger"
+    elif not step_up and current > default + 0.01 and zoom <= current + 0.01:
+        zoom, why = current, "kept the zoom Chrome remembers for this site"
+    return {"zoom": zoom, "original": current, "met": guess["met"], "why": why,
+            "reader_suggested": not guess["met"] and session.info.get("type") == "article"}
 
 
-def _text_on(session: PageSession, cfg: dict, report: dict) -> None:
-    choice = choose_text_zoom(session, cfg)
-    original = choice["original"]
-    zoom = float(choice["zoom"])
-    if zoom <= original + 0.01:
-        # Already as big as the goal needs: step up to the next level that doesn't break the page.
-        higher = [z for z in choice.get("safe_levels") or [] if z > original + 0.01]
-        if higher:
-            zoom = min(higher)
+def _text_on(session: PageSession, cfg: dict, report: dict, step_up: bool = False) -> None:
+    choice = choose_text_zoom(session, cfg, step_up)
+    original, zoom = choice["original"], float(choice["zoom"])
     report["zoom_choice"] = choice
     session.call("stepOn", step="text", opts={"zoom": zoom})
     report["zoom"] = zoom
     report["original_zoom"] = original
     if zoom > original + 0.01:
         report["said"].append(f"made the page bigger ({round(zoom * 100)}%)")
+    elif choice["why"].startswith("kept"):
+        report["said"].append(f"kept this site at {round(zoom * 100)}% and made it fit")
     else:
-        report["said"].append("kept the page at its size because bigger would break it")
-    if choice.get("phone_layout"):
-        report["notes"].append("The menu may now be a button in the top corner.")
+        report["said"].append("made the page fit better")
     if choice.get("reader_suggested"):
         report["offer_reader"] = True
 
@@ -162,15 +166,90 @@ def _back_off(session: PageSession, applied: list[str], report: dict, budget: fl
     return verdict
 
 
+def revert(session: PageSession, report: dict) -> None:
+    """Undo everything this run did: its steps (newest first), the AI fixes and the zoom."""
+    for step in reversed(report["applied"]):
+        try:
+            session.call("stepOff", step=step, opts={"restoreZoom": report.get("start_zoom", 1.0)} if step == "text" else {})
+        except ToolError as e:
+            log.warning("revert %s failed: %s", step, e)
+    try:
+        session.call("stepOff", step="fix", opts={})
+        session.call("setZoomSettled", zoom=report.get("start_zoom", 1.0))
+    except ToolError as e:
+        log.warning("revert failed: %s", e)
+    report["reverted"] = True
+
+
+_reviews: dict[int, threading.Event] = {}  # tab id -> cancel flag of the AI check running there
+_reviews_lock = threading.Lock()
+
+
+def _claim_tab(tab_id: int) -> threading.Event:
+    """A new request on this tab: cancel the AI check still running there and hand out a fresh flag."""
+    flag = threading.Event()
+    with _reviews_lock:
+        old = _reviews.get(tab_id)
+        if old is not None:
+            old.set()
+        _reviews[tab_id] = flag
+    return flag
+
+
+def _say(ctx, text: str) -> None:
+    say = getattr(ctx, "say", None)
+    if callable(say):
+        try:
+            say(text)
+        except Exception:
+            log.debug("say failed", exc_info=True)
+
+
+def _review(ctx, session: PageSession, cfg: dict, report: dict, reviewer, after_revert=None,
+            background: bool = False) -> None:
+    """The AI check-and-fix loop after the deterministic steps; reverts the page if it can't get it right.
+    In the background it speaks only when it changed something."""
+    from .review import Cancelled
+
+    steps_on = [s for s in report["applied"] if s not in report["backed_off"]]
+    try:
+        result = reviewer.run(steps_on, report["verify"])
+    except Cancelled:
+        report["review"] = {"cancelled": True}
+        return
+    except (ToolError, ValueError, KeyError) as e:  # offline, Claude down, or an answer that isn't JSON
+        log.info("AI check skipped: %s", e)
+        report["review"] = {"skipped": str(e)[:200]}
+        return
+    report["review"] = result
+    log.info("AI check on %s: %s", session.info.get("url", "?"), " | ".join(result["log"]))
+    if reviewer.cancel is not None and reviewer.cancel.is_set():
+        return  # a newer request took over while Claude was answering
+    if result["gave_up"]:
+        revert(session, report)
+        if after_revert is not None:
+            try:
+                after_revert()
+            except ToolError as e:
+                log.warning("after revert: %s", e)
+        if background:
+            _say(ctx, "That didn't look right on this page, so I put it back the way it was.")
+    elif result["fixes"] and background:
+        _say(ctx, "I adjusted the page a little so it fits better.")
+
+
 def run_steps(ctx, steps, on: bool = True, opts: dict | None = None, verify: bool = True,
-              session: PageSession | None = None) -> dict:
-    """Turn page steps on (in canonical order, then verify and back off) or off (in reverse order)."""
+              session: PageSession | None = None, review: bool | None = None, after_revert=None) -> dict:
+    """Turn page steps on (in canonical order, then verify and back off, then the AI check and fix) or off
+    (in reverse order). review=None: run the AI check when Claude is available and [page_enlarge] ai_check."""
     names = ordered(steps)
     opts = opts or {}
     cfg = settings(ctx)
     session = session or PageSession(ctx)
     report = {"tab_id": session.tab_id, "steps": names, "on": on, "said": [], "notes": [], "problems": [],
-              "applied": [], "backed_off": [], "verify": None, "offer_reader": False}
+              "applied": [], "backed_off": [], "verify": None, "offer_reader": False, "review": None,
+              "reverted": False, "start_zoom": float(session.info.get("zoom") or 1.0)}
+    cancel = _claim_tab(session.tab_id)
     if not on:
         for step in reversed(names):
             try:
@@ -179,11 +258,24 @@ def run_steps(ctx, steps, on: bool = True, opts: dict | None = None, verify: boo
                 report["applied"].append(step)
             except ToolError as e:
                 report["problems"].append(str(e))
+        try:
+            session.call("stepOff", step="fix", opts={})  # the AI fixes belonged to what was just turned off
+        except ToolError:
+            pass
         return report
+    reviewer = None
+    if verify and (review if review is not None else cfg.get("ai_check", True)) and any(s in LAYOUT_STEPS for s in names):
+        from .review import Review
+
+        if Review.available(ctx):
+            goal = "; ".join(GOALS[s] for s in names if s in GOALS)
+            reviewer = Review(ctx, session, cfg, goal, step_opts=opts, cancel=cancel)
+            if not reviewer.capture_before():
+                reviewer = None
     for step in names:
         try:
             if step == "text":
-                _text_on(session, cfg, report)
+                _text_on(session, cfg, report, step_up=bool((opts.get("text") or {}).get("step_up")))
             else:
                 r = session.call("stepOn", step=step, opts=dict(opts.get(step) or {}))
                 report["said"].append((r or {}).get("said", ""))
@@ -195,11 +287,24 @@ def run_steps(ctx, steps, on: bool = True, opts: dict | None = None, verify: boo
         report["verify"] = session.call("pageVerify", stickyBudget=cfg["sticky_budget"])
         if not report["verify"].get("ok"):
             _back_off(session, report["applied"], report, cfg["sticky_budget"])
+        if reviewer is not None:
+            if cfg.get("ai_background", True):
+                # Reply now; the check runs behind and speaks only if it fixes or reverts something.
+                report["review"] = {"pending": True}
+                t = threading.Thread(target=_review, args=(ctx, session, cfg, report, reviewer, after_revert, True),
+                                     name="page-review", daemon=True)
+                report["review_thread"] = t
+                t.start()
+            else:
+                _review(ctx, session, cfg, report, reviewer, after_revert)
     return report
 
 
 def summary(report: dict, done_fallback: str = "Done.") -> str:
     """One or two short spoken sentences describing what happened."""
+    if report.get("reverted"):
+        return ("I tried to make this page easier, but it kept looking wrong, so I put it back the way it was. "
+                "Try 'reader mode' for just the text.")
     said = join_said(report["said"])
     if report["on"]:
         text = f"I {said}." if said else ""
@@ -207,6 +312,11 @@ def summary(report: dict, done_fallback: str = "Done.") -> str:
         text = "Put the page back." if report["applied"] else ""
     if report["backed_off"]:
         text += " I undid part of it because it was breaking the page."
+    review = report.get("review") or {}
+    if review.get("ok") and review.get("fixes"):
+        text += " I checked how it looks and fixed it."
+    elif review.get("ok"):
+        text += " I checked it and it looks right."
     if report["notes"]:
         text += " " + " ".join(report["notes"])
     if report["problems"] and not report["applied"]:
