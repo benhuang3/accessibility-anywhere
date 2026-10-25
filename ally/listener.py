@@ -5,6 +5,10 @@ one is transcribed on this computer with faster-whisper; audio never leaves the 
 Utterances that don't start or end with the wake word are dropped, except right after "Ally" on
 its own and during a short follow-up window after Ally answers ("a bit bigger").
 While Ally is talking, only "Ally, stop" works, so Ally never answers its own voice.
+
+The microphone has one owner. When Ally asks a spoken yes/no question (voice_confirm), it
+claims the next utterances instead of opening a second microphone stream: claimed utterances
+go to the question, never to wake-word handling, so "yes" is not taken as a new request.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ class Utterance:
     t0: float  # wall-clock start and end (time.time(), the eye tracker's clock too)
     t1: float
     over_speech: bool  # Ally was talking during it, so the microphone heard Ally too
+    eager: bool = False  # a first short pause, not yet the end: speech may go on (see Segmenter.eager_silence)
 
 
 def wake_pattern(words: list[str]) -> str:
@@ -69,9 +74,14 @@ class Segmenter:
     """Turns 100 ms blocks of audio into utterances, using loudness against an adaptive noise floor."""
 
     def __init__(self, end_silence: float = 0.7, max_seconds: float = 12.0, min_seconds: float = 0.3,
-                 preroll_blocks: int = 3):
+                 preroll_blocks: int = 3, eager_silence: float | None = None):
         self.end_silence, self.max_seconds, self.min_seconds = end_silence, max_seconds, min_seconds
         self.preroll_blocks = preroll_blocks
+        # When set, a pause this long also yields the speech so far, marked eager=True, without
+        # ending the utterance: a yes/no question can act on a clear "yes" sooner (like Cartesia
+        # ink-2's turn.eager_end). If speech goes on, the full utterance still comes at the end.
+        self.eager_silence = eager_silence
+        self._eager_sent = False
         self.floor = 150.0
         self._pre: list[tuple[bytes, float]] = []
         self._blocks: list[bytes] = []
@@ -102,10 +112,17 @@ class Segmenter:
             self._quiet += 0.1
         else:
             self._quiet, self._voiced = 0.0, self._voiced + 1
+            self._eager_sent = False
         seconds = len(self._blocks) * 0.1
+        eager = self.eager_silence
+        if (eager and not self._eager_sent and eager - 1e-6 <= self._quiet < self.end_silence
+                and self._voiced * 0.1 >= self.min_seconds):
+            self._eager_sent = True
+            return Utterance(b"".join(self._blocks), self._t0, t - self._quiet, self._over, eager=True)
         if self._quiet >= self.end_silence or seconds >= (max_seconds or self.max_seconds):
             pcm, over, t0 = b"".join(self._blocks), self._over, self._t0
             self.in_speech, self._blocks, self._pre, self._loud = False, [], [], 0
+            self._eager_sent = False
             if self._voiced * 0.1 < self.min_seconds:  # a click or a cough, not words
                 return None
             return Utterance(pcm, t0, t - self._quiet, over)
@@ -127,6 +144,9 @@ class WakeListener:
         self._stop = threading.Event()
         self._queue: queue.Queue = queue.Queue(maxsize=8)
         self._lock = threading.Lock()
+        self._claim: queue.Queue | None = None
+        self._seg: Segmenter | None = None
+        self.claim_eager: float | None = None  # eager pause while a question owns the microphone
 
     @property
     def cfg(self) -> dict:
@@ -190,8 +210,31 @@ class WakeListener:
             self.agent.speaker.beep("start", wait=False)
         self.agent.events.add("voice", "Listening...")
 
+    def claim(self) -> queue.Queue | None:
+        """Send the next utterances to the caller (a yes/no question) instead of wake-word handling.
+        Returns a queue of Utterance, or None if the listener isn't running. Call release() after."""
+        if not self.running:
+            return None
+        q: queue.Queue = queue.Queue(maxsize=8)
+        self._claim = q
+        return q
+
+    def release(self, q: queue.Queue | None) -> None:
+        if q is not None and self._claim is q:
+            self._claim = None
+
+    @property
+    def claimed(self) -> bool:
+        return self._claim is not None
+
+    @property
+    def in_speech(self) -> bool:
+        """Someone is talking right now (an utterance has started and not ended)."""
+        seg = self._seg
+        return bool(seg is not None and seg.in_speech)
+
     def info(self) -> dict:
-        return {"status": self.status, "error": self.error, "wake_words": list(self.cfg.get("wake_words") or []),
+        return {"status": self.status, "claimed": self.claimed, "error": self.error, "wake_words": list(self.cfg.get("wake_words") or []),
                 "awake": time.monotonic() < self.awake_until, "last_heard": self.last_heard}
 
     # ---------------------------------------------------------------- threads
@@ -199,7 +242,7 @@ class WakeListener:
         import numpy as np  # type: ignore
         import sounddevice as sd  # type: ignore
 
-        seg = Segmenter(end_silence=float(self.cfg.get("silence_seconds", 1.2)) * 0.6)
+        seg = self._seg = Segmenter(end_silence=float(self.cfg.get("silence_seconds", 1.2)) * 0.6)
         speaker = self.agent.speaker
         while not self._stop.is_set():
             try:
@@ -220,6 +263,7 @@ class WakeListener:
                         if mono < self._ignore_until:
                             level = 0.0
                         talking = mono < tail
+                        seg.eager_silence = self.claim_eager if self._claim is not None else None
                         utt = seg.feed(data.tobytes(), level, now, talking, max_seconds=3.0 if talking else None)
                         if utt is not None:
                             try:
@@ -242,6 +286,15 @@ class WakeListener:
             try:
                 utt = self._queue.get(timeout=0.5)
             except queue.Empty:
+                continue
+            claim = self._claim
+            if utt.eager and claim is None:
+                continue  # only a yes/no question wants early pieces
+            if claim is not None:
+                try:
+                    claim.put_nowait(utt)  # a spoken yes/no question owns this sentence
+                except queue.Full:
+                    pass
                 continue
             try:
                 self.handle(utt)

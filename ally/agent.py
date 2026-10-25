@@ -1,5 +1,5 @@
-"""The agent process: wires config, tools, brain, browser bridge, hotkeys, speech, the always-on
-listener, the eye tracker and the server."""
+"""The agent process: wires config, tools, brain, browser bridge, hotkeys, speech, spoken yes/no
+questions, the always-on listener, the eye tracker and the server."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from .speech import Speaker
 from .state import State, load_or_create_token
 from .tools import BUILTIN_MODULES
 from .voice import VoiceInput
+from .voice_confirm import VoiceConfirm, install as install_voice
 
 log = logging.getLogger("ally")
 
@@ -59,7 +60,8 @@ class Agent:
         self._apply_settings(initial=True)
 
         self.platform = get_platform()
-        self.speaker = Speaker(self.platform, lambda: self.config.data["speech"])
+        self.speaker = Speaker(self.platform, lambda: self.config.data["speech"],
+                               cache_dir=self.paths.cache_dir / "voice")
         rate = self.state.get("speech_rate")
         if isinstance(rate, (int, float)):
             self.speaker.rate_override = float(rate)
@@ -68,6 +70,10 @@ class Agent:
         self.voice = VoiceInput(self)
         self.listener = WakeListener(self)
         self.senses = Senses(self)  # before gaze: the camera helper sends it face numbers
+        # Spoken offers and yes/no answers (say / ask_yes_no for the Brain). Borrows the listener's mic.
+        self.confirm = VoiceConfirm(self.speaker, lambda: self.config.data, listener=self.listener,
+                                    events=self.events, state=self.state, log_dir=self.paths.log_dir)
+        install_voice(self.confirm)
         self.gaze = GazeManager(self)
         self.platform.set_gaze_source(self.gaze.latest, float(self.config.data["gaze"].get("pan_speed", 1.0)))
         self.last_utterance: tuple[float, float] | None = None  # (start, end) of the last spoken request
@@ -99,6 +105,7 @@ class Agent:
             self.listener.apply()
             self.senses.apply()
             self.gaze.apply()
+            threading.Thread(target=self.confirm.prerender, name="voice-prerender", daemon=True).start()
             self.platform.set_gaze_source(self.gaze.latest, float(cfg["gaze"].get("pan_speed", 1.0)))
             self.push_profile()
 
@@ -241,8 +248,8 @@ class Agent:
                       "error": self.brain.last_error, "has_key": self.brain.client().configured},
             "browser": self.bridge.status(),
             "hotkeys": self.hotkeys.info(),
-            "speech": {"engine": cfg["speech"]["engine"], "speaking": self.speaker.speaking,
-                       "rate": self.speaker.rate(), "error": self.speaker.last_error},
+            "speech": self.speaker.info(),
+            "confirm": self.confirm.info(),
             "voice": {"available": ok_voice, "detail": voice_why, "listening": self.voice.listening},
             "listener": self.listener.info(),
             "gaze": self.gaze.info(),
@@ -280,6 +287,7 @@ class Agent:
 
     def _startup_extras(self) -> None:
         self.platform.warm_up()
+        threading.Thread(target=self.confirm.prerender, name="voice-prerender", daemon=True).start()
         self.apply_profile()
         if self.config.data["agent"].get("announce_start", True):
             name = self.config.data["agent"]["name"]
@@ -334,8 +342,8 @@ class Agent:
     def close(self) -> None:
         self._stop.set()
         log.info("Ally stopping (code %s)", self.exit_code)
-        for step in (self.hotkeys.stop, self.listener.stop, self.senses.stop, self.gaze.stop, self.speaker.stop,
-                     self.platform.shutdown, self.bridge.close_all):
+        for step in (self.confirm.cancel, self.hotkeys.stop, self.listener.stop, self.senses.stop,
+                     self.gaze.stop, self.speaker.stop, self.platform.shutdown, self.bridge.close_all):
             try:
                 step()
             except Exception:

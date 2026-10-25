@@ -25,7 +25,8 @@ import wave
 from .claude import ssl_context
 from .platforms.base import NO_WINDOW, tempfile_path, which
 from .registry import ToolError
-from .speech import CARTESIA_URL, CARTESIA_VERSION
+from . import speech
+from .speech import CARTESIA_VERSION
 
 log = logging.getLogger("ally.voice")
 RATE = 16000
@@ -57,7 +58,7 @@ def cartesia_stt(wav: bytes, language: str = "en", timeout: float = 30) -> str:
     if not key:
         raise ToolError("Set CARTESIA_API_KEY in the .env file for voice input.")
     body, ctype = multipart({"model": "ink-whisper", "language": language}, "file", "speech.wav", wav, "audio/wav")
-    req = urllib.request.Request(CARTESIA_URL + "/stt", data=body, method="POST", headers={
+    req = urllib.request.Request(speech.CARTESIA_URL + "/stt", data=body, method="POST", headers={
         "Authorization": f"Bearer {key}", "Cartesia-Version": CARTESIA_VERSION, "Content-Type": ctype})
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as resp:
@@ -162,6 +163,9 @@ class VoiceInput:
         return True, f"{self.recorder()} + {self.engine()}"
 
     def toggle(self) -> str:
+        confirm = getattr(self.agent, "confirm", None)
+        if confirm is not None and confirm.busy:
+            return "Listening for yes or no."  # a spoken question already owns the microphone
         listener = getattr(self.agent, "listener", None)
         if listener is not None and listener.running:
             listener.prompt()  # the microphone is already open: take the next sentence, no wake word needed
