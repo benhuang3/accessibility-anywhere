@@ -171,6 +171,10 @@ class LoopTests(unittest.TestCase):
 class ToolAndPhraseTests(unittest.TestCase):
     def test_phrases(self):
         self.assertEqual(rules.match("scroll with my eyes").actions, [("eye_scroll", {"on": True})])
+        for said in ("turn on hands free scrolling", "turn on hands-free scrolling", "hands free scrolling"):
+            self.assertEqual(rules.match(said).actions, [("eye_scroll", {"on": True})], said)
+        for said in ("turn off hands free scrolling", "stop hands-free scrolling", "hands free scrolling off"):
+            self.assertEqual(rules.match(said).actions, [("eye_scroll", {"on": False})], said)
         self.assertEqual(rules.match("stop scrolling with my eyes").actions, [("eye_scroll", {"on": False})])
         self.assertEqual(rules.match("scroll down").actions[0][0], "scroll_page")
 
