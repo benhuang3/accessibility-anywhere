@@ -12,6 +12,12 @@ from pathlib import Path
 
 from helpers import EnvPatch, temp_home
 
+try:  # on main since 7974a9e: keeps tests from zooming or recoloring the real screen
+    from helpers import fake_screen
+except ImportError:
+    def fake_screen(platform):
+        return []
+
 from ally import speech, voice_confirm as vcm
 from ally.config import ConfigManager, DEFAULTS
 from ally.listener import Segmenter, Utterance, WakeListener
@@ -641,6 +647,7 @@ class AgentVoiceTests(unittest.TestCase):
         cls.env = EnvPatch(ANTHROPIC_API_KEY=None, CARTESIA_API_KEY=None)
         cls.env.__enter__()
         cls.agent = Agent(temp_home(f"[agent]\nport = {cls.port}\nannounce_start = false\n"), start_hotkeys=False)
+        fake_screen(cls.agent.platform)
         cls.agent.start()
 
     @classmethod
