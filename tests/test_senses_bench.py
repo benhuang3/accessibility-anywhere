@@ -26,6 +26,10 @@ class BenchTests(unittest.TestCase):
             frames=[{"eyeSquint":rest+.2,"eyeSquintLeft":rest+.2,"eyeSquintRight":rest+.2,
                      "head_yaw":0,"head_pitch":0,"eyeBlink":0,"mouthSmile":0}]*40
             self.assertTrue(self._fire(RelativeSquintDetector(Tuning()),base,frames))
+        down=[{"eyeSquint":.55,"eyeSquintLeft":.55,"eyeSquintRight":.55,"head_yaw":0,"head_pitch":0,
+               "eyeBlink":0,"mouthSmile":0,"eyeLookDown":.9}]*40
+        self.assertFalse(self._fire(RelativeSquintDetector(Tuning()),
+                                    {"eyeSquint":{"median":.25,"mad":.02}},down))
 
     def test_geometric_requires_bilateral_aperture_and_lower_lid(self):
         base={"aperture_l":{"median":.3},"aperture_r":{"median":.3},

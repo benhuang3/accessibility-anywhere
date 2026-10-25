@@ -344,6 +344,13 @@ class RelativeSquintDetector(_RawHeld):
         gate_ok = abs(sig.get("head_yaw",0)) < self.tune.pose_gate and abs(sig.get("head_pitch",0)) < self.tune.pose_gate
         gate_ok &= sig.get("eyeBlink",0) < self.tune.blink_gate and sig.get("mouthSmile",0) < self.tune.smile_gate
         gate_ok &= abs(sig.get("eyeSquintLeft",value)-sig.get("eyeSquintRight",value)) < self.tune.wink_max
+        upper=stats.get("upper_height",{}).get("median",sig.get("upper_height",0))
+        lower=stats.get("lower_height",{}).get("median",sig.get("lower_height",0))
+        down_stats=stats.get("eyeLookDown",{})
+        looking_down=sig.get("eyeLookDown",0)>down_stats.get("median",0)+max(.30,3*down_stats.get("mad",.02)) or (
+            sig.get("iris_vertical",.5)>.75 and sig.get("upper_height",upper)<upper-.02 and
+            sig.get("lower_height",lower)<lower+self.tune.geometric_lower_rise)
+        gate_ok &= not looking_down
         return self._held_signal(t, score, gate_ok, {"relative_score": round(score, 3)})
 
 

@@ -39,7 +39,8 @@ def extract(landmarks, blendshapes=None, matrix=None, w=1, h=1):
         out[key+"_l"], out[key+"_r"] = eyes[0][key], eyes[1][key]
         out[key] = statistics.mean((eyes[0][key], eyes[1][key]))
     for name in ("eyeSquintLeft", "eyeSquintRight", "eyeBlinkLeft", "eyeBlinkRight", "eyeWideLeft", "eyeWideRight",
-                 "cheekSquintLeft", "cheekSquintRight", "browDownLeft", "browDownRight", "mouthSmileLeft",
+                 "cheekSquintLeft", "cheekSquintRight", "browDownLeft", "browDownRight", "eyeLookDownLeft",
+                 "eyeLookDownRight", "mouthSmileLeft",
                  "mouthSmileRight", "jawOpen"):
         out[name] = float(bs.get(name, 0.0))
     out.update(eyeSquint=statistics.mean((out["eyeSquintLeft"],out["eyeSquintRight"])),
@@ -47,6 +48,7 @@ def extract(landmarks, blendshapes=None, matrix=None, w=1, h=1):
                eyeWide=statistics.mean((out["eyeWideLeft"],out["eyeWideRight"])),
                cheekSquint=statistics.mean((out["cheekSquintLeft"],out["cheekSquintRight"])),
                browDown=statistics.mean((out["browDownLeft"],out["browDownRight"])),
+               eyeLookDown=statistics.mean((out["eyeLookDownLeft"],out["eyeLookDownRight"])),
                mouthSmile=statistics.mean((out["mouthSmileLeft"],out["mouthSmileRight"])))
     out["face_width"] = _dist(_point(landmarks, 234), _point(landmarks, 454))*float(w)
     # Iris ring diameter, average of opposing ring landmarks.
