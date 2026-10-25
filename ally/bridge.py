@@ -41,6 +41,7 @@ class Bridge:
     def __init__(self, on_command=None, on_connect=None):
         self.on_command = on_command  # (text) -> reply text
         self.on_connect = on_connect  # (client) -> None
+        self.on_page = None  # (page dict) -> None; set by ally.risk.wire
         self.clients: list[Client] = []
         self._lock = threading.Lock()
         self._ids = itertools.count(1)
@@ -117,6 +118,10 @@ class Bridge:
                 box["msg"] = msg
                 box["event"].set()
         elif kind == "event":
+            if msg.get("name") == "page":
+                if self.on_page:  # page text from extension/risk.js
+                    threading.Thread(target=self._safe_page, args=(msg,), daemon=True).start()
+                return
             self._apply_focus(client, msg)
         elif kind == "command" and self.on_command:
             threading.Thread(target=self._run_command, args=(client, msg), daemon=True).start()
@@ -135,6 +140,12 @@ class Bridge:
             self.on_connect(client)
         except Exception as e:
             log.warning("on_connect failed: %s", e)
+
+    def _safe_page(self, msg: dict) -> None:
+        try:
+            self.on_page(msg)
+        except Exception as e:
+            log.warning("on_page failed: %s", e)
 
     def _run_command(self, client: Client, msg: dict) -> None:
         self._asking = client

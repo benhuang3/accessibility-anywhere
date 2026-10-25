@@ -1,0 +1,54 @@
+html.ally-call {
+  background: #fff8e6;
+  color: #1a1a1a;
+}
+
+html.ally-call body {
+  box-sizing: border-box;
+  padding-top: 88px !important;
+  padding-bottom: 116px !important;
+}
+
+html.ally-call #ally-call-bar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  min-height: 88px;
+  padding: 20px 28px;
+  border-bottom: 3px solid #b26a00;
+  background: #fff8e6;
+  color: #1a1a1a;
+  font: 600 32px/1.4 "Segoe UI", Arial, sans-serif;
+  text-align: center;
+}
+
+html.ally-call #ally-call-end,
+/* Keep only this control styled after the frame's fail-safe restores plain Meet. */
+#ally-call-end.ally-call-fallback {
+  position: fixed;
+  inset: auto auto 20px 50%;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  box-sizing: border-box;
+  min-height: 72px;
+  min-width: 240px;
+  max-width: calc(100vw - 32px);
+  padding: 14px 32px;
+  border: 3px solid #760c16;
+  border-radius: 12px;
+  background: #b21d2b;
+  color: #fff;
+  font: 700 32px/1.2 "Segoe UI", Arial, sans-serif;
+  cursor: pointer;
+}
+
+html.ally-call #ally-call-end:focus-visible,
+#ally-call-end.ally-call-fallback:focus-visible {
+  outline: 4px solid #1a1a1a;
+  outline-offset: 4px;
+}
+
+html.ally-call .ally-hidden {
+  visibility: hidden !important;
+}

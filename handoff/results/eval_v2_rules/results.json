@@ -1,0 +1,651 @@
+{
+  "rows": [
+    {
+      "id": "s1 fake virus alert",
+      "kind": "scam",
+      "tags": [],
+      "rules": true,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s2 lookalike bank sign-in",
+      "kind": "scam",
+      "tags": [],
+      "rules": true,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s3 official arrest threat",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s4 remote access invite",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s5 refund overpayment",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s6 scam with injected instructions",
+      "kind": "scam",
+      "tags": [
+        "injections"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s7 injection: near-background text",
+      "kind": "scam",
+      "tags": [
+        "injections"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s8 injection: tiny and off-screen text",
+      "kind": "scam",
+      "tags": [
+        "injections"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b1 news about tech-support scams",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": false,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b2 bank help page",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b3 small shop checkout",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b4 consumer advice page",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": false,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b5 recipe blog",
+      "kind": "safe",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b6 dentist contact page",
+      "kind": "safe",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s9 gift-card payment demand",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s10 fake delivery fee",
+      "kind": "scam",
+      "tags": [],
+      "rules": true,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s11 fake lottery prize",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s12 grandchild bail request",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s13 crypto recovery service",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s14 fake Microsoft account-locked page",
+      "kind": "scam",
+      "tags": [],
+      "rules": true,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s15 fake antivirus renewal invoice",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s16 QR-code payment demand",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s17 fake benefits SSN update",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s18 fake disaster charity",
+      "kind": "scam",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s19 fake support chat widget",
+      "kind": "scam",
+      "tags": [],
+      "rules": true,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s20 injection: alt and aria-label",
+      "kind": "scam",
+      "tags": [
+        "injections"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s21 injection: white image-like block",
+      "kind": "scam",
+      "tags": [
+        "injections"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "s22 calm account transfer request",
+      "kind": "scam",
+      "tags": [
+        "calm scams"
+      ],
+      "rules": false,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b7 bank fraud-alert education",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b8 password-reset confirmation",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": false,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b9 parcel tracking without payment",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": false,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b10 antivirus vendor pricing",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b11 government benefits information",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": false,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b12 charity donation on own domain",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b13 forum quoting scam messages",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b14 utility bill payment",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b15 doctor appointment reminder",
+      "kind": "safe",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b16 tomato soup recipe",
+      "kind": "safe",
+      "tags": [],
+      "rules": false,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b17 news quoting an infection alert",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": true,
+      "agent": null,
+      "rules_ok": false,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    },
+    {
+      "id": "b18 store sale ends tonight",
+      "kind": "safe",
+      "tags": [
+        "hard negatives"
+      ],
+      "rules": false,
+      "agent": null,
+      "rules_ok": true,
+      "agent_ok": null,
+      "verdict": "(not run)",
+      "confidence": null,
+      "explanation": "",
+      "render_error": null
+    }
+  ],
+  "spend": {
+    "calls_today": 0,
+    "daily_cap": 200,
+    "calls_this_hour": 0,
+    "input_tokens_today": 0,
+    "output_tokens_today": 0
+  },
+  "summary": {
+    "case_counts": {
+      "scam": 22,
+      "safe": 18
+    },
+    "rendered": 40,
+    "rules": {
+      "count": 40,
+      "correct": 20,
+      "tp": 10,
+      "fp": 8,
+      "tn": 10,
+      "fn": 12,
+      "precision": 0.5555555555555556,
+      "recall": 0.45454545454545453,
+      "false_alarm_rate": 0.4444444444444444
+    },
+    "agent": null,
+    "breakdown": {
+      "injections": {
+        "case_counts": {
+          "scam": 5,
+          "safe": 0
+        },
+        "rendered": 5,
+        "rules": {
+          "count": 5,
+          "correct": 5,
+          "tp": 5,
+          "fp": 0,
+          "tn": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "false_alarm_rate": null
+        },
+        "agent": null
+      },
+      "calm scams": {
+        "case_counts": {
+          "scam": 1,
+          "safe": 0
+        },
+        "rendered": 1,
+        "rules": {
+          "count": 1,
+          "correct": 0,
+          "tp": 0,
+          "fp": 0,
+          "tn": 0,
+          "fn": 1,
+          "precision": null,
+          "recall": 0.0,
+          "false_alarm_rate": null
+        },
+        "agent": null
+      },
+      "hard negatives": {
+        "case_counts": {
+          "scam": 0,
+          "safe": 14
+        },
+        "rendered": 14,
+        "rules": {
+          "count": 14,
+          "correct": 6,
+          "tp": 0,
+          "fp": 8,
+          "tn": 6,
+          "fn": 0,
+          "precision": 0.0,
+          "recall": null,
+          "false_alarm_rate": 0.5714285714285714
+        },
+        "agent": null
+      }
+    }
+  },
+  "rules_only": true,
+  "only": ""
+}

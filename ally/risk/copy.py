@@ -60,6 +60,9 @@ def _clean(value: str, fallback: str) -> str:
 def render(key: str, path: Path | str | None = None, **fields) -> WarningCopy:
     section = load_copy(path)[key]
     values = _Safe({name: _clean(fields.get(name), default) for name, default in _FALLBACK.items()})
-    fill = lambda text: text.format_map(values)  # noqa: E731
+    def fill(text: str) -> str:
+        out = text.format_map(values)
+        return out[:1].upper() + out[1:]  # a fallback like "a remote-control tool" can open a sentence
+
     actions = tuple(Action(a["id"], fill(a["label"])) for a in section["actions"])
     return WarningCopy(key, fill(section["title"]), fill(section["body"]), fill(section["spoken"]), actions)

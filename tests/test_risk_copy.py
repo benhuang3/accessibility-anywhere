@@ -104,5 +104,12 @@ class KeyTests(unittest.TestCase):
             copy_key("something_else")
 
 
+class SentenceStartTests(unittest.TestCase):
+    def test_a_missing_tool_name_still_starts_with_a_capital(self):
+        wording = render("remote_access")
+        self.assertTrue(wording.body.startswith("A remote-control tool"), wording.body)
+        self.assertTrue(wording.spoken[0].isupper())
+
+
 if __name__ == "__main__":
     unittest.main()

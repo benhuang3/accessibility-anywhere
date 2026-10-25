@@ -191,6 +191,23 @@ offer_timeout_seconds = 8      # no answer = no change
 auto_apply_after = 2           # accepted this many times on a site = do it automatically
 context_poll_seconds = 1.5
 
+[risk]
+# When a page looks risky, Ally can take a screenshot and ask Claude for a second opinion, then explain what it
+# sees in plain words. The screenshot shows your whole screen and is sent to Anthropic only for a flagged page,
+# so it is off until you turn it on. Needs ANTHROPIC_API_KEY.
+screen_review = false
+daily_calls = 50               # most second opinions per day
+hourly_calls = 20              # and per hour (also at most one look per page per 10 minutes)
+# Someone to tell when Ally stops a likely scam (a "Tell Priya" button on serious warnings). They install the free
+# ntfy app and subscribe to the topic below; pick a long random topic, anyone who knows it can read the alerts.
+# The alert says what kind of risk it was, never the web address or anything on the page.
+trusted_contact = ""           # e.g. "Priya"
+contact_topic = ""             # e.g. "ally-priya-7f3k29qx"
+# Optional: their standing video-call link (Google Meet, Zoom, Whereby, Teams). Then the button says "Call Priya":
+# Ally opens the call here and their phone alert has a "Join the call" button.
+contact_call_url = ""          # e.g. "https://meet.google.com/abc-defg-hij"
+auto_alert = false             # send the trusted contact a push automatically on high warnings
+
 # Applied when Ally starts and on every page you open in Chrome.
 [profile]
 page_zoom = 0              # e.g. 1.25 = 125% on every site; 0 = leave Chrome's zoom alone

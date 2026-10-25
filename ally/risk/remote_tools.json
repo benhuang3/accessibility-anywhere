@@ -1,0 +1,1189 @@
+{
+"fetched": "2026-10-24",
+"source": "LOLRMM (https://lolrmm.io), Apache License 2.0. Derived: executable names per tool; generic names removed. Video-meeting apps (Zoho Meeting) removed: older adults use them with family. NVDA (a screen reader) removed: assistive technology is never a target.",
+"tools": {
+"247ithelp.com (ConnectWise)": [
+"remote workforce client"
+],
+"Absolute (Computrace)": [
+"cteshostsvc",
+"ctespersistence",
+"rpcld",
+"rpcnet"
+],
+"Acronis Cyber Protect (Remotix)": [
+"acroniscyberprotectconnectagent"
+],
+"Action1": [
+"action1_agent",
+"action1_connector",
+"action1_remote",
+"action1_update"
+],
+"Adobe Connect": [
+"connectappsetup",
+"connectdetector"
+],
+"AeroAdmin": [
+"aeroadmin"
+],
+"AliWangWang-remote-control": [
+"alitask"
+],
+"Allocentra": [
+"allocentra-agent"
+],
+"Alpemix": [
+"alpemix"
+],
+"Ammyy Admin": [
+"aa_v3",
+"ammyy_admin"
+],
+"Any Support": [
+"manuallauncher"
+],
+"AnyDesk": [
+"anydesk"
+],
+"AnyViewer": [
+"anyviewer",
+"avcore",
+"rcclient",
+"rcservice",
+"screancap"
+],
+"Anyplace Control": [
+"apc_host"
+],
+"Aspia": [
+"aspia_client"
+],
+"Atera": [
+"atera_agent",
+"ateraagent",
+"syncrosetup"
+],
+"Auvik": [
+"auvik.agent",
+"auvik.engine"
+],
+"AweRay": [
+"awesun"
+],
+"BeAnyWhere": [
+"basupapp",
+"basupappelev",
+"basupappsrvc",
+"basupsrvc",
+"basupsrvcupdate",
+"basupsysinf",
+"basuptshelper",
+"takecontrol"
+],
+"Beacon (Synertek)": [
+"beacon-agent"
+],
+"BeamYourScreen": [
+"beamyourscreen",
+"beamyourscreen-host"
+],
+"BeyondTrust (Bomgar)": [
+"bomgar-pac",
+"bomgar-rdp",
+"bomgar-scc"
+],
+"Bluetrait": [
+"bluetrait msp agent"
+],
+"BreezeRMM": [
+"breeze-agent",
+"breeze-backup",
+"breeze-user-helper",
+"breeze-watchdog",
+"pixoit-agent"
+],
+"CentraStage (Now Datto)": [
+"aemagent",
+"cagservice"
+],
+"Centurion": [
+"ctiserv"
+],
+"Chrome Remote Desktop": [
+"remoting_host"
+],
+"CloudFlare Tunnel": [
+"cloudflared"
+],
+"Comodo RMM": [
+"itsmagent",
+"rviewer"
+],
+"ConnectWise Control": [
+"connectwisechat-customer",
+"connectwisecontrol.client",
+"screenconnect.windowsclient"
+],
+"Connectwise Automate (LabTech)": [
+"ltsvc",
+"ltsvcmon",
+"lttray"
+],
+"ControlR": [
+"controlr.agent",
+"controlr.agent.installer",
+"controlr.desktopclient"
+],
+"Controlio": [
+"wecliboardlistener",
+"weinstsvc",
+"wemonc",
+"weprtct",
+"wesvc"
+],
+"CrossLoop": [
+"crossloopconnect",
+"crossloopservice",
+"winvncstub"
+],
+"CrossTec Remote Control": [
+"pcivideo",
+"supporttool"
+],
+"DW Service": [
+"dwagent",
+"dwaglnc",
+"dwagsvc"
+],
+"DameWare": [
+"dameware remote support",
+"dwrcs"
+],
+"DeskShare": [
+"dsguest",
+"teamtaskmanager"
+],
+"DesktopNow": [
+"desktopnow"
+],
+"Devolutions Remote Desktop Manager": [
+"remotedesktopmanager"
+],
+"Distant Desktop": [
+"ddsystem",
+"distant-desktop"
+],
+"Domotz": [
+"domotz",
+"domotz pro desktop app",
+"domotz_bash"
+],
+"Duet Display": [
+"duetdisp",
+"duetsetup"
+],
+"EMCO Remote Console": [
+"remoteconsole"
+],
+"ESET Remote Administrator": [
+"einstaller",
+"eraagent",
+"eratool"
+],
+"Endar": [
+"endar"
+],
+"Ericom AccessNow": [
+"accessserver"
+],
+"Ericom Connect": [
+"ericomconnectconfigurationtool"
+],
+"Faronics Core": [
+"coreagentservice",
+"faronicscoreagent"
+],
+"Faronics Deep Freeze": [
+"cloudwksinstall",
+"dfinst",
+"dfserv",
+"dfservex",
+"dfstd",
+"dfstdinstall",
+"dfwks"
+],
+"Faronics Deploy": [
+"cloudwksinstall",
+"faronicsdeployagent",
+"faronicssa",
+"frcserver",
+"fssinstaller",
+"fwa_ui_agent",
+"fwaservice",
+"modulesupgrademgr",
+"notificationhelper"
+],
+"Faronics Insight": [
+"fistudentagent",
+"fistudentsvc",
+"fistudentui",
+"insightinstaller",
+"insightinstallerstudent",
+"insightinstallerteacher",
+"stahelper",
+"studentsvc"
+],
+"FastViewer": [
+"fastclient",
+"fastmaster",
+"fastviewer"
+],
+"FixMe.it": [
+"fixmeit client",
+"fixmeit expert setup",
+"fixmeit unattended access setup",
+"fixmeitclient",
+"ticlientcore",
+"tiexpertcore",
+"tiexpertstandalone"
+],
+"FleetDeck.io": [
+"fleetdeck-agent",
+"fleetdeck_agent",
+"fleetdeck_agent_svc",
+"fleetdeck_commander_launcher",
+"fleetdeck_commander_svc",
+"fleetdeck_installer"
+],
+"Freshservice": [
+"autoupdate",
+"freshservice.discoveryprobe.autoflush",
+"freshservice.discoveryprobe.oidlibrarypuller",
+"freshservice.discoveryprobe.progressbar",
+"freshservice.discoveryprobe.scanservice",
+"freshservice.discoveryprobe.window",
+"fsagentautoupdate",
+"fsagentcrashstatusupdater",
+"fsagentservice",
+"fsprobecrashstatusupdater",
+"fsprobereporter",
+"fsscheduler",
+"fswmiscanner",
+"iprangecalculator",
+"plink",
+"uninstallstatusupdater"
+],
+"GetScreen": [
+"getscreen"
+],
+"GoToAssist": [
+"g2ax_comm_customer",
+"g2mcomm",
+"goto assist opener",
+"goto opener",
+"gotoassist"
+],
+"GoToAssist (GoTo Resolve)": [
+"gotoresolveexternalmodulehandler",
+"gotoresolvefilemanager",
+"gotoresolveloggerprocess",
+"gotoresolvenetworkchecker",
+"gotoresolveprocesschecker",
+"gotoresolvequickview",
+"gotoresolveregistryeditor",
+"gotoresolveremotecontrol",
+"gotoresolveservice",
+"gotoresolveservicemanager",
+"gotoresolveterminal",
+"gotoresolvetools32",
+"gotoresolvetools64",
+"gotoresolveui",
+"gotoresolveunattended",
+"gotoresolveunattendedremover",
+"gotoresolveunattendedui"
+],
+"GoToMyPC": [
+"appcore",
+"g2comm",
+"g2fileh",
+"g2host",
+"g2m_download",
+"g2mainh",
+"g2mchat",
+"g2mcodecinstextractor",
+"g2mcomm",
+"g2mcoreinstextractor",
+"g2mfeedback",
+"g2minstaller",
+"g2minstallerextractor",
+"g2minsthigh",
+"g2mlauncher",
+"g2mmatchmaking",
+"g2mmaterials",
+"g2mpolling",
+"g2mqanda",
+"g2mrecorder",
+"g2mscrutil64",
+"g2msessioncontrol",
+"g2mstart",
+"g2mtesting",
+"g2mtranscoder",
+"g2mui",
+"g2muninstall",
+"g2mupload",
+"g2mvideoconference",
+"g2mview",
+"g2printh",
+"g2quick",
+"g2svc",
+"g2tray",
+"gopcsrv",
+"gotoscrutils"
+],
+"Gorelo RMM": [
+"gorelo.rmm.setup"
+],
+"GotoHTTP": [
+"gotohttp",
+"gotohttp_x64"
+],
+"Goverlan": [
+"govagentinstallhelper",
+"govagentx64",
+"goverrmc",
+"govreachclient"
+],
+"Guacamole": [
+"guacd"
+],
+"HeartbeatRM": [
+"agent-installer-any",
+"hbrm-updater-x64",
+"hbrm-x64"
+],
+"HelpU": [
+"helpu_install",
+"helpumanager",
+"helpuupdater"
+],
+"HelpWire": [
+"helpwire",
+"helpwire quick"
+],
+"HopToDesk": [
+"hoptodesk",
+"hoptodesk-standalone"
+],
+"I'm InTouch": [
+"i'm intouch go installer",
+"intouch"
+],
+"ISL Light": [
+"islalwaysonmonitor",
+"isllight",
+"isllightservice"
+],
+"ISL Online": [
+"islalwaysonmonitor",
+"isllight",
+"isllightclient",
+"isllightservice"
+],
+"IT Agent": [
+"itagentrmmsender",
+"itagentrmmsendersl",
+"itagentrmmsenderupdater"
+],
+"ITSupport247 (ConnectWise)": [
+"saazapsc"
+],
+"ImmyBot": [
+"immyagent",
+"immybot.agent.ephemeral",
+"immyupdater"
+],
+"Impero Connect": [
+"imperoclientsvc"
+],
+"Instant Housecall": [
+"hsloader",
+"ihcserver",
+"instanthousecall"
+],
+"IntelliAdmin Remote Control": [
+"agent32",
+"agent64",
+"agent_setup_5",
+"iadmin",
+"intelliadmin"
+],
+"InvGate": [
+"dephlp",
+"invgate-ed",
+"invgateassetsrd",
+"invgaterd"
+],
+"Iperius Remote": [
+"iperius",
+"iperiusremote"
+],
+"Itarian": [
+"comodoremotecontrol",
+"itarianremoteaccesssetup",
+"itsmagent",
+"itsmrsp",
+"itsmservice",
+"raccess",
+"rdesktop",
+"rhost",
+"rmmservice",
+"rviewer"
+],
+"Ivanti Remote Control": [
+"agentlessrc",
+"arcui",
+"ivantiremotecontrol"
+],
+"Jump Desktop": [
+"jumpclient",
+"jumpconnect",
+"jumpdesktop",
+"jumpservice",
+"jumpupdater"
+],
+"KHelpDesk": [
+"khelpdesk"
+],
+"Kabuto": [
+"kabuto.app.runner"
+],
+"Kaseya (VSA)": [
+"agentmon",
+"kaupdhlp",
+"kausrtsk"
+],
+"Komari": [
+"komari",
+"komari-agent"
+],
+"LANDesk": [
+"issuser",
+"landeskagentbootstrap",
+"landeskportalmanager",
+"ldinv32",
+"ldsensors"
+],
+"LS RMM": [
+"ls rmm",
+"ls rmm worker"
+],
+"LabTeach (Connectwise Automate)": [
+"ltsvc"
+],
+"LabTech RMM (Now ConnectWise Automate)": [
+"ltsvc",
+"ltsvcmon",
+"lttray"
+],
+"Laplink Everywhere": [
+"laplink",
+"laplinkeverywhere",
+"llrcservice",
+"oosysagent",
+"serverproxyservice"
+],
+"Laplink Gold": [
+"laplink",
+"tsircusr"
+],
+"Lavawall": [
+"lavawallwin"
+],
+"Level": [
+"level"
+],
+"Level.io": [
+"level",
+"level-remote-control-ffmpeg",
+"level-windows-amd64"
+],
+"LightRmmAgent": [
+"lightrmmagentservice"
+],
+"LiteManager": [
+"lmnoipserver",
+"romfusclient",
+"romserver",
+"romviewer"
+],
+"LocalXpose": [
+"loclx"
+],
+"LogMeIn": [
+"lmiguardiansvc",
+"lmiignition",
+"logmein",
+"logmeinsystray"
+],
+"LogMeIn rescue": [
+"lmi_rescue",
+"support-logmeinrescue"
+],
+"Lunixar": [
+"lunixar"
+],
+"MSP360": [
+"cbbackupplan",
+"cloud.backup.rm.service",
+"cloud.backup.scheduler",
+"cloudracmd",
+"cloudrasd",
+"cloudraservice",
+"cloudrautilities",
+"online backup",
+"remote desktop",
+"rmm.agent"
+],
+"Manage Engine (Desktop Central)": [
+"dcagentregister",
+"dcagentservice"
+],
+"ManageEngine": [
+"installshield setup",
+"manageengine_remote_access_plus"
+],
+"ManageEngine ServiceDesk Plus": [
+"installshield setup",
+"manageengine_servicedesk_plus"
+],
+"MeshCentral": [
+"meshagent"
+],
+"Microsoft Quick Assist": [
+"quickassist"
+],
+"Mikogo": [
+"mikogo",
+"mikogo-service",
+"mikogo-starter",
+"mikogolauncher"
+],
+"Mini RMM Agent": [
+"minirmmagent"
+],
+"MioNet (Also known as WD Anywhere Access)": [
+"mionet",
+"mionetmanager"
+],
+"MioNet (WD Anywhere Access)": [
+"mionet",
+"mionetmanager"
+],
+"Monitic": [
+"moniticinstaller"
+],
+"Mouse Without Borders": [
+"mousewithoutborders"
+],
+"Mremote": [
+"mremote-agent"
+],
+"MyGreenPC": [
+"mygreenpc"
+],
+"MyIVO": [
+"myivomanager",
+"myivomgr"
+],
+"N-Able Advanced Monitoring Agent": [
+"baseclient",
+"basupapp",
+"basupsrvc",
+"basupsrvccnfg",
+"basuptshelper"
+],
+"N-able N-central": [
+"agentmaint",
+"agentmonitor",
+"basuptshelper",
+"msp-agent-core"
+],
+"NTR Remote": [
+"ntrsupportpro_en"
+],
+"Net Monitor for Employees": [
+"nmep_agtconfig",
+"nmep_ctrlagent",
+"nmep_ctrlagentsvc",
+"winpty-agent",
+"winpty-agent64"
+],
+"NetBird": [
+"netbird",
+"netbird-ui",
+"netbird_installer"
+],
+"NetLock RMM": [
+"netlock_rmm_agent_installer"
+],
+"NetMaster": [
+"netmaster_client"
+],
+"NetSupport Manager": [
+"client32",
+"pcicfgui",
+"pcictlui",
+"remcmdstub"
+],
+"Netop Remote Control (Impero Connect)": [
+"imperoclientsvc",
+"imperoinit",
+"netop ondemand",
+"ngstw32",
+"nhostsvc",
+"nhstw32",
+"nldrw32",
+"rmserverconsolemediator"
+],
+"Netop Remote Control (aka Impero Connect)": [
+"nhostsvc",
+"nhstw32",
+"nldrw32",
+"rmserverconsolemediator"
+],
+"Neturo": [
+"neturo",
+"ntrntservice"
+],
+"Netviewer": [
+"netviewer"
+],
+"Netviewer (GoToMeet)": [
+"netviewer",
+"nvclient",
+"nvconsole"
+],
+"Nexus RMM (Scogo)": [
+"nexusrmm"
+],
+"Nezha": [
+"dashboard-windows-amd64",
+"nezha-agent"
+],
+"Ninite Pro (Ninite Agent)": [
+"ninite",
+"niniteagent",
+"niniteone",
+"ninitepro"
+],
+"NinjaRMM": [
+"ninjarmm-cli",
+"ninjarmmagent",
+"ninjarmmagentpatcher"
+],
+"NoteOn-desktop sharing": [
+"nateon",
+"nateonmain"
+],
+"OCS inventory": [
+"ocsinventory",
+"ocsservice"
+],
+"Obliance": [
+"obliance-agent"
+],
+"Opale": [
+"opale-agent"
+],
+"OpenDesk RMM Agent": [
+"opendesk-rmm-agent"
+],
+"OpenUEM": [
+"openuem-agent-setup"
+],
+"OpsBridge Agent": [
+"opsbridgeagent"
+],
+"OptiTune": [
+"otpowershell",
+"otservice"
+],
+"PSEXEC": [
+"psexec",
+"psexec64",
+"psexecsvc"
+],
+"PSEXEC (Clone)": [
+"csexec",
+"paexec",
+"remcom",
+"remcomsvc",
+"xcmdsvc"
+],
+"Pandora RC (eHorus)": [
+"ehorus standalone",
+"ehorus_agent"
+],
+"Parallels Access": [
+"prl_deskctl_agent",
+"prl_deskctl_wizard",
+"prl_pm_service",
+"tsclient"
+],
+"Parsec": [
+"parsecd",
+"pservice"
+],
+"Pcnow": [
+"mwcliun",
+"pcnmgr",
+"webexpcnow"
+],
+"Pcvisit": [
+"pcvisit",
+"pcvisit-easysupport",
+"pcvisit_client",
+"pcvisit_service_client"
+],
+"Ping32": [
+"nsecds",
+"nsecrts"
+],
+"Pocket Cloud (Wyse)": [
+"pocketcloudservice"
+],
+"Pocket Controller": [
+"pocketcloudservice",
+"pocketcontroller",
+"wysebrowser"
+],
+"Pocket Controller (Soti Xsight)": [
+"pocketcontroller",
+"wysebrowser",
+"xsightservice"
+],
+"ProxiPort": [
+"proxiport"
+],
+"Pulseway": [
+"pcmonitormanager",
+"pcmonitorsrv"
+],
+"QQ IM-remote assistance": [
+"qqpcmgr",
+"qqprotect"
+],
+"Quest KACE Agent (formerly Dell KACE)": [
+"konea"
+],
+"Quick Assist": [
+"quickassist"
+],
+"RAdmin": [
+"radmin",
+"rserver3"
+],
+"RDPView": [
+"dwrcs"
+],
+"RES Automation Manager": [
+"wmc_deployer",
+"wmcsvc"
+],
+"RG System (RG Supervision)": [
+"rg_supervision"
+],
+"RMMmax": [
+"rmmmaxagentservice",
+"rmmmaxagentsetup"
+],
+"RPort": [
+"rport"
+],
+"Rapid7": [
+"ir_agent",
+"rapid7_agent_core",
+"rapid7_endpoint_broker"
+],
+"RdClient": [
+"rdclient",
+"rdclientinstaller",
+"supporttool"
+],
+"RemSupp": [
+"remsupp",
+"remsupp_setup_x64"
+],
+"Remmon": [
+"remmon"
+],
+"Remobo": [
+"remobo",
+"remobo_client",
+"remobo_tracker"
+],
+"Remote Manipulator System": [
+"rfusclient",
+"rutserv"
+],
+"Remote Ripple": [
+"remoteripple"
+],
+"Remote Utilities": [
+"rutserv",
+"rutview"
+],
+"Remote.it": [
+"remote-it-installer",
+"remote.it",
+"remoteit"
+],
+"RemoteAgentAgent": [
+"remoteagentagent"
+],
+"RemoteCall": [
+"agentu",
+"raautoup",
+"rcengmgru",
+"rcmgrsvc",
+"rcstartsupport",
+"remotesupportplayeru",
+"rxstartsupport"
+],
+"RemotePC": [
+"remotepc",
+"remotepchost",
+"remotepcservice",
+"rpcsuite"
+],
+"RemotePass": [
+"remotepass-access",
+"rpaccess",
+"rpwhostscr"
+],
+"RemotePulse": [
+"installcore"
+],
+"RemoteUtilities": [
+"rutserv",
+"rutview"
+],
+"RemoteView": [
+"remoteview",
+"rvagent",
+"rvagtray"
+],
+"Remotely": [
+"remotely_agent",
+"remotely_desktop"
+],
+"Rocket Remote Desktop": [
+"rdconsole",
+"rocketremotedesktop_setup"
+],
+"Rodex RMM": [
+"rodexagent"
+],
+"Roster": [
+"agent-windows-amd64"
+],
+"Royal Apps": [
+"royalserver",
+"royalts"
+],
+"Royal TS": [
+"royalts"
+],
+"RustDesk": [
+"rustdesk"
+],
+"ScreenConnect": [
+"remote workforce client",
+"screenconnect.clientservice",
+"screenconnect.windowsclient"
+],
+"ScreenMeet": [
+"screenmeet.support",
+"screenmeetsupport"
+],
+"Seetrol": [
+"seetrolcenter",
+"seetrolclient",
+"seetrolmyservice",
+"seetrolremote",
+"seetrolsetting"
+],
+"Senso.cloud": [
+"sensoclient",
+"sensoservice"
+],
+"Sentinel RMM": [
+"sentinel-agent"
+],
+"ServerEye": [
+"serviceproxylocalsys"
+],
+"SetMe PRO": [
+"setme_client",
+"tinunattendedmodule"
+],
+"ShowMyPC": [
+"showmypc",
+"smpcsetup"
+],
+"SimpleHelp": [
+"remote access",
+"simplegatewayservice",
+"simplehelpcustomer",
+"simpleservice",
+"spsrv",
+"vhost",
+"windowslauncher"
+],
+"Site24x7": [
+"meagenthelper",
+"monitoringagent",
+"site24x7pluginagent",
+"site24x7windowsagenttrayicon"
+],
+"SkyFex": [
+"deskroll",
+"deskrollua"
+],
+"Sophos-Remote Management System": [
+"clientmrinit",
+"mgntsvc",
+"routernt"
+],
+"Sorillus": [
+"sorillus launcher"
+],
+"Splashtop": [
+"strwinclt"
+],
+"Splashtop (Beta)": [
+"splashtopsos",
+"srmanager",
+"srserver"
+],
+"Splashtop Remote": [
+"splashtopsos",
+"sragent",
+"srmanager",
+"srserver",
+"srservice",
+"strwinclt"
+],
+"SpyAnywhere": [
+"sysdiag"
+],
+"SunLogin": [
+"orayremoteservice",
+"orayremoteshell"
+],
+"SuperOps": [
+"superops",
+"superopsticket"
+],
+"Supremo": [
+"supremo",
+"supremohelper",
+"supremoservice",
+"supremosystem"
+],
+"Syncro": [
+"kabuto.app.runner",
+"kabuto.installer",
+"kabuto.service.runner",
+"kabutosetup",
+"syncro.app.runner",
+"syncro.installer",
+"syncro.overmind.service",
+"syncro.service",
+"syncrolive.agent",
+"syncrolive.service"
+],
+"Syspectr": [
+"oolocker",
+"oosyspectr",
+"syspectr"
+],
+"Tactical RMM": [
+"tacticalrmm"
+],
+"Tailscale": [
+"tailscale-ipn",
+"tailscaled"
+],
+"Tanium": [
+"taniumclient",
+"taniumcx",
+"taniumexecwrapper",
+"taniumfileinfo",
+"tpowershell"
+],
+"TeamViewer": [
+"teamviewer",
+"teamviewer_desktop",
+"teamviewer_service"
+],
+"TeleDesktop": [
+"pstlaunch",
+"ptdskclient",
+"ptdskhost"
+],
+"Teleport Connect": [
+"teleport connect"
+],
+"Teramind": [
+"teramind-remover",
+"teramind.setup.remover",
+"teramind.setup.ui",
+"teramind.setup.uiarm",
+"teramind.setup.updater",
+"tmagentsvc",
+"update-shim"
+],
+"TiFLUX": [
+"tiagent",
+"tiservice",
+"tiupdateservice"
+],
+"TigerVNC": [
+"winvnc4"
+],
+"TightVNC": [
+"tvnserver",
+"tvnviewer"
+],
+"ToDesk": [
+"todesk",
+"todesk_service",
+"todesk_setup"
+],
+"TrustConnect": [
+"docconnect.agent",
+"trustconnectagent"
+],
+"TurboMeeting": [
+"pcstarter",
+"turbomeeting",
+"turbomeetingstarter"
+],
+"UltraViewer": [
+"ultraviewer",
+"ultraviewer_desktop",
+"ultraviewer_service"
+],
+"UniSystem RMM": [
+"unirmm"
+],
+"VIZOR": [
+"clboot32",
+"cldist32",
+"cldistsvc",
+"clmeter32",
+"clmetersvc",
+"closeapp",
+"cpuchk",
+"httpget",
+"httppush",
+"luedit",
+"luguard",
+"lulogon",
+"lusmbios32",
+"lutinfow32",
+"mqmailintegration",
+"nuke32",
+"pidupdater",
+"prep64",
+"recycler",
+"regapps",
+"selfupdater",
+"upload",
+"vecwait",
+"vnconfigutils",
+"vnldriverinstaller",
+"vnlselfupdate",
+"winchk32"
+],
+"VNC": [
+"vncserver",
+"vncserverui",
+"vncviewer",
+"winvncsc",
+"winwvc"
+],
+"Veyon": [
+"veyon-master",
+"veyon-server",
+"veyon-service",
+"veyon-wcli",
+"veyon-worker"
+],
+"Vicarius vRx": [
+"topiad"
+],
+"WebRDP": [
+"webrdp"
+],
+"Weezo": [
+"weezo",
+"weezohttpd"
+],
+"Xeox": [
+"xeox-agent_x64",
+"xeox-agent_x86",
+"xeox_service_windows"
+],
+"ZeroTier": [
+"zero-powershell"
+],
+"Zoho Assist": [
+"za_connect",
+"zaservice",
+"zmagent",
+"zohotray",
+"zohours",
+"zohoursservice"
+],
+"eHorus": [
+"ehorus standalone",
+"ehorus_agent",
+"ehorus_cmd",
+"ehorus_launcher",
+"ehorus_uit"
+],
+"ezHelp": [
+"ezhelpclient",
+"ezhelpclientmanager",
+"ezhelpmanager"
+],
+"iDrive": [
+"id_tray",
+"idriveeclassic",
+"idrivewinsetup"
+],
+"mRemoteNG": [
+"mremoteng"
+],
+"ngrok": [
+"ngrok"
+],
+"pcAnywhere": [
+"awhost32",
+"awrem32",
+"pcaquickconnect",
+"winaw32"
+],
+"rdp2tcp": [
+"rdp2tcp"
+],
+"rdpwrap": [
+"rdpcheck",
+"rdpconf",
+"rdpwinst"
+]
+}
+}

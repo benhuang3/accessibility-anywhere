@@ -11,6 +11,8 @@ let pingTimer = null;
 let reconnectTimer = null;
 let nextCommandId = 1;
 const pendingReplies = new Map();
+let callCreation = Promise.resolve();
+const callKey = (tabId) => `allyCall:${tabId}`;
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
@@ -339,6 +341,56 @@ const ACTIONS = {
   async getTab() {
     return await tabInfo();
   },
+  // A scam page that took over the screen would hide Ally's warning: put the window back the way people use it.
+  async exitFullscreen({ url }) {
+    const tabs = await chrome.tabs.query({});
+    let left = 0;
+    for (const t of tabs) {
+      if (t.url !== url) continue;
+      try {
+        const w = await chrome.windows.get(t.windowId);
+        if (w.state === "fullscreen") {
+          await chrome.windows.update(t.windowId, { state: "maximized" });
+          left += 1;
+        }
+      } catch { /* window already gone */ }
+    }
+    return { left };
+  },
+  // Agent found a risk on a page and Ally's own overlay is not running: show the in-page banner instead.
+  async showRiskBanner({ url, text }) {
+    const tabs = await chrome.tabs.query({});
+    let shown = 0;
+    for (const t of tabs) {
+      if (t.url === url) {
+        await chrome.tabs.sendMessage(t.id, { kind: "allyRiskBanner", text }).then(() => { shown += 1; }, () => {});
+      }
+    }
+    return { shown };
+  },
+  // Only after the user said yes in Ally: prefer the source tab if it is still on the same origin.
+  async closeTab({ url, tabId }) {
+    if (typeof tabId === "number") {
+      let tab;
+      try { tab = await chrome.tabs.get(tabId); } catch { /* tab was closed */ }
+      let sameOrigin = false;
+      try {
+        const origin = new URL(url).origin;
+        sameOrigin = origin !== "null" && new URL(tab.url).origin === origin;
+      } catch { /* missing tab or invalid address: use the address fallback */ }
+      if (sameOrigin) {
+        await chrome.tabs.remove(tabId);
+        return { closed: 1 };
+      }
+    }
+    if (typeof url !== "string" || !url) return { closed: 0 };
+    const tabs = await chrome.tabs.query({});
+    const address = url.split("#")[0];
+    const ids = tabs.filter((t) => typeof t.url === "string" && t.url.split("#")[0] === address)
+      .map((t) => t.id);
+    if (ids.length) await chrome.tabs.remove(ids);
+    return { closed: ids.length };
+  },
   async setZoom({ factor }) {
     const t = await activeTab();
     await chrome.tabs.setZoom(t.id, clamp(Number(factor) || 1, 0.25, 5));
@@ -413,6 +465,30 @@ const ACTIONS = {
     if (newTab) await chrome.tabs.create({ url });
     else await chrome.tabs.update((await activeTab()).id, { url });
     return url;
+  },
+  async openCall({ url, name }) {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" || parsed.hostname !== "meet.google.com" || parsed.username || parsed.password) {
+      throw new Error("Ally calls need an https://meet.google.com address.");
+    }
+    // Info requests and load events wait until the new popup's identity is saved.
+    const opening = callCreation.then(async () => {
+      const win = await chrome.windows.create({ url, type: "popup", state: "maximized", focused: true });
+      const tab = win.tabs && win.tabs[0];
+      try {
+        if (!tab || typeof tab.id !== "number") throw new Error("The call tab did not open.");
+        await chrome.storage.session.set({ [callKey(tab.id)]: {
+          tabId: tab.id, windowId: win.id, name: String(name || "your trusted person").slice(0, 30),
+        } });
+      } catch (e) {
+        await chrome.windows.remove(win.id).catch(() => {});
+        throw e;
+      }
+      if (tab.status === "complete") await insertCallCSS(tab.id);
+      return { opened: true, windowId: win.id };
+    });
+    callCreation = opening.catch(() => {});
+    return await opening;
   },
   async rememberSite({ styles = [] }) {
     const t = await activeTab();
@@ -592,9 +668,27 @@ chrome.tabs.onZoomChange.addListener(async () => {
 
 chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
   if (change.status === "complete") {
+    await callCreation;
+    await insertCallCSS(tabId);
     await applySaved(tab).catch(() => {});
     if (tab.active) send({ type: "event", name: "tab", tab: await tabInfo() });
   }
+});
+
+async function insertCallCSS(tabId) {
+  try {
+    const saved = (await chrome.storage.session.get(callKey(tabId)))[callKey(tabId)];
+    if (saved) await chrome.scripting.insertCSS({ target: { tabId }, files: ["call.css"] });
+  } catch { /* a closed or navigated tab must leave plain Meet usable */ }
+}
+
+chrome.windows.onRemoved?.addListener(async (windowId) => {
+  try {
+    await callCreation;
+    const saved = await chrome.storage.session.get(null);
+    const keys = Object.keys(saved).filter((key) => key.startsWith("allyCall:") && saved[key].windowId === windowId);
+    if (keys.length) await chrome.storage.session.remove(keys);
+  } catch { /* the browser may be shutting down */ }
 });
 
 // ---------------------------------------------------------------- shortcuts (work without the agent)
@@ -656,7 +750,27 @@ async function handlePopup(msg) {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && (msg.kind === "allyCallInfo" || msg.kind === "allyCallEnd")) {
+    (async () => {
+      await callCreation;
+      const tabId = sender.tab && sender.tab.id;
+      const saved = (await chrome.storage.session.get(callKey(tabId)))[callKey(tabId)];
+      if (!saved || saved.windowId !== sender.tab.windowId) return { isCall: false };
+      if (msg.kind === "allyCallEnd") {
+        await chrome.windows.remove(saved.windowId);
+        await chrome.storage.session.remove(callKey(tabId));
+      }
+      return { isCall: true, name: saved.name };
+    })().then(sendResponse, () => sendResponse({ isCall: false }));
+    return true;
+  }
+  if (msg && msg.kind === "pageRisk") {
+    // From extension/risk.js: pass the page to the agent over the existing bridge.
+    const { url, title, text, fields, overlay_text, fullscreen, has_tel_link, signals } = msg;
+    sendResponse({ ok: send({ type: "event", name: "page", url, title, text, fields, overlay_text, fullscreen, has_tel_link, signals, tab_id: sender.tab && sender.tab.id }) });
+    return false;
+  }
   if (!msg || msg.kind !== "popup") return false;
   handlePopup(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: friendlyError(e) }));
   return true; // answer asynchronously

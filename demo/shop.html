@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Field &amp; Fern — Pickup checkout</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="scenarios.css">
+  <script src="forms.js" defer></script>
+</head>
+<body class="shop-page">
+  <a class="lab-back" href="index.html">← Scam Lab</a>
+  <main class="page-wrap">
+    <header class="brand-bar"><span class="brand">Field &amp; Fern</span><span class="tagline">Small-batch candles. A little everyday joy.</span></header>
+    <p class="eyebrow">Your basket / Pickup checkout</p><h1>Something lovely, ready for you.</h1><p>Reserve your candles online and pay when you collect them in the shop.</p>
+    <div class="two-column">
+      <form class="panel" data-demo-form="shop">
+        <h2>Who’s picking up?</h2><label for="pickup-name">Your name</label><input id="pickup-name" name="customer" autocomplete="name" required>
+        <label for="pickup-email">Email for your pickup note</label><input id="pickup-email" name="email" type="email" autocomplete="email" required>
+        <label for="pickup-time">Pickup day</label><select id="pickup-time" name="pickup"><option>Tomorrow, during shop hours</option><option>The following day, during shop hours</option></select>
+        <p class="pickup-label">Pay in the shop when you pick up your order.</p>
+        <button type="submit">Reserve for pickup · $28.00</button><p class="status-message" role="status" aria-live="polite"></p>
+      </form>
+      <aside class="panel"><h2>Your order</h2><div class="order-item"><div class="candle" aria-hidden="true"></div><div><h2>Lavender soy candle</h2><p>Two hand-poured candles</p><p class="muted">Cotton wick · Reusable jar</p></div></div><dl class="order-totals"><div><dt>Subtotal</dt><dd>$28.00</dd></div><div><dt>Pickup</dt><dd>Free</dd></div><div class="total"><dt>Due at pickup</dt><dd>$28.00</dd></div></dl><p class="demo-note">Questions? Visit us during shop hours, Tuesday–Saturday.</p></aside>
+    </div>
+    <p class="demo-note">Field &amp; Fern is a fictional shop. Reservations stay in this demo; nothing is saved or sent.</p>
+  </main>
+</body>
+</html>

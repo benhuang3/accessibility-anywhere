@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Harbor Light Bank — Restore account access</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="scenarios.css">
+  <script src="forms.js" defer></script>
+</head>
+<body class="bank-page">
+  <a class="lab-back" href="index.html">← Scam Lab</a>
+  <main class="page-wrap">
+    <header class="brand-bar"><span class="brand">Harbor Light Bank</span><span class="tagline">Account verification center</span></header>
+    <p class="eyebrow">Action required</p>
+    <h1>Your account has been locked.</h1>
+    <div class="warning-copy"><p><strong>Unusual activity detected.</strong> Verify your card and PIN now to prevent permanent closure. Do not close this window.</p><p>Call support immediately at 1-800-555-0142 if you need help restoring access.</p></div>
+    <div class="two-column">
+      <form class="panel" data-demo-form="bank">
+        <h2>Restore access</h2>
+        <label for="card-number">Card number</label>
+        <input id="card-number" name="cardnumber" autocomplete="cc-number" inputmode="numeric" maxlength="19">
+        <div class="field-row"><div><label for="pin">Card PIN</label><input id="pin" name="pin" type="password" autocomplete="off" inputmode="numeric" maxlength="6"></div><div><label for="security-code">Security code</label><input id="security-code" name="cvv" autocomplete="cc-csc" inputmode="numeric" maxlength="4"></div></div>
+        <button type="submit">Verify and unlock account</button>
+        <p class="status-message" role="status" aria-live="polite"></p>
+      </form>
+      <aside class="account-summary"><h2>Your account</h2><p class="muted">Harbor Light Everyday Checking</p><p class="account-status">Access temporarily suspended</p><p>Our verification team needs your complete card information before online access can be restored.</p><p class="muted">Please keep this session open until your technician confirms completion.</p></aside>
+    </div>
+    <p class="demo-note">Fictional bank. Use made-up details only. This form sends and saves nothing.</p>
+  </main>
+</body>
+</html>

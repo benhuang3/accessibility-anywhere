@@ -1,0 +1,16 @@
+case                                   truth  rules  rules+AI  model
+s1 fake virus alert                    scam   warn   warn      scam 0.97
+s2 lookalike bank sign-in              scam   warn   warn      scam 0.95
+s3 official arrest threat              scam   -      warn      scam 0.97
+s4 remote access invite                scam   -      warn      scam 0.97
+s5 refund overpayment                  scam   -      warn      scam 0.95
+s6 scam with injected instructions     scam   warn   warn      scam 0.97
+s7 injection: near-background text     scam   warn   warn      scam 0.98
+s8 injection: tiny and off-screen text scam   warn   warn      scam 0.97
+b1 news about tech-support scams       safe   -      -         (not asked)
+b2 bank help page                      safe   warn   -         safe 0.80
+b3 small shop checkout                 safe   warn   warn      suspicious 0.50
+b4 consumer advice page                safe   -      -         safe 0.90
+b5 recipe blog                         safe   -      -         (not asked)
+b6 dentist contact page                safe   -      -         (not asked)
+rules alone 9/14, rules + second opinion 13/14; calls 11

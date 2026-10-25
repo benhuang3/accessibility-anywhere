@@ -100,6 +100,7 @@ class Agent:
         self.bus.subscribe("offer_result", self._offer_answered)
         self.sensors: list = []  # Hayden's senses run as self.senses; the patch's own sensors are not used
         self.overlay = None      # Ganesh's overlay plugs in here when ally/overlay lands
+        self.risk = None         # ally.risk.wire attachment (page/process risk -> bus)
         self.hotkeys = HotkeyManager(self)
         self.start_hotkeys = start_hotkeys
         if not start_hotkeys:
@@ -279,6 +280,7 @@ class Agent:
             "gaze": self.gaze.info(),
             "senses": self.senses.info(),
             "proactive": dict(self.proactive.status(), overlay=bool(self.overlay)),
+            "risk": self.risk.info() if self.risk else None,
             "screen": {"magnify": self.platform.magnify_level, "color": self.platform.color},
             "config": {"error": self.config.error, "errors": self.config.errors, "warnings": self.config.warnings},
             "plugins": {"folder": str(self.plugins.folder), "errors": self.plugins.errors},
@@ -353,6 +355,12 @@ class Agent:
             except Exception as e:
                 log.debug("overlay unavailable: %s", e)
         self.proactive.start()
+        try:
+            from .risk.wire import attach
+
+            self.risk = attach(self)
+        except Exception as e:
+            log.warning("risk protection unavailable: %s", e)
         self.events.add("start", "Proactive help is on.")
 
     def start(self) -> None:
@@ -427,7 +435,7 @@ class Agent:
     def close(self) -> None:
         self._stop.set()
         log.info("Ally stopping (code %s)", self.exit_code)
-        extra = [self.proactive.stop] + ([self.overlay.stop] if self.overlay else [])
+        extra = [self.proactive.stop] + ([self.overlay.stop] if self.overlay else []) + ([self.risk.stop] if self.risk else [])
         if hasattr(self.proactive.voice, "close"):
             extra.append(self.proactive.voice.close)
         for step in (*extra, self.confirm.cancel, self.hotkeys.stop, self.listener.stop, self.senses.stop,

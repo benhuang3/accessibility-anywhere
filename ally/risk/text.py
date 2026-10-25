@@ -29,7 +29,19 @@ _RULES = (
      "a payment request"),
 )
 _ALLOW = ("microsoft.com", "learn.microsoft.com", "support.microsoft.com", "ftc.gov",
-          "consumer.ftc.gov", "fbi.gov", "ic3.gov", "cisa.gov", "aarp.org")
+          "consumer.ftc.gov", "fbi.gov", "ic3.gov", "cisa.gov", "aarp.org", "wikipedia.org")
+# Only governments and universities can register these endings, so scam pages are never on them.
+_ALLOW_SUFFIXES = (".gov", ".mil", ".edu")
+# A brand named on its own site is not a scammer's claim (Apple's phone number on apple.com).
+_MS = ("microsoft.com", "windows.com", "office.com", "live.com", "outlook.com", "bing.com", "msn.com", "xbox.com", ".microsoft")
+_BRAND_HOMES = {"microsoft": _MS, "windows": _MS, "defender": _MS, "apple": ("apple.com", "icloud.com", ".apple"),
+                "google": ("google.com", "youtube.com", "gmail.com", "android.com", ".google"),
+                "norton": ("norton.com",), "mcafee": ("mcafee.com",)}
+# Scam pop-ups pack their claims into a few sentences; a real homepage scatters a brand in the header, a phone number
+# in the footer and "malware protection" in a feature list. Signals only add up when they sit this close together.
+_WINDOW = 800
+# A tel: link counts as a phone number only on short pages (a pop-up), not on a site with a contact link in its footer.
+_SHORT_PAGE = 2000
 
 
 def _phone_matches(text: str) -> list[tuple[str, bool]]:
@@ -74,31 +86,62 @@ def is_allowlisted(url: str, extra_allow: tuple[str, ...] = ()) -> bool:
     host = _hostname(url)
     if not host:
         return False
+    if host.endswith(_ALLOW_SUFFIXES):
+        return True
     return any(domain and (host == domain or host.endswith("." + domain))
                for domain in (_hostname(item) for item in _ALLOW + extra_allow))
 
 
+def _hits(body: str, host: str) -> list[tuple[int, str, bool]]:
+    """(position, signal name, toll-free) for every match; brand names on the brand's own site are skipped."""
+    hits = []
+    for m in _PHONE.finditer(body):
+        raw = m.group()
+        digits = re.sub(r"\D", "", raw)
+        area = digits[1:4] if len(digits) == 11 else digits[:3]
+        if re.search(r"\D", raw) or area in _TOLL_FREE:
+            hits.append((m.start(), "phone", area in _TOLL_FREE))
+    for name, pattern, _, _ in _RULES[1:]:
+        for m in pattern.finditer(body):
+            if name == "brand" and host and any(
+                    host == d or host.endswith(d if d.startswith(".") else "." + d)
+                    for d in _BRAND_HOMES.get(m.group(), ())):
+                continue
+            hits.append((m.start(), name, False))
+    return sorted(hits)
+
+
+def _best_window(hits, phone_anywhere: bool) -> tuple[int, set, bool]:
+    """The densest cluster: (score, signal names, toll-free phone) over any _WINDOW-character span."""
+    points = {name: pts for name, _, pts, _ in _RULES}
+    best = (0, set(), False)
+    starts = [pos for pos, _, _ in hits] or [0]
+    for start in starts:
+        names, toll = set(), False
+        for pos, name, free in hits:
+            if start <= pos <= start + _WINDOW:
+                names.add(name)
+                toll = toll or free
+        if phone_anywhere:
+            names.add("phone")
+        score = sum(points[n] for n in names) + (1 if toll else 0)
+        if score > best[0]:
+            best = (score, names, toll)
+    return best
+
+
 def score_text(text: str, url: str = "", overlay_text: str = "", fullscreen: bool = False,
                has_tel_link: bool = False, extra_allow: tuple[str, ...] = ()) -> TextScore:
-    """Score each signal once, with an additional bonus for overlay matches."""
+    """Score the densest cluster of signals, with a bonus for each signal also inside an overlay."""
     body = normalize(text + " " + overlay_text)
     overlay = normalize(overlay_text)
-    score = 0
-    signals = []
-    phrases = []
-    overlay_hit = False
-    for name, pattern, points, phrase in _RULES:
-        if name == "phone":
-            hit, in_overlay = bool(_phone_matches(body)) or has_tel_link, bool(_phone_matches(overlay))
-        else:
-            hit, in_overlay = bool(pattern.search(body)), bool(pattern.search(overlay))
-        if hit:
-            signals.append(name)
-            phrases.append(phrase)
-            score += points + in_overlay
-            overlay_hit = overlay_hit or in_overlay
-    if any(toll_free for _, toll_free in _phone_matches(body)):
-        score += 1
+    host = _hostname(url) if url else ""
+    score, names, _ = _best_window(_hits(body, host), has_tel_link and len(body) <= _SHORT_PAGE)
+    overlay_names = {name for _, name, _ in _hits(overlay, host)} if overlay else set()
+    overlay_hit = bool(names & overlay_names)
+    score += len(names & overlay_names)
+    signals = [name for name, _, _, _ in _RULES if name in names]
+    phrases = [phrase for name, _, _, phrase in _RULES if name in names]
     if fullscreen:
         signals.append("fullscreen")
         phrases.append("a full screen page")
@@ -111,7 +154,10 @@ def score_text(text: str, url: str = "", overlay_text: str = "", fullscreen: boo
         if (score >= 7 and "phone" in signals and "alarm" in signals
                 and ("brand" in signals or "fullscreen" in signals or overlay_hit)):
             severity = "high"
-        elif score >= 4:
+        elif score >= 4 and len(signals) >= 2 and "alarm" in signals:
+            # A scare (virus, locked, "do not close") is the core of these pages: every scam case in the eval has one,
+            # while a 500-site sweep showed brand + phone + "gift card" or "contact support" on ordinary homepages.
+            # Scams without a scare (refunds, remote-access pressure) go through the weak-sign gate and the model.
             severity = "medium"
     evidence = "Page signals: " + ", ".join(phrases) + "." if phrases else "No page signals."
     return TextScore(score, severity, tuple(signals), evidence, allowed)

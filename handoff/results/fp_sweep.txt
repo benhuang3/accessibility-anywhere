@@ -1,0 +1,10 @@
+{
+ "loaded": 500,
+ "warned": 3,
+ "warned_rate": 0.006,
+ "high": 0,
+ "would_review": 15
+}
+  ubuntu.com                   [('scam_popup', 'medium', 'risk.text', 'Page signals: a technology brand, an alarming claim.')]
+  archive.ph                   [('scam_popup', 'medium', 'risk.text', 'Page signals: a technology brand, an alarming claim.')]
+  archive.is                   [('scam_popup', 'medium', 'risk.text', 'Page signals: a technology brand, an alarming claim.')]

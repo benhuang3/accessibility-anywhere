@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pinecrest Savings: Secure Sign In (DEMO)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font: 20px/1.5 system-ui, sans-serif; max-width: 640px; margin: 80px auto; padding: 0 16px; color: #1a1a1a; }
+    .alert { background: #fdecea; border: 2px solid #b3261e; padding: 16px; border-radius: 8px; }
+    label { display: block; margin-top: 12px; font-weight: 600; }
+    input { font-size: 20px; padding: 8px; width: 100%; box-sizing: border-box; }
+    small { color: #555; }
+  </style>
+</head>
+<body>
+  <p><small>Ally demo page. "Pinecrest Savings" is an invented brand. Nothing here is real.</small></p>
+  <h1>Pinecrest Savings</h1>
+  <div class="alert">
+    <strong>Your account has been suspended.</strong>
+    Your computer has been locked and virus detected. Do not close this window.
+    Call Pinecrest support immediately at 1-800-555-0100 and have your gift cards ready.
+  </div>
+  <form action="about:blank" method="get">
+    <label for="cc">Card number</label>
+    <input id="cc" name="cardnumber" autocomplete="cc-number" inputmode="numeric">
+    <label for="cv">Security code</label>
+    <input id="cv" name="cvv" autocomplete="cc-csc" inputmode="numeric">
+  </form>
+</body>
+</html>

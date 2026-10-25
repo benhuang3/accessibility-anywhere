@@ -1,0 +1,156 @@
+{
+  "rows": [
+    {
+      "page": "bank.html",
+      "scan_page": [
+        {
+          "kind": "scam_popup",
+          "severity": "medium",
+          "evidence": "Page signals: a phone number, an alarming claim, a request to call support.",
+          "url": "http://bank.localhost:60672/bank.html",
+          "app": "",
+          "source": "risk.text",
+          "ts": 1792909999.5443976
+        },
+        {
+          "kind": "payment_field",
+          "severity": "medium",
+          "evidence": "This page asks for card details and the website is not one I recognize.",
+          "url": "http://bank.localhost:60672/bank.html",
+          "app": "",
+          "source": "risk.fields",
+          "ts": 1792909999.5466473
+        }
+      ]
+    },
+    {
+      "page": "index.html",
+      "scan_page": []
+    },
+    {
+      "page": "news.html",
+      "scan_page": []
+    },
+    {
+      "page": "shop.html",
+      "scan_page": []
+    },
+    {
+      "page": "support.html",
+      "scan_page": [
+        {
+          "kind": "scam_popup",
+          "severity": "medium",
+          "evidence": "Page signals: a phone number, an alarming claim, a request to call support.",
+          "url": "http://support.localhost:60672/support.html",
+          "app": "",
+          "source": "risk.text",
+          "ts": 1792909999.8882372
+        }
+      ]
+    },
+    {
+      "page": "trap.html",
+      "scan_page": [
+        {
+          "kind": "scam_popup",
+          "severity": "medium",
+          "evidence": "Page signals: a phone number, an alarming claim, a request to call support.",
+          "url": "http://trap.localhost:60672/trap.html#step2",
+          "app": "",
+          "source": "risk.text",
+          "ts": 1792909999.9422648
+        }
+      ]
+    },
+    {
+      "page": "trap.html (active)",
+      "scan_page": [
+        {
+          "kind": "scam_popup",
+          "severity": "high",
+          "evidence": "Page signals: a phone number, an alarming claim, a request to call support.",
+          "url": "http://trap.localhost:60672/trap.html#trapped",
+          "app": "",
+          "source": "risk.text",
+          "ts": 1792910005.4586222
+        }
+      ]
+    },
+    {
+      "page": "virus.html",
+      "scan_page": [
+        {
+          "kind": "scam_popup",
+          "severity": "high",
+          "evidence": "Page signals: a phone number, an alarming claim, a request to call support.",
+          "url": "http://virus.localhost:60672/virus.html",
+          "app": "",
+          "source": "risk.text",
+          "ts": 1792910005.5134602
+        }
+      ]
+    }
+  ],
+  "integration_checks": [
+    {
+      "check": "real trap counters -> on_page",
+      "result": [
+        "history_trap",
+        "exit_trap",
+        "fullscreen",
+        "context_block",
+        "dialog_spam"
+      ]
+    },
+    {
+      "check": "bank + AnyDesk.exe -> on_page",
+      "result": "remote_access HIGH (risk.joined)"
+    },
+    {
+      "check": "AnyDesk.exe then Event Viewer -> poll_once",
+      "result": "remote_access HIGH (risk.fakescan)"
+    },
+    {
+      "check": "bank + QuickAssist.exe -> on_page",
+      "result": "remote_access HIGH (risk.joined)"
+    },
+    {
+      "check": "QuickAssist.exe then Event Viewer -> poll_once",
+      "result": "remote_access HIGH (risk.fakescan)"
+    },
+    {
+      "check": "consecutive scenario hosts",
+      "result": "all four warnings published"
+    },
+    {
+      "check": "dark mode at both viewports",
+      "result": "all pages passed"
+    }
+  ],
+  "screenshots": [
+    "shots/index-light-1440x900.png",
+    "shots/index-light-1440-full.png",
+    "shots/index-light-390x844.png",
+    "shots/index-light-390-full.png",
+    "shots/index-dark-1440x900.png",
+    "shots/index-dark-1440-full.png",
+    "shots/index-dark-390x844.png",
+    "shots/index-dark-390-full.png"
+  ],
+  "viewports": [
+    [
+      1440,
+      900
+    ],
+    [
+      390,
+      844
+    ]
+  ],
+  "ai_calls": 0,
+  "notes": [
+    "Separate .localhost hosts let live demo beats warn consecutively.",
+    "Process snapshots are simulated; no remote tools or Event Viewer are launched."
+  ]
+}
