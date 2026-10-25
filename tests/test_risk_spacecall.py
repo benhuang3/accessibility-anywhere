@@ -349,12 +349,13 @@ class SpacecallTests(unittest.TestCase):
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const source = fs.readFileSync("extension/background.js", "utf8");
+const source = fs.readFileSync("extension/background.js", "utf8").replace(/\r\n/g, "\n");
 const action = source.slice(source.indexOf("  async openCall("), source.indexOf("  async rememberSite("));
 const docked = source.slice(source.indexOf("async function openDockedCall("), source.indexOf("const ACTIONS = {"));
-const events = source.slice(source.indexOf("async function insertCallCSS("), source.indexOf("// ---------------------------------------------------------------- shortcuts"));
+const titleStart = source.indexOf('chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {\n  if (typeof change.title');
+const events = source.slice(titleStart, source.indexOf("// ---------------------------------------------------------------- shortcuts"));
 const stored = {}, css = [], sent = [], created = [], updated = [];
-let removed, next = 0, browser = null, displays = null;
+let removed, titleChanged, status = "ringing", next = 0, browser = null, displays = null;
 const context = {
   URL, send: (msg) => sent.push(msg),
   chrome: {
@@ -363,7 +364,11 @@ const context = {
       set: async (values) => Object.assign(stored, values),
       remove: async (keys) => { for (const key of [].concat(keys)) delete stored[key]; },
     } },
-    scripting: { insertCSS: async (args) => css.push(args) },
+    scripting: {
+      insertCSS: async (args) => css.push(args),
+      executeScript: async () => [{ result: status }],
+    },
+    tabs: { onUpdated: { addListener: (fn) => { titleChanged = fn; } } },
     windows: {
       create: async (args) => { created.push(args); return { id: ++next, tabs: [{ id: next, status: "complete" }] }; },
       remove: async () => {},
@@ -407,23 +412,40 @@ vm.runInNewContext(`let callCreation = Promise.resolve(); const callKey = (id) =
   assert.equal(Object.keys(stored).length, 0);
   assert.ok(!JSON.stringify(sent).includes("private"));
 
-  // Docking: a maximized browser keeps its page visible and the call popup sits on the right edge.
+  // Ring in the corner first, leaving the maximized browser untouched.
   browser = { id: 50, type: "normal", state: "maximized", left: 0, top: 0, width: 1600, height: 900 };
   const dockedCall = await context.actions.openCall(options);
   const popup = created[created.length - 1];
   assert.equal(popup.type, "popup");
   assert.notEqual(popup.state, "maximized");
-  assert.equal(popup.left + popup.width, 1600);
-  assert.ok(popup.left > 800 && popup.height === 900);
-  assert.equal(updated[0].id, 50);
-  assert.equal(updated[0].info.left + updated[0].info.width, popup.left);
+  assert.equal(popup.left + popup.width, 1600 - 16);
+  assert.equal(popup.top + popup.height, 900 - 16);
+  assert.equal(popup.width, 360);
+  assert.equal(popup.height, 340);
+  assert.equal(updated.length, 0);
+  await titleChanged(dockedCall.windowId, { title: "Calling Priya" }, { windowId: dockedCall.windowId });
+  assert.equal(updated.length, 0);
+  // Only the saved call tab reporting connected docks the popup and shrinks Chrome.
+  status = "connected";
+  await titleChanged(999, { title: "Priya is here" }, { windowId: 999 });
+  assert.equal(updated.length, 0);
+  await titleChanged(dockedCall.windowId, { title: "Priya is here" }, { windowId: dockedCall.windowId });
+  assert.deepEqual(JSON.parse(JSON.stringify(updated)), [
+    { id: dockedCall.windowId, info: { state: "normal", left: 1120, top: 0, width: 480, height: 900 } },
+    { id: 50, info: { state: "normal", left: 0, top: 0, width: 1120, height: 900 } },
+  ]);
   // Not maximized and no system.display permission: fall back to the maximized popup.
   browser = { ...browser, state: "normal", width: 1000 };
   const fallback = await context.actions.openCall(options);
   assert.equal(created[created.length - 1].state, "maximized");
-  assert.equal(updated.length, 1);
+  assert.equal(updated.length, 2);
   await removed(dockedCall.windowId);
+  assert.deepEqual(JSON.parse(JSON.stringify(updated.slice(2))), [
+    { id: 50, info: { state: "normal", left: 0, top: 0, width: 1600, height: 900 } },
+    { id: 50, info: { state: "maximized" } },
+  ]);
   await removed(fallback.windowId);
+  assert.equal(updated.length, 4);
   assert.equal(Object.keys(stored).length, 0);
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 '''

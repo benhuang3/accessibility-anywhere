@@ -12,6 +12,7 @@
   import SharedScreen from '$lib/SharedScreen.svelte';
   import { screenFreshness } from '$lib/screenPolicy';
   import { parseRoomHash, kindLabels, type RoomLink } from '$lib/room';
+  import { elderCallPresentation, noAnswerNote, playJoinChime } from '$lib/ringing';
 
   let link: RoomLink | null = null;
   let conn: DbConnection | null = null;
@@ -29,16 +30,29 @@
   let selfHidden = false;
   let elderName = 'Family';
   let now = Date.now();
+  let openedAt = now;
+  let joinChimePlayed = false;
 
   $: helperName = $incidentStore?.helperName ?? link?.name ?? 'your helper';
   $: screenHint = screenFreshness($remoteScreen?.updatedAt ?? null, now);
   $: sharingOn = sharingAvailable && ($incidentStore?.screenSharing ?? true);
   $: isHelper = link?.role === 'helper';
   $: callEnded = ended || $incidentStore?.status === 'ended';
+  $: elderCall = elderCallPresentation($incidentStore?.status, helperName, callEnded);
+  $: elderRinging = link?.role === 'elder' && elderCall.state === 'ringing';
+  $: unanswered = noAnswerNote(elderCall.state, helperName, openedAt, now);
+  $: if (link?.role === 'elder') {
+    document.documentElement.dataset.allyCall = elderCall.state;
+    document.title = elderCall.title;
+    if (elderCall.state === 'connected' && !joinChimePlayed) {
+      joinChimePlayed = true;
+      playJoinChime();
+    }
+  }
   $: status = callEnded ? 'Call ended'
     : $incidentStore?.status === 'connected' ? (isHelper ? 'You are together' : `${helperName} is here`)
     : $incidentStore?.status === 'responding' ? (isHelper ? 'Joining the call\u2026' : `${helperName} is on her way`)
-    : isHelper ? 'Someone you love needs you' : `Calling ${helperName}\u2026`;
+    : isHelper ? 'Someone you love needs you' : elderCall.label;
   $: if (localEl) localEl.srcObject = $localVideoStream;
 
   async function prepareMedia(connection: DbConnection, room: RoomLink) {
@@ -118,6 +132,7 @@
   }
 
   onMount(() => {
+    openedAt = now = Date.now();
     const params = new URLSearchParams(window.location.hash.slice(1));
     sharingAvailable = params.get('screen') !== 'off';
     elderName = params.get('elderName')?.trim().slice(0, 64) || 'Family';
@@ -138,19 +153,27 @@
     } catch (error) {
       message = error instanceof Error ? error.message : 'Please open the link Ally sent you.';
     }
-    const leave = () => { ended = true; disconnectStdb(); };
+    const leave = () => {
+      ended = true;
+      if (link?.role === 'elder') {
+        document.documentElement.dataset.allyCall = 'ended';
+        document.title = elderCallPresentation('ended', helperName).title;
+      }
+      disconnectStdb();
+    };
     window.addEventListener('pagehide', leave);
     return () => {
       clearInterval(freshnessTimer);
       window.removeEventListener('pagehide', leave);
       window.removeEventListener('hashchange', updateDebug);
       leave();
+      if (link?.role === 'elder') delete document.documentElement.dataset.allyCall;
     };
   });
 </script>
 
 <svelte:head>
-  <title>Ally Call &#8212; A familiar face, right here</title>
+  <title>{link?.role === 'elder' ? elderCall.title : 'Ally Call \u2014 A familiar face, right here'}</title>
   <meta name="description" content="A private call to someone you trust, with Ally." />
   <meta name="referrer" content="no-referrer" />
   <meta name="robots" content="noindex, nofollow" />
@@ -202,18 +225,20 @@
     </nav>
 {/snippet}
 
-<main class:helper={isHelper} class:helper-call={isHelper && joined && !callEnded} class:elder-call={link && !isHelper && !callEnded} class:ended={callEnded}>
+<main class:helper={isHelper} class:helper-call={isHelper && joined && !callEnded} class:elder-call={link && !isHelper && !callEnded && !elderRinging} class:elder-ringing={elderRinging} class:ended={callEnded}>
   <div class="backdrop" aria-hidden="true"></div>
-  {#if $remoteVideoUrl && !callEnded && !isHelper}
+  {#if $remoteVideoUrl && !callEnded && !isHelper && !elderRinging}
     <img class="remote-video" src={$remoteVideoUrl} alt={isHelper ? 'Live video of your family member' : `Live video of ${helperName}`} />
   {/if}
 
+  {#if !elderRinging}
   <header class="glass topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">a</span> Ally Call</div>
     <p class="status" role="status" aria-live="polite">{link ? status : 'A familiar face, right here'}</p>
   </header>
+  {/if}
 
-  {#if link && !isHelper && !callEnded}
+  {#if link && !isHelper && !callEnded && !elderRinging}
     <section class="glass sharing-banner" aria-label="Screen sharing">
       <p role="status">{sharingOn ? `${helperName} can see your screen` : 'Screen sharing is off'}</p>
       <button class="secondary" onclick={toggleScreenSharing} disabled={!$incidentStore || sharingBusy || !sharingAvailable}>
@@ -233,6 +258,21 @@
       <span class="portrait" aria-hidden="true">&#10003;</span>
       <h1>Call ended</h1>
       <p>You can close this page now.</p>
+    </section>
+  {:else if elderRinging}
+    <section class="glass ringing-card" aria-label="Calling your helper">
+      <div class="ringing-person">
+        <span class="ringing-portrait" aria-hidden="true">{helperName.charAt(0).toUpperCase()}</span>
+        <h1 role="status" aria-live="polite">{elderCall.label}</h1>
+      </div>
+      <button class="end-call" onclick={endCall}>End call</button>
+      {#if unanswered}<p class="ringing-note" role="status">{unanswered}</p>{/if}
+      {#if permissionPending}
+        <p class="ringing-note" role="status">Allow camera and microphone so you can see and hear {helperName}.</p>
+      {/if}
+      {#if message || $connectionError || $mediaError}
+        <p class="ringing-note" role="alert">{message || $connectionError || $mediaError}</p>
+      {/if}
     </section>
   {:else if isHelper && !joined}
     <section class="center-card glass invitation">
@@ -293,7 +333,7 @@
 
   {/if}
 
-  {#if debug}
+  {#if debug && !elderRinging}
     <aside class="call-debug" aria-label="Call debug metrics">
       <p>Video fps ↑ {$callStats.videoUp.toFixed(1)} ↓ {$callStats.videoDown.toFixed(1)}</p>
       <p>Audio chunks/s ↑ {$callStats.audioUp.toFixed(1)} ↓ {$callStats.audioDown.toFixed(1)}</p>

@@ -76,6 +76,12 @@ Supported kinds: `remote_access`, `scam_popup`, `lookalike_domain`, `payment_for
 
 The elder page opens the incident automatically and requests camera/microphone permission. The helper taps Join call, which resumes audio, reports responding, obtains media and joins. If a browser blocks automatic audio on the elder PC, a plain Tap to hear button unlocks it. End call stops local devices immediately; a peer disconnect ends the room too. A refresh or closed tab ends the incident, so start a new incident from Ally rather than reusing the link.
 
+## Ringing popup
+
+With the Ally extension, an elder call starts in a quiet 360 x 340 popup, 16 pixels from the work area's bottom-right corner. This leaves room for Chrome's title and address bars; the ringing card fits both the no-answer and permission notes in a 360 x 270 content area. Chrome stays in place until the helper connects. Then the same popup grows into the docked call panel, Chrome moves beside it, and one quiet two-note chime plays if browser audio policy permits. Closing the call window restores Chrome's saved bounds and window state only if Ally resized it. These details survive an extension worker restart in session storage. If the extension cannot determine the work area, the call still opens maximized.
+
+The ringing card shows the helper's initial, Calling status and End call. After 60 seconds without an answer it adds a calm message and keeps ringing. Camera/microphone permission notes and real errors remain visible; other call controls and the sharing banner appear on connection. The gentle portrait pulse respects reduced motion. The elder page exposes `data-ally-call` (`ringing`, `connected`, `ended`) and updates its title on each status change so only the saved call tab can trigger expansion.
+
 ## Privacy and deployment checks
 
 `incident` and `presence` are private. A sender-filtered `call_incident` view reveals only rooms the caller has claimed using a valid capability. Media reducers derive the recipient from that room's two roles; callers cannot supply an arbitrary recipient. Clients subscribe to their exact room and recipient identity.

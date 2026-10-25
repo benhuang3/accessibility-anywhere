@@ -96,6 +96,18 @@ footer a:hover { text-decoration: underline; }
   .elder-call footer { display: none; }
 }
 
+/* The elder's small ringing window keeps End call visible even during permission prompts. */
+.elder-ringing { min-height: 100svh; padding: 8px; gap: 0; justify-content: center; }
+.ringing-card { width: min(440px, 100%); margin: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; background: #18352f; color: #fff; border-radius: 24px; }
+.ringing-person { display: flex; align-items: center; gap: 14px; }
+.ringing-portrait { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 50%; font-size: 28px; color: #193e32; background: #d7e9de; animation: ringing-breathe 4s ease-in-out infinite; }
+.ringing-card h1 { font-size: 26px; line-height: 1.25; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.ringing-card .end-call { width: 100%; min-width: 0; min-height: 56px; padding: 10px 16px; font-size: 22px; background: #87252e; color: #fff; border-radius: 16px; }
+.ringing-note { font-size: 20px; line-height: 1.3; color: #ffe5ad; overflow-wrap: anywhere; }
+.elder-ringing footer { display: none; }
+@keyframes ringing-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+@media (prefers-reduced-motion: reduce) { .ringing-portrait { animation: none; } }
+
 .helper-call { width: 100%; height: 100dvh; min-height: 0; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); gap: 12px; }
 .helper-call .topbar { flex: none; width: auto; max-width: 100%; margin: 0 auto; padding: 8px 18px; border-radius: 30px; text-align: center; font-size: 16px; }
 .helper-call .brand, .helper-call footer { display: none; }
