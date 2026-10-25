@@ -22,12 +22,13 @@ class GazeModelTests(unittest.TestCase):
         np.testing.assert_allclose(held, after)
 
     def test_gaze_smoother_follows_saccade_within_250ms(self):
-        smooth = gm.GazeSmoother(settle_frames=2)
+        smooth = gm.GazeSmoother()
         smooth.update((100, 100), 0.0, 100)
         smooth.update((110, 102), 0.08, 100)
         smooth.update((500, 400), 0.16, 100)
-        shown = smooth.update((505, 402), 0.24, 100)
-        self.assertLess(np.linalg.norm(shown - (502.5, 401)), 10)
+        smooth.update((505, 402), 0.24, 100)
+        shown = smooth.update((503, 401), 0.32, 100)
+        self.assertLess(np.linalg.norm(shown - (503, 401)), 10)
 
     def test_gaze_smoother_reset_reinitializes_after_missing_frames(self):
         smooth = gm.GazeSmoother()

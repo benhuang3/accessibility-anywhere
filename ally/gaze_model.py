@@ -476,7 +476,7 @@ def load(path, screen=None):
 class GazeSmoother:
     """Robust fixation filter with a short confirmation before saccades."""
 
-    def __init__(self, window=0.4, settle_frames=2, radius_scale=0.22):
+    def __init__(self, window=0.4, settle_frames=3, radius_scale=0.22):
         self.window = float(window)
         self.settle_frames = int(settle_frames)
         self.radius_scale = float(radius_scale)
