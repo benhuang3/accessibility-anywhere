@@ -52,7 +52,7 @@ def _legacy_baseline(frames):
     except ValueError:return Baseline(.1,.3)
 
 
-def evaluate(record, kind="squint"):
+def evaluate(record, kind="squint", tuning=None):
     frames=record["frames"]
     if not frames:return []
     labels=[s for s in record["segments"] if s["expect"] in ("squint","lean","natural","none","struggle")]
@@ -72,7 +72,7 @@ def evaluate(record, kind="squint"):
     baseline=_legacy_baseline(calibration_items or frames)
     rows=[]
     for name,cls in (SQUINT.items() if kind=="squint" else LEAN.items()):
-        det=cls(Tuning()); signals=[]
+        det=cls(Tuning(**(tuning or {}))); signals=[]
         for item in frames:
             f=item["f"]
             if ("width" not in f or "squint_l" not in f) and item["raw"].get("lm"):
@@ -187,16 +187,50 @@ def report(paths, out):
     return rows
 
 
+def tune(paths):
+    """Leave one person out, selecting the loosest zero-training-FP threshold per family."""
+    records=[(p,read_recording(p)) for p in discover(paths)]
+    aliases=sorted({r["meta"].get("alias",p.stem) for p,r in records})
+    if len(aliases)<3:
+        raise SystemExit("Refusing to recommend values from fewer than 3 people.")
+    grids={"relative": [{"relative_squint_weak":w,"relative_squint_strong":s}
+                         for w,s in ((.2,.35),(.25,.4),(.3,.45),(.35,.5))],
+           "geometric": [{"geometric_aperture_drop":d,"geometric_lower_rise":r}
+                         for d,r in ((.10,.025),(.12,.035),(.15,.04),(.18,.05))],
+           "distance": [{"lean_ratio":v,"lean_weak":v-.05} for v in (1.10,1.15,1.20,1.25)]}
+    methods={"squint":("relative","geometric"),"lean":("distance",)}
+    results=[]
+    for heldout in aliases:
+        training=[(p,r) for p,r in records if r["meta"].get("alias",p.stem)!=heldout]
+        test=[(p,r) for p,r in records if r["meta"].get("alias",p.stem)==heldout]
+        for kind, names in methods.items():
+            for method in names:
+                best=None
+                for values in grids[method]:
+                    train_rows=[x for p,r in training for x in evaluate(r,kind,values) if x["method"]==method]
+                    fps=sum(int(x["false_positive"] or 0) for x in train_rows)
+                    hits=sum(int(x["hit"] or 0) for x in train_rows)
+                    if fps==0 and (best is None or hits>best[0]): best=(hits,values)
+                chosen=best[1] if best else grids[method][0]
+                test_rows=[x for p,r in test for x in evaluate(r,kind,chosen) if x["method"]==method]
+                hit=sum(int(x["hit"] or 0) for x in test_rows)
+                total=sum(x["hit"]!="" for x in test_rows)
+                fp=sum(int(x["false_positive"] or 0) for x in test_rows)
+                results.append((heldout,kind,method,chosen,hit,total,fp))
+    print("| Held-out person | Signal | Method | Selected training values | Held-out hits/positive | FP segments |")
+    print("|---|---|---|---|---:|---:|")
+    for person,kind,method,values,hits,total,fp in results:
+        print(f"| {person} | {kind} | {method} | `{json.dumps(values,sort_keys=True)}` | {hits}/{total} | {fp} |")
+    return results
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser();sub=parser.add_subparsers(dest="cmd",required=True)
     r=sub.add_parser("report");r.add_argument("paths",nargs="+");r.add_argument("--out",required=True)
     t=sub.add_parser("tune");t.add_argument("paths",nargs="+")
     args=parser.parse_args(argv)
     if args.cmd=="report": report(args.paths,args.out)
-    else:
-        people={read_recording(p)["meta"].get("alias",p.stem) for p in discover(args.paths)}
-        if len(people)<3: raise SystemExit("Refusing to recommend thresholds: fewer than 3 people.")
-        print("Leave-one-person-out tuning requires raw-labelled segments; use report for candidate results.")
+    else: tune(args.paths)
 
 
 if __name__=="__main__":main()

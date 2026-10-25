@@ -6,7 +6,7 @@ from helpers import ROOT
 import sys
 sys.path.insert(0, str(ROOT))
 
-from ally.senses.bench import read_recording, report
+from ally.senses.bench import read_recording, report, tune
 from ally.senses.features import robust_baseline
 from ally.senses.detectors import (Baseline, GeometricSquintDetector, HybridSquintDetector,
     RelativeSquintDetector, DistanceLeanDetector, HybridLeanDetector, Tuning)
@@ -91,6 +91,13 @@ class BenchTests(unittest.TestCase):
             self.assertTrue((out/"report.md").exists())
             self.assertTrue((out/"report.csv").exists())
             self.assertEqual(sorted(p.name for p in td.iterdir()),["out","r.jsonl"])
+
+    def test_tuning_requires_three_people(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"r.jsonl"
+            p.write_text(json.dumps({"rec":"meta","alias":"one"}),encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit,"fewer than 3 people"):
+                tune([str(p)])
 
 
 if __name__=="__main__":unittest.main()
