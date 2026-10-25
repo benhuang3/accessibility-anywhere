@@ -1,309 +1,300 @@
-# Ally: an always-on, OS-level accessibility agent
+# Ally: an always-on accessibility agent for older adults
 
-Ally runs in the background on your computer. You talk to it, type to it, or press a hotkey, and it
-changes the screen and the web for you: bigger text, high contrast, reader view, read aloud, screen
-magnifier, color filters, and anything else you teach it.
+Ally runs in the background on a Windows PC. You talk to it, type to it, or press a hotkey, and it changes the
+screen and the web for you: bigger text and buttons, simpler pages, a screen magnifier that follows your eyes,
+reading aloud, clicking by voice, and a calm safety check when something looks like a scam. It also notices when
+you're struggling (squinting, leaning in, clicking the same spot) and offers to help.
 
-- **Hands-free**: just say "Ally, make it bigger". Ally is always listening for its name, and the speech
-  is turned into text on your computer.
-- **Knows where you're looking**: "Ally, magnify what I'm looking at" zooms the whole screen around the
-  spot your eyes are on, using the webcam. The magnified view then follows your eyes.
-- **Works everywhere**: global hotkeys and screen tools work in every app; a Chrome extension handles web pages.
-- **Easy to change**: settings, commands, hotkeys and page styles live in one file (`config.toml`) that
-  reloads the moment you save. New tools are one Python function in the `plugins/` folder.
-- **Always on**: auto-restart on crash or freeze, start at login, offline mode when there's no internet,
-  the extension reconnects by itself, and a panic button undoes everything.
-- **No required packages**: the core is pure Python 3.11+. Optional packages add hotkeys, voice and screenshots.
+Built for Cal Hacks 13.0 by Ben H (brain and OS layer, integration), Hayden (senses and eye tracking), Ganesh
+(scam protection, overlay, Ally Call, demo) and Ben W (voice).
+
+- **Hands-free**: "Ally, make it bigger". Ally listens for its name; speech is turned into text on your computer.
+- **Simplifies any website**: "Ally, simple mode" hides pop-ups, ads and clutter, adds one big menu, and makes
+  the text and buttons bigger, chosen for the kind of page. Every change can be undone.
+- **Knows where you're looking**: the webcam eye tracker magnifies what you look at, scrolls when you look at the
+  bottom of a page, and lets you answer a question by looking at Yes or No.
+- **Notices struggle**: a squint plus a lean, or repeated clicks, become an offer: "Having trouble reading? Want
+  me to make it bigger?"
+- **Protects you**: fake virus pop-ups, lookalike bank sites, remote-control tools and trapping pages get one calm
+  panel that asks before closing anything, plus a one-tap call to a trusted helper (Ally Call).
+- **Always on**: auto-restart on crash or freeze, start at login, offline mode without internet, and a panic button
+  that undoes everything.
+- **Easy to change**: settings, commands, hotkeys and page styles live in `config.toml`, which reloads when you
+  save. A new tool is one Python function in `plugins/`.
+
+Windows is the main platform. Linux (GNOME) keeps the core; the Mac version was removed.
 
 ---
 
 ## Quick start (about 5 minutes)
 
-1. **Python 3.11 or newer.** Check with `python3 --version`. **Windows:** type `python` wherever this
-   README says `python3` (the python.org installer adds `python`; `python3` and `py` often don't exist).
+1. **Python 3.11 or newer, 64-bit.** On Windows type `python` (not `python3`) everywhere below.
 2. **Get the code** and open a terminal in this folder.
-3. **Add your API key**: copy `.env.example` to `.env` and paste your Anthropic key after `ANTHROPIC_API_KEY=`.
-   (No key? Ally still runs in offline mode with simple commands.)
-4. **Install the optional extras** (recommended):
-   ```
-   python3 -m pip install -r requirements-optional.txt
-   ```
-5. **Start Ally**:
-   ```
-   python3 run.py
-   ```
-   It says "Ally is ready". The dashboard is at http://127.0.0.1:8765.
-6. **Add the Chrome extension**: open `chrome://extensions`, turn on **Developer mode**, click
-   **Load unpacked**, and pick the `extension` folder. The Ally icon shows no badge when it's connected
-   and "off" when the agent isn't running.
-7. **Check everything**: `python3 run.py doctor` lists what works and how to fix what doesn't.
-8. **Start at login** (optional): `python3 run.py install` (undo with `python3 run.py uninstall`).
+3. **Add your API keys**: copy `.env.example` to `.env`, then paste your Anthropic key after `ANTHROPIC_API_KEY=`
+   (and `CARTESIA_API_KEY=` for the natural voice). Without a key Ally runs in offline mode with simple commands.
+4. **Install the extras** (recommended): `python -m pip install -r requirements-optional.txt`
+   (`scripts/win_setup.ps1` installs the Windows ones).
+5. **Start Ally**: `python run.py`. It says "Ally is ready"; the dashboard is at http://127.0.0.1:8765.
+6. **Add the Chrome extension**: `chrome://extensions` > **Developer mode** > **Load unpacked** > the `extension`
+   folder. After pulling new code, press the extension's reload arrow **and reload open tabs**.
+7. **Set up your face once**: say "Ally, set up my face" (about 90 seconds; see Eye tracking).
+8. **Check everything**: `python run.py doctor` lists what works and how to fix what doesn't.
+9. **Start at login** (optional): `python run.py install` (undo with `python run.py uninstall`).
 
-### Per-system notes
-
-| System | What to do |
+| System | Notes |
 |---|---|
-| **Windows** | Use 64-bit Python and run commands with `python`, e.g. `python run.py doctor`. The screen magnifier and color filters use the Windows Magnification API directly; if the Windows Magnifier app is open, Ally closes it and takes over. Speech uses the built-in Windows voices ("Microsoft David Desktop", "Microsoft Zira Desktop"; set `speech.voice`) and stays loaded, so only the first sentence after start waits a few seconds. Hotkeys ignore key presses sent by other programs, so test them by pressing them yourself. "Read the selection" (Ctrl+Alt+R) copies once you let go of Ctrl+Alt and then puts your clipboard text back. |
-| **Linux** | Screen magnifier, color filters and text size need GNOME. Install `espeak-ng` or `speech-dispatcher` for speech and `xclip` (X11) or `wl-clipboard` (Wayland) for reading selected text. On Wayland, Ally's own hotkey listener only sees X11 apps, so run `python3 run.py gnome-shortcuts` (turns your `[hotkeys]` into GNOME shortcuts) and set `hotkeys_enabled = false` under `[agent]`. |
+| **Windows** | The magnifier and color filters use the Windows Magnification API directly (Ally closes the Windows Magnifier app and takes over). Speech uses Cartesia, or the built-in Windows voices as a fallback. Hotkeys ignore key presses sent by other programs. "Read the selection" (Ctrl+Alt+R) copies once you let go of Ctrl+Alt and puts your clipboard back. |
+| **Linux** | Magnifier, color filters and text size need GNOME. Install `espeak-ng` or `speech-dispatcher`, and `xclip` or `wl-clipboard`. On Wayland run `python run.py gnome-shortcuts` and set `hotkeys_enabled = false`. Eye-following, the name of the control under your gaze, and eye scrolling outside Chrome are Windows-only. |
 
 ---
 
-## Using Ally
+## What you can say
 
-**Say or type** (just talk, or use the dashboard box, extension popup, voice hotkey, or `python3 run.py send "..."`):
-"this page is hard to read", "make it bigger", "read this to me", "high contrast", "reader mode",
-"summarize this page", "what's on my screen?", "invert colors", "reset".
+Say it ("Ally, ..."), type it in the dashboard or the extension popup, press the voice hotkey, or run
+`python run.py send "..."`. Common requests are answered instantly by built-in rules, and loosely worded ones are
+matched to the nearest rule ("could you maybe make the words larger"); anything else goes to Claude, which picks
+from the same tools. Clicks, reset and anything that sends data are never guessed this way.
+
+| To... | Say |
+|---|---|
+| Make a page easier | "simple mode", "this site is too busy", "simple mode off" |
+| Bigger or smaller | "make the text bigger", "smaller", "bigger buttons", "zoom in" (only "zoom" zooms) |
+| Clear the clutter | "hide the pop-ups", "declutter", "simplify the menu", "check the page" |
+| Read | "read this page", "read the selection", "reader mode", "stop" |
+| Pictures | "zoom in on the picture of the bridge", "describe the picture", "next picture", "close the picture" |
+| Click | "show numbers", "click 7", "click sign in", "press continue" |
+| Find things | "where do I click to sign in", "where is the search box", "highlight the menu", "stop highlighting" |
+| Browse | "go back", "go forward", "reload", "switch back to Facebook", "next tab", "go to tab 3", "list my tabs" |
+| Use your eyes | "magnify what I'm looking at", "what am I looking at", "scroll with my eyes", "hands-free scrolling off" |
+| The whole screen | "magnifier", "invert colors", "high contrast", "what's on my screen?" |
+| Undo | "reset" (or Ctrl+Alt+0): every visual change goes back |
+
+"Help" lists the phrases.
+
+### Making web pages easier (page steps)
+
+Each change is its own step, and they work alone or together. The extension does the page work;
+`ally/pagekit/` decides the order (clutter, menus, text, buttons), checks the page still looks right, and undoes
+the last change if it broke something.
+
+- **Bigger text** grows the page's own font sizes (at least 30% bigger), keeping headings bigger than body text.
+  It never zooms the page.
+- **Bigger buttons** grows labels about 1.3x and click areas, including links styled as buttons.
+- **Hide clutter** hides cookie banners, sign-up pop-ups, chat bubbles, ads, share bars and animation. It never
+  clicks Accept or Reject and never hides the page's own important messages or Ganesh's risk banner.
+- **Simple menu** puts the site's menu into one big "Ally menu" panel.
+- **Simple mode** combines them, chosen by page type: articles open in a large, high-contrast reader view;
+  other pages get all four steps; sign-in, payment and bank pages are left alone. A consent pop-up is hidden
+  first instead of stopping it. A "Simple mode on · Undo" chip stays on the page.
+- **AI check** (optional, on by default with a key): after the steps, Claude compares a before/after screenshot
+  of the tab and fixes what got worse, up to 3 tries, then puts the page back. It runs in the background.
+  `[page_enlarge] ai_check`.
+
+Spec: `docs/page_steps.md`.
+
+### Pictures
+
+"Zoom in on the picture (of X)" opens the picture in a viewer over the page, at its full resolution, with big
+Zoom in / Zoom out / Previous / Next / Close buttons; drag or use the arrow keys to pan. Ally reads the picture's
+description aloud. Pictures are matched by their alt text, caption or label; when nothing matches, Claude looks
+at the pictures on screen in one screenshot and describes them. "Describe the picture" says what one shows.
+`[picture] describe_with_claude`. Spec: `docs/picture_viewer.md`.
+
+### Clicking, finding and tabs
+
+- **Click by number**: "show numbers" puts yellow numbered badges on everything clickable; "click 7" clicks it.
+- **Click by words**: "click sign in". Two matches get numbers and "Which number?". Anything that looks like
+  paying, sending, deleting or signing out asks yes/no first. Text boxes get the cursor instead of a click.
+- **Show me where to click**: "where do I click to sign in" puts a yellow box and arrow on it without clicking.
+  "Highlight the menu / the section about prices" dims the rest of the page.
+- **Browser**: "go back" and "go forward" run in the page, so they never skip a page you only used by voice. "Switch
+  back to Facebook", "the other tab", "next tab", "tab 3" and "list my tabs" switch tabs.
+
+Specs: `docs/click_by_voice.md`, `docs/tabs_and_pointing.md`.
 
 ### Hands-free voice
 
-Start a request with **"Ally"** (or end with it): "Ally, zoom in", "Hey Ally, read this page",
-"Make it bigger, Ally". Say just "Ally" and it beeps; then say the request. After Ally answers, you
-have a few seconds for a short follow-up without the name ("a bit more", "smaller").
-While Ally is talking, say **"Ally, stop"**.
+Start a request with **"Ally"** (or end with it): "Ally, zoom in", "Hey Ally, read this page". Say just "Ally" and
+it beeps; then say the request. After an answer you have a few seconds for a short follow-up without the name
+("a bit more"). While Ally is talking, say **"Ally, stop"**. The wake word copes with how speech-to-text spells
+it ("Allie", "Alley", "Ollie") and a filler word or two before it.
 
-- Needs `pip install faster-whisper`. The speech model downloads once (base.en, about 145 MB) and runs
-  on your computer, so audio never leaves it. Windows shows the microphone as in use while Ally runs.
-- Settings under `[voice]`: `always_listen`, `wake_words`, `follow_up_seconds`, and `whisper_model`
-  (`tiny.en` is faster, `small.en` more accurate).
+While you talk to Ally, the bear in the corner shows "Listening…", your words, then the reply as it's spoken, and
+fades a few seconds after. Safety cards, offers and calls always take priority.
 
-### Spoken offers and yes/no answers (Cartesia)
+- Needs `pip install faster-whisper`. The speech model (base.en, about 145 MB) downloads once and runs on your
+  computer. Windows shows the microphone as in use while Ally listens.
+- `[voice]`: `always_listen`, `wake_words`, `follow_up_seconds`, `whisper_model`.
 
-Ally speaks first: "Want me to make this bigger?" Then it listens for the answer. The on-screen Yes / No
-buttons always work too, and the first answer wins. Code: `ally/voice_confirm.py`.
+### Spoken offers and yes/no answers
 
-```python
-from ally.voice_confirm import say, ask_yes_no
-say("Done. Say undo to put it back.")
-ask_yes_no("Want me to make this bigger?")   # -> "yes" | "no" | "timeout"
-agent.confirm.confirm_offer(offer)           # asks offer.prompt, calls offer.resolve(answer, by="voice")
-agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up may be a scam. Close it?"
-```
+Ally speaks first ("Want me to make this bigger?") and listens for the answer; the on-screen Yes / No buttons work
+too, and the first answer wins. Silence or an unclear answer never counts as yes: an unclear answer gets one
+re-ask, then "You can tap Yes or No". "What?" and "slower" replay the question more slowly. Code:
+`ally/voice_confirm.py`.
 
-- **Voice**: Cartesia Sonic (`sonic-3.6`, then `sonic-3`), calm emotion, a little slower for questions
-  and slower still for risk warnings, with a short pause before the question. Put `CARTESIA_API_KEY` in
-  `.env` and a voice in `config.toml` (`[speech] cartesia_voice_id = "Tessa"`; a name or an ID).
-  `python run.py voices` lists voices; `python run.py voice-test Tessa Leo Marian Dana --play` plays
-  Ally's prompts in each and prints time to audio and words per minute (aim for about 150-160).
-- **Fallbacks**: Cartesia model -> fallback model -> the computer's built-in voice. After a network
-  failure Ally uses the built-in voice for 30 s instead of waiting on every sentence. Ally's fixed
-  prompts are rendered with Cartesia at start and cached on disk, so they keep the Cartesia voice
-  offline. Answers are heard with Cartesia Ink, then offline Whisper; with neither, the buttons decide.
-- **Safety**: silence or an unclear answer ("yeah, no", "maybe", "that's fine") never counts as yes.
-  An unclear answer gets one re-ask in other words, then "You can tap Yes or No". "What?" and
-  "slower" replay the question more slowly (and "slower" is kept as a habit). Ally only listens after
-  it stops talking, so it never answers itself, and it borrows the always-on listener's microphone
-  rather than opening a second one.
-- **Speed**: a clear "yes"/"no" is accepted after a 0.45 s pause instead of the full one (a bare
-  "yeah" or "sure" still waits, since it may be "yeah... no"). Timings go to `logs/voice_latency.jsonl`
-  and `GET /api/voice`.
-- **Try it**: `python run.py say "Want me to make this bigger?"`, `python run.py ask "Want me to make
-  this bigger?"`, `python run.py answer yes`, `python run.py warn scam_popup`. They use the running
-  agent if there is one, otherwise they run on their own.
-- Settings under `[confirm]` (listen time, re-ask, speeds, eager answers) and `[speech]`.
+- **Voice**: Cartesia Sonic (`sonic-3.6`, then `sonic-3`), a little slower for questions and slower still for
+  warnings. Set `[speech] cartesia_voice_id` (a name like "Tessa" or an ID). `python run.py voices` lists voices;
+  `python run.py voice-test Tessa Leo --play` compares them.
+- **Fallbacks**: Cartesia -> fallback model -> the built-in voice. Fixed prompts are cached on disk, so they keep
+  the Cartesia voice offline. Answers are heard with Cartesia Ink, then offline Whisper; with neither, the buttons.
+- **Try it**: `python run.py say "..."`, `python run.py ask "Want me to make this bigger?"`, `python run.py answer
+  yes`, `python run.py warn scam_popup`.
+- `[confirm]` (listen time, re-ask, speeds) and `[speech]`.
 
 ### Eye tracking
 
-1. Say **"Ally, set up my face"** (or "set up my eyes", "calibrate my eyes"). About 90 seconds, once.
-   Ally shows a face guide and a ring: turn your head slowly in a circle. Then 9 dots, sit back a
-   little (5 dots), lean in a little (5 dots), read a short passage, smile, and squint at tiny text.
-   Five check dots finish it. Esc cancels. Do this again if you move your laptop or chair a lot.
-2. Say **"Ally, what am I looking at"** for the area of the screen. On Windows, Ally also names the
-   button, link, or text under that spot. **"this"**, **"that"**, and **"here"** use the same tool.
-3. Say **"Ally, magnify what I'm looking at"** (or "magnify here"), or press `<mod>+G`. The screen
-   zooms around where you looked (1.5x unless you name a level) and becomes a reading aid: as you read
-   along a line, the view glides right at your pace and keeps the words you are reading near the
-   middle. At the end of the line, look back to the left and it returns to where the line began
-   (and brings the next line toward the middle). Looking around without reading leaves it still,
-   and looking near an edge pans that way, calmly, after a moment. "Ally, help me read this" does the
-   same. Say **"follow my eyes slower"** or **"follow my eyes faster"** to change how eagerly it
-   moves (saved as `[gaze] pan_speed`, default 0.85). It never pans faster than
-   `[gaze] max_pan_speed` (default 0.35 screen widths a second), and looking near an edge waits
-   about half a second first. Move the mouse and the view follows the mouse again. Say
-   "follow my eyes" / "follow the mouse" to switch, and "reset" or "magnifier off" to stop.
-   Say **"show where I am looking"** for a soft circle on the spot the tracker is using (click-through;
-   it does not get in the way), and **"hide the eye dot"** to remove it. `[gaze] show_dot` remembers
-   that, and it is off until you ask.
-4. A yes or no can be answered by looking. Ally shows the choices as large cards (two choices: the
-   left half and the right half). Look at one for a moment. That look teaches the tracker, using the
-   centre of the card you chose.
-5. Say **"Ally, quick calibrate"** (or "check my eye tracker") when it is off: 5 quick dots, about 6 seconds,
-   re-tune your saved setup. A full setup is needed only once, or after a new screen or camera.
+1. **Set up once**: say **"Ally, set up my face"** (or "set up my eyes"). About 90 seconds: turn your head slowly
+   in a circle, then 9 dots, sit back a little, lean in a little, read a short passage, smile, and squint at tiny
+   text; five check dots finish it. Esc cancels. Redo it after moving your laptop or chair a lot. "Quick calibrate"
+   re-tunes it in about 6 seconds.
+2. **"What am I looking at"** names the area of the screen and, on Windows, the button, link or text there.
+3. **"Magnify what I'm looking at"** (or Ctrl+Alt+G) zooms around where you looked and becomes a reading aid: the
+   view glides along the line as you read and returns to the start of the next line. Looking near an edge pans
+   that way. "Follow my eyes slower / faster" changes the pace (`[gaze] pan_speed`). Moving the mouse hands control
+   back to it. "Reset" or "magnifier off" stops it.
+4. **Eye scrolling** (not zoomed in): look near the bottom of a page for a moment to scroll down, near the top to
+   scroll up; the closer to the edge, the faster. In Chrome the edges are the page's own, so looking at the tabs
+   never scrolls. It pauses while you use the mouse. "Scroll with my eyes" / "hands-free scrolling off";
+   `[gaze] scroll`, `scroll_speed`, `scroll_band`, `scroll_dwell`.
+5. **"Show where I am looking"** draws a thin ring with a centre dot where the tracker thinks you look
+   (click-through); "hide the eye dot" removes it.
+6. **Answer by looking**: yes/no choices can show as large cards; look at one for a moment.
 
-The check uses plain words:
+If the eyes aren't set up, your face isn't visible, or the estimate is too unsure (`max_radius_px`), Ally uses the
+mouse pointer and says so. A webcam is far less precise than a dedicated eye tracker: areas of the screen are the
+useful part, and light on your face helps. During a call, the eye tracker hands the webcam to the call and takes
+it back after.
 
-- **Good**: about 150 pixels or less, and the areas of the screen were right (8 of 9 on a full grid;
-  with 5 dots, all 5).
-- **Okay**: the area is right often enough to trust left, right, or the 3x3 grid, not an exact spot.
-- **Poor**: too many areas were wrong. The next sentence is the likely cause (light, distance, or
-  glasses glare).
-
-If the eyes aren't set up, Ally can't see your face, your look doesn't settle, or the estimate is
-too unsure, Ally uses the mouse pointer and says so.
-
-- Needs `pip install mediapipe opencv-python` and a webcam. v5 also needs `pip install onnxruntime` and
-  one download, `python scripts/get_gaze_models.py`, which puts `mobileone_s0_gaze.onnx` in `state/models`.
-  The face model downloads once (3.7 MB). Video is processed on your computer and never saved; only the
-  calibration (a few numbers) is kept, in `state/`. Mouse clicks can quietly improve the estimate
-  (`gaze.click_learning`, on by default). What they teach is saved next to the calibration and
-  restored when Ally starts. A new setup starts fresh. The file is feature numbers, screen points,
-  and times, not pictures. The click stays on this computer.
-- `[gaze] features` defaults to `v5`: the v4 head model plus MobileGaze yaw and pitch from `mobileone_s0`.
-  If that file or onnxruntime is missing, setup and tracking use v4 and say so. A new setup uses whichever
-  you set. `max_radius_px` (default 250) is when Ally stops trusting the eyes and uses the pointer.
-- The camera stays on while Ally runs. Say "Ally, turn off eye tracking" (until Ally restarts), or set
-  `gaze.enabled = false`.
-- A webcam is far less precise than a dedicated eye tracker. Areas of the screen are the useful part.
-  Light on your face helps. `python run.py doctor` reports how old the calibration is, the check, the
-  feature set, the camera index, and whether `mobileone_s0_gaze.onnx` and onnxruntime are ready.
-- Exact centering and following the eyes are Windows features. On Linux, Ally moves the
-  pointer to where you look and zooms there, since those magnifiers follow the pointer. The control
-  name under the gaze point is Windows-only; other systems get the screen area.
+- Needs `pip install mediapipe opencv-python` and a webcam; the default `v5` features also need `pip install
+  onnxruntime` and `python scripts/get_gaze_models.py`. Video is processed on your computer and never saved; only
+  the calibration (a few numbers) is kept in `state/`. Clicks quietly improve the estimate (`gaze.click_learning`).
+- "Turn off eye tracking" stops the camera until Ally restarts; `gaze.enabled = false` for good.
 
 ### Noticing struggle (senses)
 
-Ally watches for signs that you're having a hard time, so it can offer help before you ask:
+- **Face** (webcam): squinting and leaning toward the screen, each against *your* resting face; blinks, smiles,
+  winks, turning away and darkness are ignored. The face setup learns your resting face, lean and a personal squint
+  model; Ctrl+Alt+C reruns a short face-sensing pass.
+- **Mouse and keyboard**: clicking the same spot again and again, deleting and retyping, and resting a long time
+  over a control without clicking. Only *that* a key was pressed is counted, never which key.
 
-- **Face** (webcam): squinting and leaning toward the screen, each measured against *your* resting face.
-  Frames where you blink, smile or laugh, wink, turn away, or sit in the dark are ignored.
-  The face setup checks squint. If the deliberate squint is not distinct, squint sensing turns off
-  for you while lean and the other signals still work. Recalibrate with **Ctrl+Alt+Shift+C** for a
-  short face-sensing pass, or say "set up my face" again for the full setup.
-- **Mouse and keyboard**: clicking the same spot again and again, deleting and retyping, and the pointer
-  resting a long time without a click over a clickable control. Only *that* a key was pressed is counted,
-  never which key.
+Two different signals within a few seconds become one **struggle** event (`agent.on_struggle`,
+`agent.senses.subscribe`). The proactive layer (`ally/proactive.py`) turns it into one offer: the bear in the
+corner asks, Ally says it out loud, and you answer by voice or button (20 s timeout). Saying no quiets that kind of
+offer for a while (`[senses] decline_seconds`). "Stop watching me" turns sensing off until Ally restarts.
+`python run.py tool senses_hud` shows every signal live; `python run.py tool simulate_struggle '{"kind": "demo"}'`
+runs a demo without a webcam. Optional LibreFace action units: `python scripts/get_au_models.py` (USC research
+license; `python run.py doctor` reports it).
 
-One signal alone doesn't count. Two different signals within a few seconds (for example a squint
-plus leaning in) become one **struggle** event, `{kind, confidence, target {app, site, window, x, y,
-box}, source, detail, ts}`, that goes to the event log, to `agent.on_struggle(dict)` and to
-`agent.senses.subscribe(callback)`. Code is in `ally/senses/`.
+### Scam protection and Ally Call
 
-- Say **"Ally, set up my face"** once. That same setup learns your resting face, your lean, and a
-  personal squint model. Without it, Ally learns your resting face from the first 20 seconds it sees you.
-- If Ally offers help and you say no, it quiets those signal types for `decline_seconds` (default 90,
-  configurable from 30 to 600 seconds). Call `agent.senses.answer(struggle, "yes" or "no")` to record feedback.
-- Set `[senses].post_url` to an endpoint to opt in to POSTing struggle events to `/api/event`; it is
-  empty by default, so no events are sent.
-- "Ally, stop watching me" or "turn off the camera" switches sensing off until Ally restarts. Or set
-  `senses.vision` / `senses.input` to false.
-- Live tuning: `python run.py tool senses_hud` opens a window with the camera picture, every signal,
-  its baseline and the gates; the thresholds live in `[senses]` in `config.toml` and apply on save.
-- No webcam? `python run.py tool simulate_struggle '{"kind": "demo"}'` shows a timed demo: weak squint,
-  then weak lean 1.5 seconds later (or use `squint`, `lean`, `rage_click`, `hesitation`, `retype`).
-- The camera is opened only by the eye tracker's helper process, which sends the agent a few
-  numbers per frame (like a squint score). Frames stay in memory there and are thrown away;
-  `tests/test_senses.py` fails if camera code imports networking or writes images or video.
-- Action units stay off. `python scripts/get_au_models.py` downloads the LibreFace encoder and
-  presence models into `state/models` (about 84 MB; they are not bundled). Set
-  `[senses] au_model = "libreface"` to add 12 presence probabilities, in BP4D order, at most 5
-  times a second. USC research license: free for education, research and non-profit use; commercial
-  use needs a license from the USC Stevens Center. `python run.py doctor` reports the files,
-  onnxruntime, and that license. `python -m ally.senses.matrix record --au` writes those 12 numbers
-  on every face line and notes the model and the license in the file header.
+Ally looks for fake virus warnings, lookalike bank addresses, card forms on unfamiliar sites, remote-control tools
+running while a bank page is open, fake "scans" during a remote session (Event Viewer, netstat), and pages that try
+to trap you. Local rules check first; with screen review on, Claude gives a second opinion on a flagged screen.
 
-**Default hotkeys** (`<mod>` = Ctrl+Alt):
+The **bear** in the bottom-right corner shows one calm card with an amber "Safety check" badge: what it sees, what's
+safe to do, and **Yes, close it** / **Keep it open**. "Keep it open" asks "Are you sure? Scammers often say it's safe
+to continue." before snoozing that warning for 30 minutes.
 
-| Keys | Action |
+**Call Priya** (your trusted helper) opens **Ally Call**, a small mini-player in the corner, built on SpacetimeDB
+(`spacecall/`): the helper sees your screen on their phone and can **Highlight** something, **Use your screen**
+(tap to click, drag to scroll; never typing) or **Close a tab**. Google Meet remains the fallback. `[risk]`:
+`trusted_contact`, `contact_topic`, `call_service` (`meet` or `spacecall`), `spacecall_url`, `screen_share`,
+`auto_alert`, `screen_review`.
+
+Screen review is **off by default** and budget-capped; contact alerts never include the page address or content.
+Evidence and limits (small, self-written evals: rules 9/14, rules + AI 13/14 on rendered pages; 3 of 500 popular
+sites warned, none high): `docs/RISK_HANDOFF.md`.
+
+---
+
+## Hotkeys and command line
+
+| Keys (`<mod>` = Ctrl+Alt) | Action |
 |---|---|
 | `<mod>+V` | Talk to Ally (press again to stop listening) |
 | `<mod>+R` | Read the selected text aloud (any app) |
 | `<mod>+S` | Stop talking |
-| `<mod>+=` / `<mod>+-` | Bigger / smaller (the web page if Chrome is in front, else the whole screen) |
+| `<mod>+=` / `<mod>+-` | Zoom in / out (the page if Chrome is in front, else the screen) |
 | `<mod>+0` | **Panic button**: undo every visual change |
 | `<mod>+M` | Screen magnifier on/off |
-| `<mod>+G` | Magnify where you're looking (eye tracker) |
+| `<mod>+G` | Magnify where you're looking |
 | `<mod>+E` | Describe what's on the screen |
-| `<mod>+1` | Reading mode (an example command) |
+| `<mod>+C` | Recalibrate face sensing |
 | `<mod>+A` | Open the dashboard |
 
-The Chrome extension also has its own shortcuts that work even when the agent is off:
-Alt+Shift+Period (bigger), Alt+Shift+Comma (smaller), Alt+Shift+0 (reset), Alt+Shift+R (read page).
-
-**Command line**
+The extension's own shortcuts work even when the agent is off: Alt+Shift+Period / Comma (zoom), Alt+Shift+0
+(reset), Alt+Shift+R (read page).
 
 ```
-python3 run.py              start (with auto-restart)      python3 run.py status     what Ally is doing
-python3 run.py doctor       check setup                    python3 run.py stop       stop Ally
-python3 run.py send "..."   send a request                 python3 run.py restart    restart Ally
-python3 run.py tool NAME '{"arg": 1}'   run one tool       python3 run.py check      validate config.toml
-python3 run.py agent        run without auto-restart (development)
-python3 run.py gnome-shortcuts          Linux/GNOME: hotkeys as GNOME shortcuts (gnome-shortcuts-remove undoes it)
+python run.py              start (with auto-restart)       python run.py status    what Ally is doing
+python run.py doctor       check setup                     python run.py stop      stop Ally
+python run.py send "..."   send a request                  python run.py restart   restart Ally
+python run.py tool NAME '{"arg": 1}'   run one tool        python run.py check     validate config.toml
+python run.py agent        run without auto-restart (development)
 ```
 
 ---
 
 ## Make it do anything
 
-### 1. Change settings: `config.toml`
+1. **Settings: `config.toml`.** Created on first start, fully commented, editable in the dashboard. Changes apply
+   within a second; a mistake keeps the last good settings and shows the exact problem. Highlights: `[brain]`
+   (model, effort, system prompt), `[hotkeys]`, `[profile]` (defaults for every page), `[page_styles]` (CSS for
+   `restyle_page`), `[page_enlarge]`, `[gaze]`, `[senses]`, `[risk]`, `[tools] disabled`.
+2. **Commands (no code)**:
+   ```toml
+   [commands.morning_news]
+   description = "Open the news in large, high-contrast text and read the top story."
+   phrases = ["morning news", "read me the news"]
+   hotkey = "<mod>+n"
+   steps = [
+     { open = "https://text.npr.org" },
+     { wait = 2 },
+     { tool = "restyle_page", args = { style = "high_contrast" } },
+     { ask = "Read the first headline and its summary aloud." },
+   ]
+   ```
+   Step types: `tool`, `say`, `ask` (a request for Claude), `open`, `keys`, `wait`, `notify`, `shell`. Each command
+   is also a tool Claude can choose (`allow_ai = false` prevents that).
+3. **Phrases**: a new rule in `ally/rules.py` also needs example phrasings in `rules.EXAMPLES` (a test checks
+   this), so loose wording can find it.
+4. **Tools (Python)**: drop a file in `plugins/`; it loads instantly and reloads on save, and a broken file never
+   stops Ally.
+   ```python
+   from typing import Annotated
+   from ally import tool, ToolError
 
-Created on first start, fully commented. Edit it in any editor or in the dashboard's Settings box.
-Changes apply within a second. If you make a mistake, Ally keeps the last good settings and shows the
-exact problem (line, key, and what it expected). Highlights:
-
-- `[brain]` `model`, `effort`, and `system_prompt` (how Ally behaves).
-- `[hotkeys]` any key combo to any tool, command, or sentence.
-- `[profile]` defaults applied at start and on every page (zoom, minimum text size, styles, magnifier).
-- `[page_styles]` CSS you can apply to any page. Each name becomes an option of `restyle_page`.
-- `[tools] disabled` turns tools off.
-
-### 2. Add a command (no code)
-
-```toml
-[commands.morning_news]
-description = "Open the news in large, high-contrast text and read the top story."
-phrases = ["morning news", "read me the news"]
-hotkey = "<mod>+n"
-steps = [
-  { open = "https://text.npr.org" },
-  { wait = 2 },
-  { tool = "set_page_zoom", args = { zoom = 1.5 } },
-  { tool = "restyle_page", args = { style = "high_contrast" } },
-  { ask = "Read the first headline and its summary aloud." },
-]
-```
-
-Step types: `tool` (+ `args`), `say`, `ask` (a request for Claude, which can use tools), `open` (URL or
-file), `keys` (e.g. `"<ctrl>+c"`), `wait` (seconds), `notify`, and `shell`. `shell`, `open` and `keys`
-can be different per system: `{ windows = "...", linux = "..." }`.
-Each command is also a tool Claude can choose by itself (set `allow_ai = false` to prevent that).
-
-### 3. Add a tool (Python)
-
-Drop a file in `plugins/`. It loads instantly and reloads when you save. A broken file never stops Ally.
-
-```python
-from typing import Annotated
-from ally import tool, ToolError
-
-@tool
-def bigger_cursor(ctx, size: Annotated[int, "1 = normal, up to 4"] = 2):
-    """Make the mouse pointer bigger on web pages. Use when the user can't find the pointer."""
-    if not 1 <= size <= 4:
-        raise ToolError("Size must be 1 to 4.")
-    ctx.run("restyle_page", style="big_cursor", on=size > 1)
-    return f"Pointer size {size}."
-```
-
-- The **docstring** is what Claude reads to decide when to use the tool. Say what it does and when.
-- **Type hints** become the input schema (`str`, `int`, `float`, `bool`, `list[str]`, `Literal[...]`,
-  `Annotated[type, "description"]`). Parameters with defaults are optional.
-- **`ctx`** gives you everything: `ctx.browser.call("getText")`, `ctx.os.magnify(2)`, `ctx.say("hi")`,
-  `ctx.ask("question", image=png_bytes)`, `ctx.run("other_tool", ...)`, `ctx.state`, `ctx.config`.
-- `@tool(ai=False)` hides a tool from Claude (hotkeys, commands and the dashboard can still use it).
-
-See `plugins/example_tools.py` and `plugins/plain_language.py` (rewrites any page in plain words).
-
-### 4. Add a browser action
-
-Page actions live in `extension/background.js` in the `ACTIONS` object. Add a function there, reload the
-extension at `chrome://extensions`, then call it from a tool with `ctx.browser.call("yourAction", x=1)`.
+   @tool
+   def bigger_cursor(ctx, size: Annotated[int, "1 = normal, up to 4"] = 2):
+       """Make the mouse pointer bigger on web pages. Use when the user can't find the pointer."""
+       if not 1 <= size <= 4:
+           raise ToolError("Size must be 1 to 4.")
+       ctx.run("restyle_page", style="big_cursor", on=size > 1)
+       return f"Pointer size {size}."
+   ```
+   The docstring is what Claude reads; type hints become the schema; `ctx` gives `ctx.browser.call(...)`,
+   `ctx.os`, `ctx.say`, `ctx.ask(..., image=...)`, `ctx.run`, `ctx.state`, `ctx.config`. `@tool(ai=False)` hides a
+   tool from Claude. Examples: `plugins/example_tools.py`, `plugins/plain_language.py`.
+5. **Browser actions**: add a function to `ACTIONS` in `extension/background.js` (page work goes in a page step:
+   `extension/steps/` and `extension/page/`, see `docs/page_steps.md`), reload the extension, and call it with
+   `ctx.browser.call("yourAction", x=1)`.
 
 ---
 
 ## Built-in tools
 
-| Web pages (Chrome) | Whole screen / system | Other |
-|---|---|---|
-| `set_page_zoom`, `set_min_font_size`, `restyle_page`, `reader_view`, `read_page`, `get_page_text`, `scroll_page`, `browser_navigate`, `open_website`, `remember_site_style` | `magnify_screen`, `magnify_where_i_look`, `calibrate_eye_tracker`, `magnifier_follow`, `eye_tracking`, `color_filter`, `set_text_size`, `describe_screen`, `read_selection` | `reset_all`, `remember_preference`, `forget_preferences`, `apply_profile`, `set_speech_rate`, plus hotkey-only: `zoom_in`, `zoom_out`, `zoom_to`, `toggle_magnifier`, `listen`, `stop_speaking`, `open_dashboard`, `show_help` |
+| Area | Tools (`*` = not offered to Claude: hotkeys, rules and the dashboard only) |
+|---|---|
+| Web pages | `simplified_mode`, `enlarge_text`, `enlarge_buttons`, `hide_clutter`, `simplify_menus`, `make_page_easier`, `check_page_layout`, `open_reader`, `reader_view`, `restyle_page`, `set_page_zoom`, `set_min_font_size`, `remember_site_style`, `read_page`, `get_page_text`, `scroll_page`, `restore_ui_text` |
+| Pictures | `zoom_picture`, `describe_picture`, `next_picture`, `close_picture` |
+| Clicking and finding | `show_numbers`, `click_number`, `click_text`, `show_where`, `highlight_area`, `clear_highlight` |
+| Browser | `browser_navigate`, `switch_tab`, `list_tabs`, `open_website` |
+| Whole screen | `magnify_screen`, `toggle_magnifier*`, `color_filter`, `set_text_size`, `describe_screen`, `read_selection` |
+| Eyes and senses | `face_setup`, `calibrate_eye_tracker`, `check_eye_tracker`, `where_am_i_looking`, `magnify_where_i_look`, `magnifier_follow`, `eye_follow_speed`, `eye_scroll*`, `show_gaze`, `choose_by_looking`, `eye_tracking`, `calibrate_face_sensing`, `struggle_sensing`, `senses_hud*`, `simulate_struggle*` |
+| Voice | `ask_yes_no`, `answer_question*`, `warn_risk*`, `set_speech_rate`, `listen*`, `stop_speaking*`, `list_voices*` |
+| System | `reset_all`, `apply_profile`, `remember_preference`, `forget_preferences`, `zoom_in*`, `zoom_out*`, `zoom_to*`, `open_dashboard*`, `show_help*` |
 
 ---
 
@@ -311,73 +302,75 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 
 | Problem | What Ally does |
 |---|---|
-| Agent crashes | The supervisor (`run.py start`) restarts it: 1 s, 2 s, 4 s ... up to 30 s apart |
-| Agent freezes | `/health` checked every 5 s; 3 misses in a row and it's restarted |
-| Computer restarts | `run.py install` starts Ally at login (Run key on Windows, autostart on Linux) |
-| No internet / no key / API down | Offline rules handle common requests; commands and hotkeys keep working |
-| Chrome closed or agent restarted | The extension reconnects by itself (backoff, plus a 30 s alarm that wakes it) |
-| Bad config edit | Last good settings stay active; the error is shown |
-| Broken plug-in | That file is skipped (old version kept); everything else runs |
-| Hotkey hook crashes | It runs in its own process and is restarted; it can't take Ally down |
-| Camera / eye tracker crashes | Same: its own process, restarted (up to 4 times in 2 minutes) |
-| Microphone unplugged or blocked | Hands-free listening shows the problem and tries again every 5 s |
+| Agent crashes / freezes | The supervisor restarts it (1 s, 2 s, 4 s ... 30 s apart); `/health` checked every 5 s |
+| Computer restarts | `run.py install` starts Ally at login |
+| No internet / no key | Offline rules handle common requests; commands and hotkeys keep working |
+| Chrome closed or agent restarted | The extension reconnects by itself |
+| Bad config edit / broken plug-in | Last good settings / old plug-in version stay active; the error is shown |
+| Hotkey hook or camera crashes | Each runs in its own process and is restarted |
 | A tool hangs | Every tool has a timeout (15 s default) |
-| Something looks wrong on screen | `<mod>+0` or "reset" undoes every visual change |
+| A page change breaks the layout | Page steps check the layout and undo the change that broke it |
+| Something looks wrong | Ctrl+Alt+0 or "reset" undoes every visual change |
 
 ---
 
 ## How it works
 
 ```
- you: voice / hotkey / typing
+ you: voice / hotkey / typing / a look / a struggle signal
             |
-   +--------v---------------------------- Ally agent (Python, run.py) -----------------------+
-   |  hotkey helper (own process) ---> brain: 1) fast path: commands + simple rules          |
-   |  dashboard + JSON API  -------->         2) Claude tool use (tools = registry)          |
-   |  CLI (run.py send)     -------->         3) offline rules if Claude is unreachable      |
-   |                                     |                                                   |
-   |                        tool registry: built-in tools + plugins/*.py + [commands]        |
-   |                          |                         |                       |            |
-   |                  OS adapter (Win/Linux)       speech (OS voice /     Chrome bridge       |
-   |                  magnifier, colors, keys,     Cartesia)              (WebSocket)         |
-   |                  selection, screenshots                                   |             |
-   +---------------------------------------------------------------------------|-------------+
-          supervisor (restarts it)                                             |
-                                                         Chrome extension: zoom, CSS styles,
-                                                         reader view, page text, read aloud
+   +--------v------------------------------ Ally agent (Python, run.py) ------------------------+
+   |  listener, hotkeys, senses, eye tracker (helper processes)                                  |
+   |        |                                                                                    |
+   |  brain: 1) fast path: commands + phrase rules   2) Claude tool use   3) offline rules        |
+   |  proactive coordinator: struggle -> one offer (bear overlay + voice) -> tool                 |
+   |  risk wire: page reports + processes -> safety check -> close / Ally Call                    |
+   |        |                                                                                    |
+   |  tool registry: built-in tools + plugins/*.py + [commands]                                  |
+   |     |                    |                         |                       |                |
+   |  OS layer (Windows)   pagekit (page steps,      speech + voice          Chrome bridge        |
+   |  magnifier, colors,   order, verify, AI check)  (Cartesia / OS voice)   (WebSocket)          |
+   |  UI Automation, keys                                                        |                |
+   +-----------------------------------------------------------------------------|----------------+
+        supervisor (restarts it)                       Chrome extension: page steps (clutter, menus,
+                                                       text, buttons, simple mode, reader, pictures,
+                                                       click numbers, highlights), tabs, risk reports
 ```
 
-| File | What it does |
+| Path | What it is |
 |---|---|
 | `run.py`, `ally/cli.py` | Commands |
 | `ally/agent.py` | Wires everything together |
-| `ally/brain.py`, `ally/claude.py`, `ally/rules.py` | Decides what to do (Claude + offline rules) |
-| `ally/registry.py` | `@tool` decorator, schemas, plug-in loading, safe calls with timeouts |
-| `ally/config.py`, `ally/default_config.toml` | Settings, validation, hot reload |
-| `ally/macros.py` | `[commands]` from the config |
-| `ally/tools/` | Built-in tools |
-| `ally/platforms/` | Windows and Linux adapters |
-| `ally/server.py`, `ally/websocket.py`, `ally/bridge.py` | Dashboard, API, extension link |
-| `ally/hotkeys.py`, `ally/hotkey_helper.py` | Global hotkeys in a separate process |
-| `ally/speech.py`, `ally/voice.py` | Talking, push-to-talk and offline speech-to-text |
-| `ally/listener.py` | Hands-free: always listening for "Ally, ..." |
-| `ally/gaze.py`, `ally/gaze_helper.py`, `ally/gaze_model.py` | Eye tracking: webcam process, calibration, gaze math |
-| `ally/supervisor.py`, `ally/autostart.py`, `ally/doctor.py` | Always-on pieces |
-| `extension/` | Chrome extension (Manifest V3) |
-| `dashboard/` | Control panel web page |
+| `ally/brain.py`, `ally/claude.py`, `ally/rules.py` | Decides what to do (phrase rules, Claude, offline) |
+| `ally/registry.py`, `ally/tools/` | `@tool`, schemas, timeouts; the built-in tools |
+| `ally/pagekit/` | Page steps: order, layout check, back-off, AI check (`review.py`), picture/click/tab matching |
+| `ally/platforms/` | Windows (Magnification API, UI Automation, reading cards) and Linux adapters |
+| `ally/gaze*.py`, `ally/face_profile.py` | Eye tracking, face setup, gaze ring, eye scrolling (`gaze_scroll.py`) |
+| `ally/senses/` | Struggle signals (face, mouse, keyboard) |
+| `ally/proactive.py`, `ally/voice_bus.py`, `ally/overlay/` | Offers, spoken offers, the bear overlay |
+| `ally/risk/` | Scam protection, Ally Call wiring, remote touch |
+| `ally/speech.py`, `ally/voice*.py`, `ally/listener.py` | Speech, yes/no answers, hands-free listening |
+| `ally/server.py`, `ally/bridge.py`, `dashboard/` | Dashboard, API, extension link |
+| `extension/` | Chrome extension: `background.js` (actions), `steps/` (service-worker side), `page/` (page side) |
+| `spacecall/` | Ally Call (SvelteKit app + SpacetimeDB TypeScript module) |
+| `demo/` | Demo sites (below) |
+| `docs/` | Specs and plans; `docs/integration_plan.md` has the team's change log |
+| `handoff/`, `design/` | Specs, eval results and notes between teammates; mascot and design tokens |
 
-### API details used (checked October 2026)
+---
 
-- Claude Messages API with tool use. Default model `claude-haiku-5-5` with `output_config.effort = "low"`
-  and thinking off for speed. Forced tool choice isn't used because Sonnet 5.5 and Opus 5.5 reject it.
-  If a model rejects a speed setting, Ally retries without it and remembers.
-- Screenshots go to Claude inside a `tool_result` (images are allowed there), shrunk to 1568 px when Pillow is installed.
-- Chrome: `tabs.setZoom`, `fontSettings.setMinimumFontSize`, `scripting.insertCSS/removeCSS/executeScript`,
-  `tts`, `alarms` (30 s minimum), and a WebSocket that keeps the service worker alive (Chrome 116+).
-- Windows: `MagSetFullscreenTransform` (1.0-4096.0, offsets in unmagnified pixels) and
-  `MagSetFullscreenColorEffect` (Microsoft's grayscale matrix). GNOME: `org.gnome.desktop.a11y.*` keys.
-- Cartesia: `POST /tts/bytes` (model `sonic-3.6`, fallback `sonic-3`; `generation_config` speed 0.6-1.5, volume,
-  emotion), `GET /voices`, and `POST /stt` (model `ink-whisper`) with header `Cartesia-Version: 2026-08-14`.
+## Demo sites
+
+| Folder | What |
+|---|---|
+| `demo/` (Scam Lab) | Fictional scam scenarios: virus pop-up, locked bank account, browser trap, fake technician, and two safe pages. `demo/README.md` has the walkthrough; `python demo/verify_demo.py` checks it. |
+| `demo/simple-mode/` | A deliberately cluttered news page ("Heartwarming: Dog and Cat are best friends") for the simple-mode beat. Serve it with `python -m http.server 8001` and open it from `localhost`. |
+| `demo/fakebook/` | A fake social feed, a cluttered news article and a gift-card scam page for the video. |
+| `demo/capture_site.py` | Saves a real site four ways for slides (original, bigger text, bigger buttons, simple mode). Captures stay local. |
+
+Demo pages can opt in with `<meta name="ally-demo" content="simple-mode">`: the clutter step then also hides
+everything tagged `data-demo-clutter`, and `data-delay-ms` holds the "Simplifying" card before the reveal. Real
+websites don't have the tag.
 
 ---
 
@@ -385,14 +378,16 @@ extension at `chrome://extensions`, then call it from a tool with `ctx.browser.c
 
 ```
 cd tests
-python3 -m unittest discover -p "test_*.py"   # 154 tests, ~35 s
-python3 e2e_chrome.py   # real Chromium + extension + agent (needs: pip install playwright; python -m playwright install chromium)
-python3 e2e_voice.py    # the real agent asks 21 spoken questions against a fake Cartesia, microphone and speakers (~4 min)
-python3 voice_phrases.py   # yes/no understanding on 184 labeled answers (accuracy, false-yes count)
+python timed.py 120 test_config test_registry test_brain test_pagekit test_clicks test_picture   # any modules
+python -m unittest discover -p "test_*.py"     # everything (about 1,100 tests)
+python timed.py 120 browser.test_page_steps browser.test_tools_e2e browser.test_picture browser.test_clicks browser.test_tabs_pointing browser.test_eye_scroll
 ```
 
-The unit tests use a fake Claude API, so they need no key. The end-to-end test uses port 8765, so stop
-your own Ally first.
+- The unit tests use a fake Claude API, so they need no key. `timed.py` runs each module in its own process with a
+  hard time limit: suites finish in seconds, so a long run means something hangs.
+- The browser tests drive Playwright Chromium with the real extension (`pip install playwright; python -m
+  playwright install chromium`) and never connect to a running Ally. `scripts/real_sites.py` tries real websites.
+- `e2e_chrome.py` and `e2e_voice.py` use port 8765: stop your own Ally first.
 
 ---
 
@@ -400,64 +395,36 @@ your own Ally first.
 
 | Symptom | Fix |
 |---|---|
-| "Chrome isn't connected" | Load the extension (step 6). Check the extension's port in its popup matches `agent.port`. |
-| Hotkeys do nothing | `python3 run.py doctor`. Linux Wayland: `python3 run.py gnome-shortcuts`. |
-| Ctrl+Alt hotkeys type symbols | On some European keyboards Ctrl+Alt = AltGr. Pick other keys in `[hotkeys]`. |
-| "offline mode" | Put `ANTHROPIC_API_KEY` in `.env`, check internet, then `python3 run.py doctor`. |
-| Port 8765 in use | Change `agent.port` in config.toml and in the extension popup (Settings). |
-| Ally uses the robot voice | `python3 run.py doctor` shows why (no key, no voice, or Cartesia unreachable). `GET /api/voice` shows `fallback_reason`. |
-| Spoken answers are ignored | `python3 run.py doctor` > "Spoken questions". Needs `sounddevice` and Cartesia or faster-whisper; the buttons always work. |
-| Can't change a page | Chrome blocks extensions on `chrome://` pages and the Web Store. Try a normal site. |
+| "Chrome isn't connected" | Load the extension; check the port in its popup matches `agent.port`. |
+| A new feature does nothing in Chrome | Reload the extension at `chrome://extensions`, then reload the tab. |
+| Hotkeys do nothing | `python run.py doctor`. Linux Wayland: `python run.py gnome-shortcuts`. |
+| "offline mode" | Put `ANTHROPIC_API_KEY` in `.env`, check internet, then `python run.py doctor`. |
+| Simple mode refuses a page | Sign-in, payment and bank pages are left alone on purpose; Ally says which reason. |
+| The eye tracker is off | "Quick calibrate", or "set up my face" again; light on your face helps. |
+| Ally uses the robot voice | `python run.py doctor` shows why; `GET /api/voice` shows `fallback_reason`. |
+| Can't change a page | Chrome blocks extensions on `chrome://` pages and the Web Store. |
 
 Logs: `logs/ally.log` and `logs/supervisor.log`.
 
 ## Privacy and safety
 
-- Spoken yes/no answers: with Cartesia speech-to-text, only the few seconds after a question (the
-  answer window) are sent to Cartesia; nothing is stored. The latency log has timings, never what was
-  said. Offline Whisper keeps the answer on the computer. Text read aloud is sent to Cartesia to be
-  spoken but is never cached; only Ally's own fixed prompts are cached (in `cache/voice`).
-- The server listens on 127.0.0.1 only. The API needs a secret token, checks the Host header (blocks DNS
-  rebinding) and the Origin; the WebSocket only accepts Chrome extensions (lock it to your extension ID
-  with `security.allowed_extension_ids`).
-- Claude only gets: your request, a short context (tab title and site, the app in front, current zoom),
-  page text or a screenshot only when a tool asks for it. After Ally makes a web page bigger or simpler, it
-  sends Claude a small screenshot of the visible tab from before and after, to check the result (never on
-  sign-in, payment or bank pages). Turn this off with `ai_check = false` under `[page_enlarge]`. Turn off `share_tab_info` / `include_active_app`
-  in `[brain]` if you prefer.
-- Claude can only run registered tools. It can't type arbitrary shell commands; `shell` steps are fixed in your config.
-- The dashboard's mic button uses Chrome's speech recognition, which sends audio to Google.
-- Hands-free listening and eye tracking run on your computer: microphone audio and camera video are never
-  sent anywhere or saved. Only the text of a request addressed to Ally goes to Claude (as with typing).
-  The microphone and camera stay on while Ally runs; turn them off with `voice.always_listen = false` and
+- The server listens on 127.0.0.1 only; the API needs a secret token and checks Host and Origin; the WebSocket only
+  accepts Chrome extensions (lock it with `security.allowed_extension_ids`).
+- Hands-free listening, eye tracking and face sensing run on your computer: microphone audio and camera video are
+  never sent anywhere or saved. Only the text of a request addressed to Ally goes to Claude.
+- Claude gets your request and a short context (tab title and site, the app in front, zoom). It gets page text or a
+  screenshot only when a tool needs it: describing the screen or a picture, and the AI check after a page change
+  (a small before/after screenshot of the tab, never on sign-in, payment or bank pages; `[page_enlarge] ai_check`).
+  Screen review for scams is opt-in and budget-capped.
+- With Cartesia, text read aloud and the few seconds after a question are sent to Cartesia; nothing is stored, and
+  only Ally's fixed prompts are cached.
+- Claude can only run registered tools. Clicks that look like paying, sending, deleting or signing out ask first.
+- During Ally Call, your screen is shared with the helper you called (`[risk] screen_share`), and they can only
+  highlight, tap, scroll or close a tab, never type.
+- The microphone and camera stay on while Ally runs; turn them off with `voice.always_listen = false` and
   `gaze.enabled = false`, or say "Ally, turn off eye tracking".
-
-## Scam protection
-
-Ally looks for fake virus warnings, lookalike bank addresses, card forms on unfamiliar sites,
-remote-control tools running while a bank page is open, and pages that try to trap you.
-It also warns when a remote tool is running and someone opens Event Viewer or another system tool used for fake scans.
-Local rules check first. If you turn on screen review, AI can look at a flagged screen for a second opinion.
-A calm panel explains the concern and asks before closing a page or remote tool. Tap Yes or No,
-or press Enter / Esc; the current risk prompts cannot hear spoken answers.
-When a remote tool and bank page are open together, No (continue) waits for a 30-second countdown; Yes (close) works at once (`ally/risk/wire.py`).
-
-High warnings can also offer Call or Tell a trusted person. With a standing Google Meet link configured,
-Call opens the room in Chrome and sends the helper a phone push with a Join button; Tell sends only the push.
-Set `trusted_contact`, `contact_topic` and optionally `contact_call_url` under `[risk]` to enable it.
-
-The saved screen eval scored **9/14 with rules alone, 13/14 with AI**, including hidden-text instructions
-trying to make the AI call a scam safe ([screen eval](handoff/results/guardian_eval.txt)).
-A rules-only sweep warned on **3 of 500 sites (0.6%), none high** ([site sweep](handoff/results/fp_sweep.txt)).
-Our own rules set has **25 scam texts, 25 benign texts, 10 lookalike addresses and 10 real addresses**
-([test_risk_eval](tests/test_risk_eval.py)). These small, self-written checks do not cover every scam.
-
-Screen review is **off by default** and has daily, hourly and per-page spend caps. A review sends a screenshot
-of the whole primary screen to Anthropic. Contact alerts never include the page address or page content.
-ntfy topics are only as private as their name, and the call link is a standing room.
-See [the risk handoff](docs/RISK_HANDOFF.md) for setup, evidence and limitations.
 
 ## Hackathon notes
 
-Check the CalHacks rules on when code may be written and how to credit AI tools, and say in your
-submission which parts you built on this.
+Check the Cal Hacks rules on when code may be written and how to credit AI tools, and say in your submission which
+parts you built on this. Ally Call is adapted from SpaceChatDB with its author's permission (`spacecall/README.md`).
