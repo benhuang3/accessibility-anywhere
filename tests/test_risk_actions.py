@@ -32,7 +32,7 @@ class ActionTests(unittest.TestCase):
     def test_close_page(self):
         call = Mock(return_value={"closed": 2})
         self.assertTrue(actions.close_page(call, "https://help.example"))
-        call.assert_called_once_with("closeTab", {"url": "https://help.example"})
+        call.assert_called_once_with("closeTab", {"url": "https://help.example", "tabId": None})
 
     def test_page_failure(self):
         for reply in ({}, {"closed": 0}, None, {"closed": "bad"}):
@@ -117,7 +117,7 @@ class WarningActionTests(unittest.TestCase):
             self.bus.publish("risk_warning", self.msg)
             self.assertTrue(self.result_ready.wait(2))
             perform.assert_called_once_with("close_page", self.risk, call,
-                                            snapshot=wire.snapshot_fn, kill=wire.kill)
+                                            snapshot=wire.snapshot_fn, kill=wire.kill, tab_id=None)
         offer = ask.call_args.args[0]
         self.assertEqual((offer.context, offer.timeout, offer.options), ("risk", 20.0, ("yes", "no")))
         self.assertEqual(self.results, [{"action": "close_page", "ok": True, "kind": "scam_popup"}])

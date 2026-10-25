@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 import csv
 import io
+import json
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -34,13 +36,47 @@ def _normalize(name: str) -> str:
     return re.sub(r"[ _-]+", "", name.strip().lower().removesuffix(".exe"))
 
 
+_LOLRMM = Path(__file__).with_name("remote_tools.json")
+# Never offer to close these: video meetings people use with family, and assistive technology (screen readers,
+# magnifiers, dictation) that some LOLRMM entries reuse or that an older adult may depend on.
+_NOT_REMOTE = frozenset({"zohomeeting", "nvda", "nvdaservice", "nvdaremote", "narrator", "magnify", "jfw", "zoomtext", "zt",
+                         "dragon", "natspeak", "supernova", "fusion"})
+_extended: dict[str, str] | None = None
+
+
+def _lolrmm() -> dict[str, str]:
+    """Normalized executable name -> tool name, from the LOLRMM catalogue (remote_tools.json, Apache-2.0).
+    The hand-checked REMOTE_TOOLS above wins when both know a name."""
+    global _extended
+    if _extended is None:
+        table = {}
+        try:
+            tools = json.loads(_LOLRMM.read_text(encoding="utf-8")).get("tools", {})
+            for label, exes in tools.items():
+                for exe in exes if isinstance(exes, list) else ():
+                    key = _normalize(str(exe))
+                    if key and key not in _NOT_REMOTE:
+                        table.setdefault(key, str(label)[:60])
+        except (OSError, ValueError, AttributeError):
+            table = {}
+        _extended = table
+    return _extended
+
+
 def match_remote_tool(name: str, original_filename: str = "") -> str | None:
-    """Match exact normalized process names, including renamed portable tools."""
+    """Match exact normalized process names. `original_filename` (from the file's version info, when a caller
+    has it) catches a renamed copy; the built-in snapshot only supplies the running name."""
     names = {_normalize(name), _normalize(original_filename)} - {""}
     for label, aliases in REMOTE_TOOLS.items():
         if any(_normalize(alias) in names for alias in aliases):
             return label
-    return None
+    extended = _lolrmm()
+    return next((extended[n] for n in names if n in extended), None)
+
+
+def known_tool(label: str) -> bool:
+    """True for a tool name that match_remote_tool can return."""
+    return label in REMOTE_TOOLS or label in set(_lolrmm().values())
 
 
 @dataclass(frozen=True)

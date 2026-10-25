@@ -227,6 +227,12 @@ class Budget:
                         calls_this_hour=len(self._hours), input_tokens_today=self._input,
                         output_tokens_today=self._output)
 
+    def clear_pages(self):
+        """Allow another review of each page, keeping the spend limits intact."""
+        with self._lock:
+            self._pages.clear()
+            self._persist()
+
     def _persist(self):
         temporary = None
         try:
@@ -271,7 +277,7 @@ class Guardian:
         content.append({"type": "text", "text": text})
         body = dict(model=self.model, max_tokens=max_tokens, system=system,
                     messages=[{"role": "user", "content": content}])
-        client = Claude()
+        client = Claude(timeout=8.0, retries=0)
         # Hidden thinking would eat the output budget and cut the JSON off, so ask for the fast settings the
         # rest of Ally uses; if the API rejects them, retry plainly with more room.
         from ally.brain import thinking_param
@@ -283,6 +289,10 @@ class Guardian:
         except Exception:
             response = client.messages(**dict(body, max_tokens=max_tokens * 3))
         return text_of(response), response.get("usage", {})
+
+    def clear_cache(self):
+        with self._lock:
+            self._cache.clear()
 
     def review(self, evidence: Evidence) -> Verdict | None:
         try:

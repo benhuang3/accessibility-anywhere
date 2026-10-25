@@ -6,9 +6,12 @@ import logging
 import queue
 import sys
 import threading
+import time
 from typing import Any, Callable, Sequence
 
 from .layout import (
+    no_label,
+    pause_left,
     HIGHLIGHT_COLOR,
     INFO_BG,
     INFO_FG,
@@ -122,6 +125,8 @@ class Overlay:
         self._root = None
         self._running = False
         self._offers: dict[int, Any] = {}
+        self._pause_until: dict[int, float] = {}   # offer id -> when its 'Continue' unlocks
+        self._extra_done: dict[int, str] = {}      # offer id -> confirmation shown after the extra action
 
     def start(self) -> bool:
         if self._thread is not None and self._thread.is_alive():
@@ -373,13 +378,24 @@ class Overlay:
         first_btn = None
         if offer is not None:
             labels = button_labels(offer.prompt)
+            real = self._offers.get(offer.id, offer)  # the panel state holds a copy; options live on the Offer
+            pause = int(getattr(real, "pause_seconds", 0) or 0)
+            if pause:
+                self._pause_until.setdefault(offer.id, time.time() + pause)
             for index, (text, choice) in enumerate(zip(labels, ("yes", "no"))):
                 btn = self._button(row, text, lambda c=choice, oid=offer.id: self._pick(oid, c),
                                    primary=index == 0, gap=24 if index == 0 else 0)
                 if first_btn is None:
                     first_btn = btn
+                if choice == "no":
+                    self._no_btn, self._no_text = btn, text
+            if pause:
+                self._pause_tick(offer.id)
             for key, choice in (("<Return>", "yes"), ("<KP_Enter>", "yes"), ("<Escape>", "no")):
                 win.bind(key, lambda _e, c=choice, oid=offer.id: self._pick(oid, c))
+            extra = getattr(real, "extra_action", None)
+            if extra:
+                self._extra_row(inner, bg, offer.id, extra)
         else:
             for text in (("OK",) if risk else card.actions):
                 btn = self._button(row, text, lambda lbl=text: self._card_action(lbl))
@@ -421,10 +437,49 @@ class Overlay:
         btn.pack(fill="both", expand=True, padx=0 if primary else px(2), pady=0 if primary else px(2))
         return btn
 
+    def _pause_tick(self, offer_id: int) -> None:
+        """Count the 'Continue' button down; it stays locked until the pause is over."""
+        current = self._panel.current_offer
+        btn = getattr(self, "_no_btn", None)
+        if current is None or current.id != offer_id or btn is None:
+            return
+        left = pause_left(self._pause_until.get(offer_id, 0), time.time())
+        try:
+            btn.configure(text=no_label(self._no_text, left), state="disabled" if left else "normal",
+                          disabledforeground="#6B6B6B")
+        except Exception:
+            return
+        if left and self._root is not None:
+            self._root.after(1000, self._pause_tick, offer_id)
+
+    def _extra_row(self, inner, bg, offer_id: int, extra) -> None:
+        """An optional third choice that does not answer the question, e.g. 'Tell Priya'. It confirms in place."""
+        tk, px = self._tk, self._px
+        row = tk.Frame(inner, bg=bg)
+        row.pack(pady=(px(16), 0))
+        done = self._extra_done.get(offer_id)
+        if done:
+            tk.Label(row, text=done, font=(FONT_FAMILY, -px(22)), fg="#2E5E1E", bg=bg).pack()
+            return
+        label, callback = extra
+
+        def run():
+            try:
+                note = callback() or "Done."
+            except Exception:
+                log.exception("extra action failed")
+                note = "That didn't work. Please try again."
+            self._extra_done[offer_id] = str(note)[:120]
+            self._render()
+
+        self._button(row, label, run, primary=False)
+
     def _pick(self, offer_id: int, choice: str) -> str:
         current = self._panel.current_offer
         if current is None or current.id != offer_id:
             return "break"
+        if choice == "no" and pause_left(self._pause_until.get(offer_id, 0), time.time()):
+            return "break"  # the pause is the point: 'continue' only unlocks when it ends
         offer = self._offers.pop(offer_id, None)
         if offer is not None and answer_offer(offer, choice):
             self._panel.answer(offer_id)

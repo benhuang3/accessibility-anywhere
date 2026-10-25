@@ -6,16 +6,25 @@ import threading
 import time
 
 from ally.contracts import EventBus, Offer, Risk
-from . import actions, behavior, domains, fields, joined, process, soft, text
+from . import actions, behavior, contact, domains, fields, joined, process, soft, text
 from .guardian import Evidence
 
 log = logging.getLogger("ally")
 _ORDER = ("scam_popup", "remote_access", "untrusted_site", "payment_field")
+PAUSE_SECONDS = 30
 
 
 def _evidence(value: str) -> str:
-    return re.sub(r"(?:https?://|www\.)\S+", "a website", text.redact(value),
-                  flags=re.IGNORECASE)[:200]
+    value = re.sub(r"(?:https?://|www\.)\S+", "a website", text.redact(value),
+                   flags=re.IGNORECASE).strip()
+    ends = [m.end() for m in re.finditer(r"[.!?](?=\s|$)", value) if m.end() <= 240]
+    if ends:
+        return value[:ends[-1]]
+    if len(value) < 240:
+        return value
+    # Leave room for the ellipsis, including when the guardian already capped its text at 240.
+    end = value.rfind(" ", 0, 240)
+    return (value[:end].rstrip() if end >= 0 else "") + "…"
 
 
 def _page(page) -> dict:
@@ -26,6 +35,7 @@ def _page(page) -> dict:
     clean.update({key: page.get(key) is True for key in ("fullscreen", "has_tel_link")})
     clean["fields"] = page.get("fields") if isinstance(page.get("fields"), list) else []
     clean["signals"] = page.get("signals") if isinstance(page.get("signals"), dict) else {}
+    clean["tab_id"] = page.get("tab_id") if type(page.get("tab_id")) is int else None
     return clean
 
 
@@ -92,24 +102,32 @@ class Deduper:
         with self._lock:
             self._seen.pop((domains.host_of(risk.url) if risk.url else risk.app, risk.kind), None)
 
+    def clear(self) -> None:
+        with self._lock:
+            self._seen.clear()
+
 
 class RiskWire:
     def __init__(self, bus: EventBus, snapshot_fn=process.snapshot_processes,
                  poll_seconds=10.0, clock=time.time, deduper=None, ask=None, call=None,
                  broadcast=None, kill=actions._kill, guardian=None, highlight=None, screen_size=None,
-                 overlay_active=None):
+                 overlay_active=None, review_timeout_s=10.0, contact=None):
+        self.contact = contact  # (name, send(text) -> bool) for "Tell <name>" on high warnings, or None
         self.bus = bus
         self.overlay_active = overlay_active or (lambda: False)  # the in-page banner only stands in for it
         self.guardian = guardian        # second opinion from a vision model (consent and budget live inside it)
+        self.review_timeout_s = review_timeout_s
         self.highlight = highlight      # unused here; marks go to the offer so the overlay draws them
         self.screen_size = screen_size  # () -> (width, height) of the screenshot the guardian saw
         self._marks = {}
+        self._tab_ids = {}
         self.ask = ask
         self.call = call
         self.broadcast = broadcast
         self.kill = kill
         self._inflight = set()
         self._unsubscribe = None
+        self._unsubscribe_reset = None
         self.snapshot_fn = snapshot_fn
         self.poll_seconds = poll_seconds
         self.clock = clock
@@ -142,6 +160,7 @@ class RiskWire:
             if self._stop.is_set() or key in self._inflight:
                 return
             self._inflight.add(key)
+            tab_id = self._tab_ids.pop(key, None)
         prompt, action_id = proposal
 
         def ask_and_act():
@@ -149,9 +168,17 @@ class RiskWire:
                 with self._lock:
                     box = self._marks.pop(key, None)
                 offer = Offer(prompt, context="risk", reason=risk, timeout=20.0, highlight=box)
+                if risk.source == "risk.joined":
+                    # Someone may be controlling the PC while the bank is open: the moment scammers rush. A short
+                    # forced pause (Android does the same) gives the person time to think; closing works right away.
+                    offer.pause_seconds = PAUSE_SECONDS
+                    offer.timeout = 20.0 + PAUSE_SECONDS
+                if self.contact and risk.severity == "high":
+                    name = self.contact[0]
+                    offer.extra_action = (f"Tell {name}", lambda r=risk: self._tell(r))
                 if self.ask(offer) == "yes" and not self._stop.is_set():
                     ok = actions.perform(action_id, risk, self.call,
-                                         snapshot=self.snapshot_fn, kill=self.kill)
+                                         snapshot=self.snapshot_fn, kill=self.kill, tab_id=tab_id)
                     self.bus.publish("risk_action", {"action": action_id, "ok": ok,
                                                      "kind": risk.kind})
             except Exception:
@@ -165,6 +192,17 @@ class RiskWire:
         except Exception:
             with self._lock:
                 self._inflight.discard(key)
+
+    def _tell(self, risk) -> str:
+        """Runs on the overlay thread when the person taps 'Tell <name>'. Returns the line shown in the panel."""
+        name, send = self.contact
+        ok = False
+        try:
+            ok = bool(send(contact.message_for(risk.kind)))
+        except Exception:
+            log.debug("trusted contact send failed", exc_info=True)
+        self.bus.publish("risk_contact", {"name": name, "kind": risk.kind, "ok": ok})
+        return f"I've sent {name} a message." if ok else f"I couldn't reach {name}. Please give them a call."
 
     def _joined(self):
         page = self.last_page
@@ -209,6 +247,8 @@ class RiskWire:
             if chosen is None and provisional:
                 self.deduper.forget(before)
         if chosen:
+            with self._lock:
+                self._tab_ids[(domains.host_of(chosen.url), chosen.kind)] = page["tab_id"]
             self.bus.publish("risk", chosen)
 
     def _second_opinion(self, chosen, page, risks, beh, tools, extra=(), provisional=False):
@@ -222,12 +262,25 @@ class RiskWire:
             flags.append("fullscreen")
         if tools:
             flags.append("remote_tools")
+        evidence = Evidence(chosen.url or page["url"], tuple(flags), page["text"][:1500], tuple(tools), chosen.kind)
+        completed, result = threading.Event(), []
+
+        def review():
+            try:
+                result.append(self.guardian.review(evidence))
+            except Exception:
+                log.debug("guardian review failed", exc_info=True)
+            finally:
+                completed.set()
+
         try:
-            verdict = self.guardian.review(Evidence(chosen.url or page["url"], tuple(flags), page["text"][:1500],
-                                                    tuple(tools), chosen.kind))
+            threading.Thread(target=review, name="risk-review", daemon=True).start()
         except Exception:
-            log.debug("guardian review failed", exc_info=True)
-            return chosen
+            log.debug("guardian worker failed", exc_info=True)
+            return None if provisional else chosen
+        if not completed.wait(self.review_timeout_s):
+            return None if provisional else chosen
+        verdict = result[0] if result else None
         if provisional and (verdict is None or verdict.verdict == "safe"):
             return None  # weak signs plus no confirmation: stay quiet
         if verdict is None:
@@ -295,6 +348,16 @@ class RiskWire:
             if self._stop.wait(max(0.01, self.poll_seconds)):
                 break
 
+    def reset(self):
+        """Clear rehearsal/page memory without replenishing the AI spend budget."""
+        with self._lock:
+            self.deduper.clear()
+            self._marks.clear()
+            self._tab_ids.clear()
+        if self.guardian is not None:
+            self.guardian.clear_cache()
+            self.guardian.budget.clear_pages()
+
     def start(self):
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
@@ -302,6 +365,8 @@ class RiskWire:
             self._stop.clear()
             if self._unsubscribe is None:
                 self._unsubscribe = self.bus.subscribe("risk_warning", self.on_risk_warning)
+            if self._unsubscribe_reset is None:
+                self._unsubscribe_reset = self.bus.subscribe("risk_reset", lambda msg: self.reset())
             self._thread = threading.Thread(target=self._loop, name="risk-wire", daemon=True)
             self._thread.start()
 
@@ -311,6 +376,9 @@ class RiskWire:
             if self._unsubscribe is not None:
                 self._unsubscribe()
                 self._unsubscribe = None
+            if self._unsubscribe_reset is not None:
+                self._unsubscribe_reset()
+                self._unsubscribe_reset = None
             thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=0.5)
@@ -351,6 +419,17 @@ def _make_guardian(agent):
     return Guardian(screenshot=shot, budget=budget, consented=allowed, model=model), (lambda: size["wh"])
 
 
+def _make_contact(agent):
+    """("Priya", send) when [risk] trusted_contact and contact_topic are set, else None."""
+    try:
+        cfg = agent.config.data.get("risk", {}) or {}
+    except Exception:
+        return None
+    name = str(cfg.get("trusted_contact", "")).strip()[:30]
+    send = contact.ntfy_sender(cfg.get("contact_topic", ""))
+    return (name, send) if name and send else None
+
+
 def attach(agent) -> RiskWire:
     bridge = getattr(agent, "bridge", None)
     proactive = getattr(agent, "proactive", None)
@@ -363,7 +442,8 @@ def attach(agent) -> RiskWire:
                     call=getattr(bridge, "call", None),
                     broadcast=getattr(bridge, "broadcast", None),
                     guardian=guardian, screen_size=screen_size,
-                    overlay_active=lambda: getattr(agent, "overlay", None) is not None)
+                    overlay_active=lambda: getattr(agent, "overlay", None) is not None,
+                    contact=_make_contact(agent))
     if hasattr(bridge, "on_page"):
         bridge.on_page = wire.on_page
     wire.start()

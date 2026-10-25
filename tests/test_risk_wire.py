@@ -94,7 +94,7 @@ class ScanTests(unittest.TestCase):
         risks = scan_page(dict(SCAM, url="https://paypa1.com", fields=CARD))
         self.assertEqual([r.kind for r in risks], ["scam_popup", "untrusted_site", "payment_field"])
         for risk in risks:
-            self.assertLessEqual(len(risk.evidence), 200)
+            self.assertLessEqual(len(risk.evidence), 240)
             self.assertNotRegex(risk.evidence, r"\d{7,}|https?://")
 
 

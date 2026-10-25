@@ -31,6 +31,16 @@ def split_title(text: str) -> tuple[str, str]:
     return text[:end], text[end:].strip()
 
 
+def pause_left(deadline: float, now: float) -> int:
+    """Whole seconds left on a pause (0 once it is over)."""
+    return max(0, int(deadline - now + 0.999))
+
+
+def no_label(base: str, seconds_left: int) -> str:
+    """While a pause runs, the 'keep going' button counts down instead of offering to skip the warning."""
+    return f"Continue in {seconds_left}" if seconds_left > 0 else base
+
+
 def button_labels(prompt: str) -> tuple[str, str]:
     if sanitize_text(prompt).startswith("Want me to close"):
         return "Yes, close it", "No, keep it"

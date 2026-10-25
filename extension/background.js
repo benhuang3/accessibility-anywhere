@@ -348,10 +348,26 @@ const ACTIONS = {
     }
     return { shown };
   },
-  // Only after the user said yes in Ally: close the tab(s) showing exactly this address.
-  async closeTab({ url }) {
+  // Only after the user said yes in Ally: prefer the source tab if it is still on the same origin.
+  async closeTab({ url, tabId }) {
+    if (typeof tabId === "number") {
+      let tab;
+      try { tab = await chrome.tabs.get(tabId); } catch { /* tab was closed */ }
+      let sameOrigin = false;
+      try {
+        const origin = new URL(url).origin;
+        sameOrigin = origin !== "null" && new URL(tab.url).origin === origin;
+      } catch { /* missing tab or invalid address: use the address fallback */ }
+      if (sameOrigin) {
+        await chrome.tabs.remove(tabId);
+        return { closed: 1 };
+      }
+    }
+    if (typeof url !== "string" || !url) return { closed: 0 };
     const tabs = await chrome.tabs.query({});
-    const ids = tabs.filter((t) => t.url === url).map((t) => t.id);
+    const address = url.split("#")[0];
+    const ids = tabs.filter((t) => typeof t.url === "string" && t.url.split("#")[0] === address)
+      .map((t) => t.id);
     if (ids.length) await chrome.tabs.remove(ids);
     return { closed: ids.length };
   },
@@ -600,7 +616,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.kind === "pageRisk") {
     // From extension/risk.js: pass the page to the agent over the existing bridge.
     const { url, title, text, fields, overlay_text, fullscreen, has_tel_link, signals } = msg;
-    sendResponse({ ok: send({ type: "event", name: "page", url, title, text, fields, overlay_text, fullscreen, has_tel_link, signals }) });
+    sendResponse({ ok: send({ type: "event", name: "page", url, title, text, fields, overlay_text, fullscreen, has_tel_link, signals, tab_id: sender.tab && sender.tab.id }) });
     return false;
   }
   if (!msg || msg.kind !== "popup") return false;

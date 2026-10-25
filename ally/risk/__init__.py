@@ -17,7 +17,7 @@ def warning_for(risk) -> tuple[str, str]:
         if risk.kind == "untrusted_site":
             brand = domains.check_domain(risk.url).brand
             usual_site = domains.BRANDS.get(brand, ("",))[0]
-        key = warning_copy.copy_key(
+        key = "page_tricks" if risk.source == "risk.behavior" else warning_copy.copy_key(
             risk.kind, usual_site, risk.kind == "remote_access" and risk.source == "risk.joined")
         wording = warning_copy.render(key, tool=risk.app, host=domains.host_of(risk.url),
                                       usual_site=usual_site)

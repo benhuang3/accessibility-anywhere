@@ -15,9 +15,9 @@ def ask_for(risk) -> tuple[str, str] | None:
     return None
 
 
-def close_page(call, url) -> bool:
+def close_page(call, url, tab_id=None) -> bool:
     try:
-        return call("closeTab", {"url": url}).get("closed", 0) > 0
+        return call("closeTab", {"url": url, "tabId": tab_id}).get("closed", 0) > 0
     except Exception:
         return False
 
@@ -33,7 +33,7 @@ def _kill(name) -> bool:
 def close_tool(tool_label, snapshot=process.snapshot_processes, kill=_kill) -> int:
     count = 0
     try:
-        if tool_label not in process.REMOTE_TOOLS:
+        if not process.known_tool(tool_label):
             return 0
         names = set()
         for item in snapshot():
@@ -54,10 +54,10 @@ def close_tool(tool_label, snapshot=process.snapshot_processes, kill=_kill) -> i
     return count
 
 
-def perform(action_id, risk, call, snapshot=process.snapshot_processes, kill=_kill) -> bool:
+def perform(action_id, risk, call, snapshot=process.snapshot_processes, kill=_kill, tab_id=None) -> bool:
     try:
         if action_id == "close_page":
-            return close_page(call, risk.url)
+            return close_page(call, risk.url, tab_id)
         if action_id == "close_tool":
             # A joined warning can name several tools ("AnyDesk, TeamViewer"): close each one.
             labels = [label.strip() for label in (risk.app or "").split(",") if label.strip()]

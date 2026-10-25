@@ -185,5 +185,23 @@ class OneAlertPerToolTests(unittest.TestCase):
         self.assertEqual(match_remote_tool("ZohoAssist.exe"), "Zoho Assist")
 
 
+class CatalogueTests(unittest.TestCase):
+    """remote_tools.json comes from LOLRMM (Apache-2.0); the hand-checked list wins where both know a name."""
+
+    def test_catalogue_adds_tools_beyond_the_hand_list(self):
+        from ally.risk.process import known_tool
+        self.assertEqual(match_remote_tool("AA_v3.exe"), "Ammyy Admin")
+        self.assertEqual(match_remote_tool("RemotePC.exe"), "RemotePC")
+        self.assertEqual(match_remote_tool("AnyDesk.exe"), "AnyDesk")   # hand list label
+        self.assertTrue(known_tool("RemotePC"))
+        self.assertFalse(known_tool("chrome"))
+
+    def test_everyday_programs_never_match(self):
+        for name in ("chrome.exe", "msedge.exe", "explorer.exe", "svchost.exe", "Code.exe", "connect.exe", "client.exe",
+                     "setup.exe", "Zoom.exe", "Teams.exe", "ZohoMeeting.exe", "OneDrive.exe", "python.exe",
+                     "nvda.exe", "Narrator.exe", "Magnify.exe", "jfw.exe", "ZoomText.exe"):  # assistive tech is never a target
+            self.assertIsNone(match_remote_tool(name), name)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -179,6 +179,11 @@ context_poll_seconds = 1.5
 screen_review = false
 daily_calls = 50               # most second opinions per day
 hourly_calls = 20              # and per hour (also at most one look per page per 10 minutes)
+# Someone to tell when Ally stops a likely scam (a "Tell Priya" button on serious warnings). They install the free
+# ntfy app and subscribe to the topic below; pick a long random topic, anyone who knows it can read the alerts.
+# The alert says what kind of risk it was, never the web address or anything on the page.
+trusted_contact = ""           # e.g. "Priya"
+contact_topic = ""             # e.g. "ally-priya-7f3k29qx"
 
 # Applied when Ally starts and on every page you open in Chrome.
 [profile]

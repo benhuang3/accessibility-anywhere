@@ -32,10 +32,21 @@ label = "Close it"
 id = "stay"
 label = "I know this person"
 
+[page_tricks]
+title = "This page may be trying to trap you."
+body = "It is stopping you from leaving or taking over the screen. It's safest to close this page."
+spoken = "This page may be stopping you from leaving or taking over the screen. It's safest to close it."
+[[page_tricks.actions]]
+id = "close_page"
+label = "Close this page"
+[[page_tricks.actions]]
+id = "explain"
+label = "Tell me more"
+
 [untrusted_site]
 title = "This address looks a little different."
-body = "You're on {host}. Your bank is usually {usual_site}."
-spoken = "This address looks slightly different from your bank's usual site, so it may not be the real one."
+body = "You're on {host}. The real site is {usual_site}."
+spoken = "This address looks slightly different from the real site's usual address, so it may not be the real one."
 [[untrusted_site.actions]]
 id = "open_usual"
 label = "Go to the usual site"
@@ -67,8 +78,8 @@ label = "Continue"
 
 [joined_remote_payment]
 title = "Let's pause."
-body = "Someone may be able to see this screen, and you've just opened your bank."
-spoken = "Someone may be able to see your screen right now, and you've just opened your bank. I'd feel better if we paused."
+body = "Someone may be able to see this screen while you're on a banking or payment page."
+spoken = "Someone may be able to see your screen right now while you're on a banking or payment page. I'd feel better if we paused."
 [[joined_remote_payment.actions]]
 id = "close_tool"
 label = "Close the remote tool"
