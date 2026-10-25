@@ -2,6 +2,7 @@
 
 BUILTIN_MODULES = [
     "ally.tools.browser_tools",
+    "ally.tools.click_tools",
     "ally.tools.gaze_tools",
     "ally.tools.page_tools",
     "ally.tools.screen_tools",

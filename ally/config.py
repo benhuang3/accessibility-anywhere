@@ -72,6 +72,7 @@ SPEC = {
     "page_enlarge": {"text_goal_px": NUM, "target_goal_px": NUM, "max_zoom": NUM, "max_text_scale": NUM,
                      "sticky_budget": NUM,
                      "ai_check": bool, "ai_background": bool},
+    "picture": {"describe_with_claude": bool},
     "tools": {"disabled": list, "timeout_seconds": NUM},
     "plugins": {"folder": str},
     "security": {"allowed_extension_ids": list},

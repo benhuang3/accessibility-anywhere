@@ -17,10 +17,27 @@ def zoom_target(ctx) -> str:
     return "page" if (ctx.browser.connected and ctx.browser.focused) else "screen"
 
 
+def _picture_zoom(ctx, direction: str) -> str | None:
+    """While the picture viewer is open, zoom keeps acting on the picture, not the page."""
+    try:
+        state = ctx.browser.call("pictureState", timeout=3) or {}
+        if not state.get("open"):
+            return None
+        out = ctx.browser.call("pictureZoom", direction=direction, closeAtFit=True, timeout=5) or {}
+    except ToolError:
+        return None  # an extension without the picture viewer
+    if out.get("closed"):
+        return "Closed the picture."
+    return f"Picture zoom {round(float(out.get('scale') or 1) * 100)}%."
+
+
 @tool(ai=False)
 def zoom_in(ctx):
     """Make things bigger one step: the web page if Chrome is in front, otherwise the whole screen."""
     if zoom_target(ctx) == "page":
+        said = _picture_zoom(ctx, "in")
+        if said:
+            return said
         z = ctx.browser.call("zoomStep", direction="in")
         return f"Page zoom {round(z * 100)}%."
     return ctx.os.magnify(next_level(ctx.os.magnify_level, True))
@@ -30,6 +47,9 @@ def zoom_in(ctx):
 def zoom_out(ctx):
     """Make things smaller one step: the web page if Chrome is in front, otherwise the whole screen."""
     if zoom_target(ctx) == "page":
+        said = _picture_zoom(ctx, "out")
+        if said:
+            return said
         z = ctx.browser.call("zoomStep", direction="out")
         return f"Page zoom {round(z * 100)}%."
     return ctx.os.magnify(next_level(ctx.os.magnify_level, False))

@@ -170,6 +170,10 @@ grayscale = """
 html { filter: grayscale(1) !important; }
 """
 
+# The picture viewer ("zoom in on the picture", "describe the picture"; docs/picture_viewer.md).
+[picture]
+describe_with_claude = true  # pictures without a description get one from Claude (one screenshot); needs a key
+
 [tools]
 disabled = []              # tools to turn off, e.g. ["describe_screen"]
 timeout_seconds = 15       # a tool that takes longer is stopped waiting for

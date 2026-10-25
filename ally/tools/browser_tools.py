@@ -110,7 +110,11 @@ def scroll_page(ctx, direction: Literal["down", "up", "top", "bottom"] = "down",
 @tool
 def browser_navigate(ctx, action: Literal["back", "forward", "reload"]):
     """Go back, go forward, or reload the current tab in Chrome."""
-    ctx.browser.call("navigate", action=action)
+    got = ctx.browser.call("navigate", action=action)
+    if got == "opener":
+        return "This tab has no page before it, so I went back to the tab it came from."
+    if got == "none":
+        return f"There's no page {'before' if action == 'back' else 'after'} this one."
     return {"back": "Went back.", "forward": "Went forward.", "reload": "Reloaded the page."}[action]
 
 

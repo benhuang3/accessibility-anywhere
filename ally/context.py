@@ -31,7 +31,8 @@ class BrowserAPI:
     def tab(self) -> dict:
         return self._bridge.tab
 
-    def call(self, action: str, timeout: float = 8.0, **args):
+    def call(self, action: str, /, timeout: float = 8.0, **args):
+        # Positional-only: some extension actions take an argument named "action" (navigate).
         return self._bridge.call(action, args, timeout=timeout)
 
 

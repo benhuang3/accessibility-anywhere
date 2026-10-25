@@ -18,7 +18,7 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
 // Page steps (docs/page_steps.md). Each file is loaded on its own so one broken step can't stop the extension.
 for (const file of ["steps/core.js", "steps/classify.js", "steps/clutter.js", "steps/menus.js", "steps/enlarge.js",
-  "steps/simple.js", "steps/fix.js"]) {
+  "steps/simple.js", "steps/fix.js", "steps/picture.js", "steps/clicks.js"]) {
   try {
     importScripts(file);
   } catch (e) {
@@ -398,6 +398,11 @@ const ACTIONS = {
   },
   async zoomStep({ direction }) {
     const t = await activeTab();
+    // While the picture viewer is open, zoom acts on the picture and the page zoom stays as it is.
+    if (typeof pictureProbe === "function" && (await pictureProbe(t.id)).open) {
+      await withTab(t.id, () => inPage(t.id, "picture.zoom", { direction: direction === "out" ? "out" : "in", closeAtFit: false }));
+      return await chrome.tabs.getZoom(t.id);
+    }
     const next = stepZoom(await chrome.tabs.getZoom(t.id), direction === "out" ? -1 : 1);
     await chrome.tabs.setZoom(t.id, next);
     return next;
@@ -455,9 +460,36 @@ const ACTIONS = {
   },
   async navigate({ action }) {
     const t = await activeTab();
-    if (action === "back") await chrome.tabs.goBack(t.id);
-    else if (action === "forward") await chrome.tabs.goForward(t.id);
-    else await chrome.tabs.reload(t.id);
+    if (action === "back" || action === "forward") {
+      // From inside the page: Chrome's own Back skips pages the user never clicked or typed on, and someone
+      // using only their voice never does, so "go back" would jump past the page they were just on.
+      const [r] = await chrome.scripting.executeScript({
+        target: { tabId: t.id },
+        func: (dir) => {
+          const nav = globalThis.navigation;
+          const can = nav ? (dir === "back" ? nav.canGoBack : nav.canGoForward) : true;
+          if (can) dir === "back" ? history.back() : history.forward();
+          return can;
+        },
+        args: [action],
+      }).catch(() => [null]);
+      if (!r) {
+        // A page extensions can't script (chrome://, the Web Store): Chrome's own buttons.
+        await (action === "back" ? chrome.tabs.goBack(t.id) : chrome.tabs.goForward(t.id)).catch(() => {});
+        return action;
+      }
+      if (r.result) return action;
+      if (action === "back" && Number.isInteger(t.openerTabId)) {
+        const opener = await chrome.tabs.get(t.openerTabId).catch(() => null);
+        if (opener) {
+          await chrome.tabs.update(opener.id, { active: true });
+          await chrome.windows.update(opener.windowId, { focused: true }).catch(() => {});
+          return "opener";
+        }
+      }
+      return "none";
+    }
+    await chrome.tabs.reload(t.id);
     return action;
   },
   async openUrl({ url, newTab = true }) {
@@ -626,6 +658,68 @@ const ACTIONS = {
   async pageTeardown(args = {}) {
     const tab = await resolveTab(args);
     return await withTab(tab.id, () => pageTeardown(tab.id));
+  },
+  // Picture viewer (steps/picture.js, docs/picture_viewer.md).
+  async pictureList(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, async () => {
+      const out = await inPage(tab.id, "picture.list", Number(args.minPx) > 0 ? { minPx: Number(args.minPx) } : {});
+      out.win = { ...(out.win || {}), zoom: await chrome.tabs.getZoom(tab.id) };
+      return { tabId: tab.id, ...out };
+    });
+  },
+  async pictureStep(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, () => inPage(tab.id, "picture.step", { back: !!args.back }));
+  },
+  async pictureZoom(args = {}) {
+    const tab = await resolveTab(args);
+    const direction = args.direction === "out" ? "out" : "in";
+    return await withTab(tab.id, () => inPage(tab.id, "picture.zoom", { direction, closeAtFit: !!args.closeAtFit }));
+  },
+  async pictureOutline(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, () => inPage(tab.id, "picture.outline", { ids: Array.isArray(args.ids) ? args.ids.map(String) : [] }));
+  },
+  async pictureRemember(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, () => inPage(tab.id, "picture.remember", { descriptions: args.descriptions || {} }));
+  },
+  async pictureState(args = {}) {
+    try {
+      const tab = await resolveTab(args);
+      return await pictureProbe(tab.id);
+    } catch {
+      return { open: false, id: null, scale: 1 };
+    }
+  },
+  // Click by voice / by number (steps/clicks.js, docs/click_by_voice.md).
+  async clickList(args = {}) {
+    const tab = await resolveTab(args);
+    const opts = Number(args.max) > 0 ? { max: Number(args.max) } : {};
+    return await withTab(tab.id, async () => ({ tabId: tab.id, ...(await inPage(tab.id, "clicks.list", opts)) }));
+  },
+  async clickShow(args = {}) {
+    const tab = await resolveTab(args);
+    return await withTab(tab.id, async () => ({ tabId: tab.id, step: "clicks", ...(await STEPS.clicks.on(tab.id, args)) }));
+  },
+  async clickDo(args = {}) {
+    const tab = await resolveTab(args);
+    const target = args.n !== undefined && args.n !== null ? { n: Number(args.n) } : { id: String(args.id || ""), gen: Number(args.gen) || 0 };
+    const out = await withTab(tab.id, () => inPage(tab.id, "clicks.click", target));
+    if (out && out.open && /^https?:/i.test(out.open)) {
+      if (out.newTab) await chrome.tabs.create({ url: out.open, openerTabId: tab.id, index: tab.index + 1 });
+      else await chrome.tabs.update(tab.id, { url: out.open });
+    }
+    return out;
+  },
+  async clickState(args = {}) {
+    try {
+      const tab = await resolveTab(args);
+      return await clickProbe(tab.id);
+    } catch {
+      return { shown: false, count: 0, items: [] };
+    }
   },
   // For the AI checker and fixer (steps/fix.js): what the user sees, and what's on the page.
   async pageScreenshot(args = {}) {

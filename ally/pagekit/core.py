@@ -81,7 +81,7 @@ class PageSession:
         self.info = info
         self.tab_id = info["tabId"]
 
-    def call(self, action: str, timeout: float | None = None, **args):
+    def call(self, action: str, /, timeout: float | None = None, **args):
         return self.ctx.browser.call(action, timeout=timeout or self.timeout, tabId=self.tab_id, **args)
 
     def zoom(self) -> float:
