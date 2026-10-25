@@ -33,7 +33,8 @@ With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This tak
 - A yes or no by looking: Ally shows the choices as large cards. Two choices use the left and right
   halves of the screen. Look at one for about a second. Up to four choices. If you don't settle, Ally says none.
   That look also teaches the tracker: the features from the dwell, and the centre of the chosen card.
-- "Check my eye tracker": only the 5 check dots, about 10 seconds. Ally re-tunes the saved model
+- "Quick calibrate" or "check my eye tracker": only the 5 check dots, 0.6 s each (about 6 seconds; a
+  slow camera gets up to 1.5 s per dot). Ally re-tunes the saved model
   from those dots (a shift, not a new fit) and says how far off it was before and after.
 - "Set up my eyes" runs the full setup again.
 - "Show where I am looking" draws a soft circle at the gaze point. "Hide the eye dot" removes it.
@@ -43,7 +44,7 @@ With Ally running, say "Ally, set up my eyes" (or "calibrate my eyes"). This tak
 If the tracker isn't set up, Ally can't see your face, your eyes don't stay on one spot, or the
 uncertainty is above `max_radius_px` (default 250), Ally uses the mouse pointer and says why.
 If that uncertainty stays high for about 10 seconds while your face is still visible, Ally says,
-once: "Your position changed. Say check my eye tracker to re-tune it." It waits 5 minutes before
+once: "Your position changed. Say check my eye tracker to re-tune it." ("Quick calibrate" does the same.) It waits 5 minutes before
 saying that again.
 
 Clicks can improve the estimate after setup (`click_learning`, on by default). The click is two

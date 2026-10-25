@@ -757,6 +757,41 @@ class ReadingPanTests(unittest.TestCase):
             self.assertEqual(match(text).actions, [("magnify_where_i_look", {})], text)
 
 
+class QuickCalibrateTests(unittest.TestCase):
+    """The quick check: 5 dots at 0.6 s each, longer only when a slow camera has too few frames."""
+
+    def run_check(self, fps):
+        from ally.gaze_helper import Setup
+        setup = Setup((1920, 1080), random.Random(2))
+        setup.start_check(0.0, 0.0)
+        feat = ([0.01, 0.02, 0.0, 0.0, 0.0, -0.1, 0.0, -2.0, -30.0, 0.5], 0.5)
+        now, state = 0.0, "running"
+        while state == "running" and now < 30:
+            now += 1.0 / fps
+            state = setup.step(now, feat, {"present": True, "yaw": 0.0, "pitch": 0.0}, now)
+        return state, now, [t.good for t in setup.val_targets]
+
+    def test_five_quick_dots_take_about_six_seconds(self):
+        state, took, good = self.run_check(30)
+        self.assertEqual(state, "score")
+        self.assertEqual(len(good), 5)
+        self.assertLess(took, 6.5)  # 5 x (0.5 s settle + 0.6 s looking)
+        self.assertTrue(all(g >= 6 for g in good))
+
+    def test_a_slow_camera_gets_longer_per_dot(self):
+        state, took, good = self.run_check(5)
+        self.assertEqual(state, "score")
+        self.assertTrue(all(g >= 6 for g in good), good)
+        self.assertLess(took, 5 * (0.5 + 1.5) + 1)
+
+    def test_quick_calibrate_phrases(self):
+        for text in ("quick calibrate", "Ally, quick calibrate my eyes", "do a quick calibration",
+                     "recalibrate quickly", "quickly recalibrate the eye tracker"):
+            self.assertEqual(match(text).actions, [("check_eye_tracker", {})], text)
+            self.assertEqual(match(text, strict=False).actions, [("check_eye_tracker", {})], text)
+        self.assertEqual(match("calibrate my eyes").actions, [("calibrate_eye_tracker", {})])
+
+
 class DoctorTests(unittest.TestCase):
     def test_lines(self):
         now = 1_000_000.0

@@ -60,6 +60,12 @@ RULES = [
               r"make (?:what|where) (?:i'm|i am|im) looking at (?:bigger|larger)|"
               r"help me read(?: (?:this|that|it|the (?:text|page|screen)))?",
          loose=r"\b(?:i'm|i am|im) (?:looking|staring|gazing)\b|\bwhere i look\b|\b(?:magnify|zoom(?: in)?) here\b"),
+    # Quick calibrate comes before calibrate, whose loose pattern would take any "calibrate".
+    Rule("quick_calibrate", [("check_eye_tracker", {})],
+         full=r"(?:do a )?(?:quick|quickly|fast)(?: re)? ?(?:calibrat(?:e|ion)|check|setup|set up)(?: (?:my|the))?"
+              r"(?: eyes?| eye ?track(?:er|ing)| gaze(?: tracking)?)?|"
+              r"re ?calibrate(?: (?:my|the))?(?: eyes?| eye ?track(?:er|ing))? (?:quickly|fast)",
+         loose=r"\b(?:quick|quickly|fast) ?(?:re ?)?calibrat|\brecalibrate (?:\w+ )*(?:quickly|fast)\b"),
     Rule("calibrate", [("calibrate_eye_tracker", {})],
          full=r"(?:re)?calibrate(?: the| my)?(?: eyes?| eye ?track(?:er|ing)| gaze(?: tracking)?)?|"
               r"(?:set up|setup)(?: the| my)? (?:eyes|eye ?track(?:er|ing)|gaze(?: tracking)?)|"

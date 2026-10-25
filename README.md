@@ -128,7 +128,8 @@ agent.confirm.warn({"kind": "scam_popup", "severity": "high"})   # "This pop-up 
 4. A yes or no can be answered by looking. Ally shows the choices as large cards (two choices: the
    left half and the right half). Look at one for a moment. That look teaches the tracker, using the
    centre of the card you chose.
-5. Say **"Ally, check my eye tracker"** for the 5 check dots only (about 12 seconds), without a full setup.
+5. Say **"Ally, quick calibrate"** (or "check my eye tracker") when it is off: 5 quick dots, about 6 seconds,
+   re-tune your saved setup. A full setup is needed only once, or after a new screen or camera.
 
 The check uses plain words:
 

@@ -195,10 +195,11 @@ def calibrate_eye_tracker(ctx):
 
 @tool(timeout=60)
 def check_eye_tracker(ctx):
-    """Check eye-tracker accuracy with 5 dots (about 10 seconds), without a full setup.
+    """Quick calibrate: 5 quick dots (about 6 seconds) re-tune the saved setup, without a full setup.
 
-    Use when the user asks to check the eye tracker, or after they have moved. Re-tunes the
-    saved model from those dots and says the error before and after.
+    Use for "quick calibrate", "recalibrate quickly", "check my eye tracker", or when it is off
+    after the user moved. Re-tunes the saved model from those dots and says the error before and
+    after. Needs one full setup first (calibrate_eye_tracker).
     """
     p = ctx.os
     level = p.view()[0]

@@ -58,6 +58,10 @@ STEADY_SECONDS = 1.0  # face width and head pose must hold still this long befor
 CAL_SETTLE, CAL_COLLECT = 0.8, 1.5
 VAL_SETTLE, VAL_COLLECT = 0.5, 1.5  # 1.5 s kept per dot, so a 10 fps camera still beats the 10-frame minimum
 VAL_COUNT = 5
+# The quick check ("quick calibrate"): 0.6 s per dot re-tuned as well as 1.5 s on recordings (an
+# earlier session's model plus 5 dots: 176 px before, 114 px after; a full setup that day: 91 px).
+# A dot keeps collecting up to CHECK_MAX until it has CHECK_MIN_GOOD frames, for slow cameras.
+CHECK_COLLECT, CHECK_MAX, CHECK_MIN_GOOD = 0.6, 1.5, 6
 MIN_GOOD = 10  # fewer good frames than this, and that dot is shown once more
 HEAD_MOVE_DEG = 3.0  # yaw or pitch change that means the head turned instead of the eyes
 WIDTH_STEADY = 0.05  # relative face-width change; 40 cm to 32 cm is much larger than this
@@ -933,10 +937,11 @@ def _wrap_plain(text: str, limit: int = 42) -> list[str]:
 
 class _Dot:
     def __init__(self, phase: str, tid: int, nx: float, ny: float, settle: float, collect: float,
-                 pose: str = ""):
+                 pose: str = "", collect_max: float | None = None, min_good: int = 0):
         self.phase, self.id = phase, tid
         self.nx, self.ny = nx, ny
         self.settle, self.collect = settle, collect
+        self.collect_max, self.min_good = collect_max, int(min_good)  # keep going until min_good frames
         self.pose = pose
         self.good = 0
         self.samples: list[tuple[list[float], tuple[float, float]]] = []
@@ -1155,10 +1160,13 @@ class Setup:
     def _dots(self, now: float, feat, face, wall: float) -> str:
         target = self.order[self.pos]
         elapsed = 0.0 if self.t0 is None else now - self.t0
-        if target.settle <= elapsed < target.settle + target.collect:
+        collect = target.collect
+        if target.collect_max is not None and target.good < target.min_good:
+            collect = max(collect, target.collect_max)  # too few frames yet: a slow camera gets longer
+        if target.settle <= elapsed < target.settle + collect:
             self._watch_head(target, face)
             self._consider(target, feat, face)
-        if elapsed >= target.settle + target.collect:
+        if elapsed >= target.settle + collect:
             return self._advance(now, wall)
         return "running"
 
@@ -1304,7 +1312,8 @@ class Setup:
     def start_check(self, now: float, wall: float) -> None:
         """Five check dots only. The model is already fit; these frames are not used to fit it."""
         points = validation_points(self.rng)
-        self.val_targets = [_Dot("validation", i, x, y, VAL_SETTLE, VAL_COLLECT) for i, (x, y) in enumerate(points)]
+        self.val_targets = [_Dot("validation", i, x, y, VAL_SETTLE, CHECK_COLLECT, collect_max=CHECK_MAX,
+                                 min_good=CHECK_MIN_GOOD) for i, (x, y) in enumerate(points)]
         self.order = list(self.val_targets)
         self.pos = 0
         self.t0 = None
