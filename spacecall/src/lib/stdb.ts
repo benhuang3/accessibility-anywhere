@@ -1,7 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { DbConnection, tables } from '../module_bindings';
 import { STDB_URI, DB_NAME } from './config';
-import { handleAudioEvent, handleVideoEvent, setTransmitting, stopCallRuntime, connectionSlow } from './callRuntime';
+import { handleAudioEvent, handleVideoEvent, setTransmitting, stopCallRuntime, trackReducerCall, recordSendFailure } from './callRuntime';
 import { INCIDENT_TTL_MS, type RoomLink } from './room';
 import type { Incident } from './types';
 
@@ -38,8 +38,8 @@ export function connectStdb(link: RoomLink): Promise<DbConnection> {
           if (disposed) { conn.disconnect(); return; }
           conn.db.callIncident.onInsert((_ctx, row) => applyIncident(row));
           conn.db.callIncident.onUpdate((_ctx, _old, row) => applyIncident(row));
-          conn.db.audioFrameEvent.onInsert((_ctx, row) => handleAudioEvent(row));
-          conn.db.videoFrameEvent.onInsert((_ctx, row) => handleVideoEvent(row));
+          conn.db.audioFrameEvent.onInsert((ctx, row) => handleAudioEvent(row, ctx.event.tag === 'Reducer' ? ctx.event : undefined));
+          conn.db.videoFrameEvent.onInsert((ctx, row) => handleVideoEvent(row, ctx.event.tag === 'Reducer' ? ctx.event : undefined));
           conn.subscriptionBuilder().onApplied(() => {
             clearTimeout(timeout);
             isConnected.set(true);
@@ -60,7 +60,7 @@ export function connectStdb(link: RoomLink): Promise<DbConnection> {
             if (Date.now() - Number(row.createdAt.microsSinceUnixEpoch / 1000n) >= INCIDENT_TTL_MS) {
               applyIncident({ ...row, status: 'ended' });
             }
-            void conn.reducers.heartbeat({ roomId: link.roomId }).catch(() => connectionSlow.set(true));
+            void trackReducerCall(() => conn.reducers.heartbeat({ roomId: link.roomId })).catch(recordSendFailure);
           }, 15000);
         }).onConnectError(() => {
           clearTimeout(timeout);

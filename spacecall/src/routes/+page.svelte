@@ -6,7 +6,7 @@
   import {
     startCallRuntime, stopCallRuntime, resumeCallAudio, setTransmitting,
     localVideoStream, remoteVideoUrl, muted, toggleMute, flipCamera,
-    connectionSlow, audioNeedsTap, mediaError
+    connectionSlow, audioNeedsTap, mediaError, callStats
   } from '$lib/callRuntime';
   import { parseRoomHash, kindLabels, type RoomLink } from '$lib/room';
 
@@ -19,6 +19,7 @@
   let permissionPending = false;
   let message = '';
   let cameraBusy = false;
+  let debug = false;
 
   $: helperName = $incidentStore?.helperName ?? link?.name ?? 'your helper';
   $: isHelper = link?.role === 'helper';
@@ -90,6 +91,9 @@
   }
 
   onMount(() => {
+    const updateDebug = () => { debug = new URLSearchParams(window.location.hash.slice(1)).get('debug') === '1'; };
+    updateDebug();
+    window.addEventListener('hashchange', updateDebug);
     try {
       link = parseRoomHash(window.location.hash);
       const room = link;
@@ -105,7 +109,11 @@
     }
     const leave = () => { ended = true; disconnectStdb(); };
     window.addEventListener('pagehide', leave);
-    return () => { window.removeEventListener('pagehide', leave); leave(); };
+    return () => {
+      window.removeEventListener('pagehide', leave);
+      window.removeEventListener('hashchange', updateDebug);
+      leave();
+    };
   });
 </script>
 
@@ -199,5 +207,14 @@
     </nav>
   {/if}
 
+  {#if debug}
+    <aside class="call-debug" aria-label="Call debug metrics">
+      <p>Video fps ↑ {$callStats.videoUp.toFixed(1)} ↓ {$callStats.videoDown.toFixed(1)}</p>
+      <p>Audio chunks/s ↑ {$callStats.audioUp.toFixed(1)} ↓ {$callStats.audioDown.toFixed(1)}</p>
+      <p>Media kbps ↑ {$callStats.kbpsUp.toFixed(1)} ↓ {$callStats.kbpsDown.toFixed(1)}</p>
+      <p>Playback buffer {$callStats.playbackMs.toFixed(0)} ms · Pending reducers {$callStats.pending}</p>
+      <p>One-way estimate: {$callStats.delayMs === null ? 'unavailable (no server timestamp)' : `${$callStats.delayMs.toFixed(0)} ms (server → here; clocks may differ)`}</p>
+    </aside>
+  {/if}
   <footer><a href="https://github.com/Lethalchip/SpaceChatDB" target="_blank" rel="noreferrer noopener">Built on SpaceChatDB</a></footer>
 </main>

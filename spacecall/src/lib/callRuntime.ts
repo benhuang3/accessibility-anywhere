@@ -2,6 +2,9 @@ import { get, writable } from 'svelte/store';
 import workletUrl from './pcm-capture-worklet.ts?worker&url';
 import type { DbConnection } from '../module_bindings';
 import type { AudioFrame, VideoFrame } from './types';
+import {
+  AUDIO_CHUNK_MS, MAX_AUDIO_PENDING, AudioJitterBuffer, CallHealth, LatestFrameSender, audioStartTime, serverDelayMs
+} from './mediaPolicy';
 
 export const localVideoStream = writable<MediaStream | null>(null);
 export const remoteVideoUrl = writable<string | null>(null);
@@ -9,6 +12,11 @@ export const connectionSlow = writable(false);
 export const muted = writable(false);
 export const audioNeedsTap = writable(false);
 export const mediaError = writable('');
+const emptyStats = {
+  videoUp: 0, videoDown: 0, audioUp: 0, audioDown: 0, kbpsUp: 0, kbpsDown: 0,
+  playbackMs: 0, pending: 0, delayMs: null as number | null
+};
+export const callStats = writable({ ...emptyStats });
 
 let audioContext: AudioContext | null = null;
 let runtime: Runtime | null = null;
@@ -17,11 +25,11 @@ let generation = 0;
 type Runtime = {
   conn: DbConnection; roomId: string; stream: MediaStream; context: AudioContext;
   video: HTMLVideoElement; node: AudioWorkletNode; source: MediaStreamAudioSourceNode;
-  silent: GainNode; timer: number; watchdog: number; sending: boolean; stopped: boolean;
-  audioPending: number; lastAudioSend: number; videoSeq: number; audioSeq: number;
+  silent: GainNode; timer: number; watchdog: number; playbackTimer: number; sending: boolean; stopped: boolean;
+  audioPending: Map<number, number>; videoPending: boolean; otherPending: number; lastAudioSend: number; videoSeq: number; audioSeq: number;
   nextPlay: number; lastAudioSeq: number; lastVideoSeq: number;
-  lastAudioAt: number; lastVideoAt: number; lastSendOk: number;
-  healthy: number; highQuality: boolean; facing: 'user' | 'environment';
+  health: CallHealth; videoSender: LatestFrameSender; jitter: AudioJitterBuffer<AudioBuffer>;
+  highQuality: boolean; facing: 'user' | 'environment'; delayMs: number | null;
   sources: Set<AudioBufferSourceNode>;
 };
 
@@ -67,11 +75,11 @@ export async function startCallRuntime(conn: DbConnection, roomId: string) {
     // Keep the worklet graph active, without playing the microphone locally.
     source.connect(node).connect(silent).connect(context.destination);
     const rt: Runtime = {
-      conn, roomId, stream, context, video, source, node, silent, timer: 0, watchdog: 0,
-      sending: false, stopped: false, audioPending: 0, lastAudioSend: 0,
+      conn, roomId, stream, context, video, source, node, silent, timer: 0, watchdog: 0, playbackTimer: 0,
+      sending: false, stopped: false, audioPending: new Map(), videoPending: false, otherPending: 0, lastAudioSend: 0,
       videoSeq: 0, audioSeq: 0, nextPlay: 0, lastAudioSeq: -1, lastVideoSeq: -1,
-      lastAudioAt: performance.now(), lastVideoAt: performance.now(), lastSendOk: performance.now(),
-      healthy: 0, highQuality: false, facing: 'user', sources: new Set()
+      health: new CallHealth(performance.now()), videoSender: new LatestFrameSender(),
+      jitter: new AudioJitterBuffer(), highQuality: false, facing: 'user', sources: new Set(), delayMs: null
     };
     runtime = rt;
     stream.getTracks().forEach(track => track.addEventListener('ended', () => {
@@ -80,16 +88,20 @@ export async function startCallRuntime(conn: DbConnection, roomId: string) {
     muted.set(false);
     localVideoStream.set(stream);
     captureAudio(rt);
-    void captureVideo(rt);
+    captureVideo(rt);
+    rt.playbackTimer = window.setInterval(() => playAudio(rt), 20);
     rt.watchdog = window.setInterval(() => {
       if (!rt.sending) return;
       const now = performance.now();
-      if (now - rt.lastAudioAt > 3000 || now - rt.lastVideoAt > 5000 || now - rt.lastSendOk > 3000) {
-        connectionSlow.set(true);
-        rt.highQuality = false;
-        rt.healthy = 0;
-      }
-    }, 1000);
+      const starts = [...rt.audioPending.values()];
+      if (rt.videoSender.pending) starts.push(rt.videoSender.since);
+      const pending = rt.audioPending.size + Number(rt.videoPending) + rt.otherPending;
+      const health = rt.health.sample(now, starts.length, starts.length ? now - Math.min(...starts) : 0,
+        rt.context.state === 'running');
+      rt.highQuality = health.highQuality;
+      connectionSlow.set(health.slow);
+      callStats.set({ ...health, playbackMs: rt.jitter.bufferedMs + scheduledAudioMs(rt), pending, delayMs: rt.delayMs });
+    }, 250);
   } catch (error) {
     stream?.getTracks().forEach(track => track.stop());
     if (ticket !== generation) return;
@@ -105,13 +117,21 @@ export function setTransmitting(enabled: boolean) {
   const rt = runtime;
   if (!rt) return;
   if (enabled && !rt.sending) {
-    rt.lastAudioAt = rt.lastVideoAt = rt.lastSendOk = performance.now();
+    rt.health = new CallHealth(performance.now());
+    rt.highQuality = false;
+    connectionSlow.set(false);
   }
   rt.sending = enabled;
+  if (!enabled) {
+    rt.jitter.clear();
+    rt.sources.forEach(source => { try { source.stop(); } catch {} });
+    rt.nextPlay = 0;
+    connectionSlow.set(false);
+  }
 }
 
 function captureAudio(rt: Runtime) {
-  const size = Math.round(rt.context.sampleRate * 0.05);
+  const size = Math.round(rt.context.sampleRate * AUDIO_CHUNK_MS / 1000);
   const input = new Float32Array(size);
   let used = 0;
   rt.node.port.onmessage = (event: MessageEvent<Float32Array>) => {
@@ -123,8 +143,8 @@ function captureAudio(rt: Runtime) {
       if (!rt.sending) continue;
       const now = performance.now();
       // Bound the in-flight queue; late audio is dropped instead of accumulating latency.
-      if (rt.audioPending >= 8 || now - rt.lastAudioSend < 25) {
-        connectionSlow.set(true);
+      if (rt.audioPending.size >= MAX_AUDIO_PENDING || now - rt.lastAudioSend < 25) {
+        rt.health.record('sendDrop', now);
         continue;
       }
       rt.lastAudioSend = now;
@@ -140,65 +160,65 @@ function captureAudio(rt: Runtime) {
         sum += value * value;
         view.setInt16(i * 2, Math.round(value * (value < 0 ? 32768 : 32767)), true);
       }
-      rt.audioPending++;
+      const seq = rt.audioSeq++ >>> 0;
+      rt.audioPending.set(seq, now);
+      rt.health.record('audioUp', now, bytes.length);
       void rt.conn.reducers.sendAudioFrame({
-        roomId: rt.roomId, seq: rt.audioSeq++ >>> 0, sampleRate: 16000, channels: 1,
+        roomId: rt.roomId, seq, sampleRate: 16000, channels: 1,
         rms: Math.sqrt(sum / 800), pcm16Le: bytes
-      }).then(() => { rt.lastSendOk = performance.now(); }).catch(() => {
-        if (!rt.stopped) connectionSlow.set(true);
-      }).finally(() => { rt.audioPending--; });
+      }).catch(() => {
+        if (!rt.stopped) rt.health.record('sendDrop', performance.now());
+      }).finally(() => { rt.audioPending.delete(seq); });
     }
   };
 }
 
-async function captureVideo(rt: Runtime) {
+function captureVideo(rt: Runtime) {
   const canvas = document.createElement('canvas');
   const graphics = canvas.getContext('2d');
   if (!graphics) { mediaError.set('Your browser could not start video. Please open the link again.'); return; }
-  while (!rt.stopped) {
+  const tick = () => {
+    if (rt.stopped) return;
     const start = performance.now();
     const fps = rt.highQuality ? 8 : 5;
     const budget = 1000 / fps;
-    try {
-      if (rt.sending && rt.video.readyState >= 2) {
+    if (rt.sending && rt.video.readyState >= 2) {
+      // Check before capture/encoding; a busy sender retains no stale frame.
+      void rt.videoSender.run(start, async () => {
         canvas.width = rt.highQuality ? 480 : 320;
         canvas.height = rt.highQuality ? 270 : 180;
         const scale = Math.max(canvas.width / rt.video.videoWidth, canvas.height / rt.video.videoHeight);
         const width = rt.video.videoWidth * scale;
         const height = rt.video.videoHeight * scale;
         graphics.drawImage(rt.video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
-        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.55));
+        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.6));
         if (rt.stopped) return;
         if (!blob || blob.size > 128000) throw new Error('Video frame too large');
         const jpeg = new Uint8Array(await blob.arrayBuffer());
-        if (rt.stopped || !rt.sending) continue;
-        await rt.conn.reducers.sendVideoFrame({
-          roomId: rt.roomId, seq: rt.videoSeq++ >>> 0, width: canvas.width, height: canvas.height, jpeg
-        });
+        if (rt.stopped || !rt.sending) return;
+        rt.health.record('videoUp', performance.now(), jpeg.length);
+        rt.videoPending = true;
+        try {
+          await rt.conn.reducers.sendVideoFrame({
+            roomId: rt.roomId, seq: rt.videoSeq++ >>> 0, width: canvas.width, height: canvas.height, jpeg
+          });
+        } finally { rt.videoPending = false; }
+      }).then(sent => {
         if (rt.stopped) return;
-        const elapsed = performance.now() - start;
-        rt.lastSendOk = performance.now();
-        if (elapsed < budget * 0.8 && rt.audioPending < 4) {
-          rt.healthy++;
-          if (rt.healthy >= 30 && performance.now() - rt.lastAudioAt < 3000 && performance.now() - rt.lastVideoAt < 5000) {
-            rt.highQuality = true;
-            connectionSlow.set(false);
-          }
-        } else {
-          rt.healthy = 0;
-          rt.highQuality = false;
-          connectionSlow.set(true);
+        if (!sent) rt.health.record('videoSkip', start);
+        // After missing a capture tick, capture fresh media as soon as the
+        // reducer frees up rather than waiting another entire frame period.
+        else if (performance.now() - start >= budget) {
+          clearTimeout(rt.timer);
+          rt.timer = window.setTimeout(tick, 0);
         }
-      }
-    } catch {
-      if (rt.stopped) return;
-      rt.healthy = 0;
-      rt.highQuality = false;
-      connectionSlow.set(true);
+      }).catch(() => {
+        if (!rt.stopped) rt.health.record('sendDrop', performance.now());
+      });
     }
-    if (rt.stopped) return;
-    await new Promise<void>(resolve => { rt.timer = window.setTimeout(resolve, Math.max(10, budget - (performance.now() - start))); });
-  }
+    rt.timer = window.setTimeout(tick, Math.max(10, budget - (performance.now() - start)));
+  };
+  tick();
 }
 
 export function toggleMute() {
@@ -228,36 +248,71 @@ export async function flipCamera() {
   }
 }
 
-export function handleAudioEvent(row: AudioFrame) {
-  const rt = runtime;
-  if (!rt || !rt.sending || row.roomId !== rt.roomId || row.seq <= rt.lastAudioSeq ||
-      row.sampleRate !== 16000 || row.channels !== 1 || row.pcm16Le.length !== 1600) return;
-  rt.lastAudioSeq = row.seq;
-  rt.lastAudioAt = performance.now();
-  if (rt.context.state !== 'running') { audioNeedsTap.set(true); return; }
-  const buffer = rt.context.createBuffer(1, 800, 16000);
-  const samples = buffer.getChannelData(0);
-  const view = new DataView(row.pcm16Le.buffer, row.pcm16Le.byteOffset, row.pcm16Le.byteLength);
-  for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
-  if (rt.nextPlay > rt.context.currentTime + 0.3) { connectionSlow.set(true); return; }
+function scheduledAudioMs(rt: Runtime) {
+  return Math.max(0, rt.nextPlay - rt.context.currentTime) * 1000;
+}
+
+function playAudio(rt: Runtime) {
+  if (rt.stopped || !rt.sending) return;
+  if (rt.context.state !== 'running') {
+    rt.jitter.clear();
+    rt.nextPlay = 0;
+    return;
+  }
+  const now = rt.context.currentTime;
+  if (rt.nextPlay && rt.nextPlay <= now && rt.jitter.underrun()) {
+    rt.health.record('underrun', performance.now());
+  }
+  if (rt.nextPlay > now + 0.02) return;
+  const buffer = rt.jitter.take();
+  if (!buffer) return;
   const source = rt.context.createBufferSource();
   source.buffer = buffer;
   source.connect(rt.context.destination);
   rt.sources.add(source);
   source.onended = () => { rt.sources.delete(source); source.disconnect(); };
-  const start = Math.max(rt.nextPlay, rt.context.currentTime + 0.025);
+  const start = audioStartTime(rt.nextPlay, now);
   source.start(start);
-  rt.nextPlay = start + 0.05;
+  rt.nextPlay = start + buffer.duration;
 }
 
-export function handleVideoEvent(row: VideoFrame) {
+type MediaEvent = Parameters<typeof serverDelayMs>[0];
+
+export function handleAudioEvent(row: AudioFrame, event?: MediaEvent) {
+  const rt = runtime;
+  if (!rt || !rt.sending || row.roomId !== rt.roomId || row.seq <= rt.lastAudioSeq ||
+      row.sampleRate !== 16000 || row.channels !== 1 || row.pcm16Le.length !== 1600) return;
+  rt.lastAudioSeq = row.seq;
+  rt.health.record('audioDown', performance.now(), row.pcm16Le.length);
+  rt.delayMs = serverDelayMs(event, Date.now());
+  if (rt.context.state !== 'running') { audioNeedsTap.set(true); return; }
+  const buffer = rt.context.createBuffer(1, 800, 16000);
+  const samples = buffer.getChannelData(0);
+  const view = new DataView(row.pcm16Le.buffer, row.pcm16Le.byteOffset, row.pcm16Le.byteLength);
+  for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
+  rt.jitter.enqueue(buffer, scheduledAudioMs(rt));
+  playAudio(rt);
+}
+
+export function handleVideoEvent(row: VideoFrame, event?: MediaEvent) {
   const rt = runtime;
   if (!rt || !rt.sending || row.roomId !== rt.roomId || row.seq <= rt.lastVideoSeq) return;
   rt.lastVideoSeq = row.seq;
-  rt.lastVideoAt = performance.now();
+  rt.health.record('videoDown', performance.now(), row.jpeg.length);
+  rt.delayMs = serverDelayMs(event, Date.now());
   const old = get(remoteVideoUrl);
   remoteVideoUrl.set(URL.createObjectURL(new Blob([new Uint8Array(row.jpeg)], { type: 'image/jpeg' })));
   if (old) URL.revokeObjectURL(old);
+}
+
+export async function trackReducerCall<T>(call: () => Promise<T>): Promise<T> {
+  const rt = runtime;
+  if (rt) rt.otherPending++;
+  try { return await call(); } finally { if (rt) rt.otherPending--; }
+}
+
+export function recordSendFailure() {
+  runtime?.health.record('sendDrop', performance.now());
 }
 
 export function stopCallRuntime() {
@@ -268,6 +323,8 @@ export function stopCallRuntime() {
     rt.stopped = true;
     clearTimeout(rt.timer);
     clearInterval(rt.watchdog);
+    clearInterval(rt.playbackTimer);
+    rt.jitter.clear();
     rt.node.port.onmessage = null;
     rt.node.disconnect(); rt.source.disconnect(); rt.silent.disconnect();
     rt.stream.getTracks().forEach(track => track.stop());
@@ -281,4 +338,5 @@ export function stopCallRuntime() {
   remoteVideoUrl.set(null);
   audioNeedsTap.set(false);
   connectionSlow.set(false);
+  callStats.set({ ...emptyStats });
 }
