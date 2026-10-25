@@ -110,7 +110,7 @@ python -m ally.gaze_record --person ada --glasses yes --light dim
 Each session writes `state/gaze_runs/<run>/<alias>-<glasses>-<light>.jsonl`. One JSON object per line:
 
 - `meta`: alias, glasses, light, screen size, `screen_mm` (the screen's width and height in millimetres), camera, git commit, created time
-- `frame`: time, image width and height, 478 landmarks, all 52 blendshapes, and the 16-number face matrix or null
+- `frame`: time, image width and height, 478 landmarks, all 52 blendshapes, and the 16-number face matrix or null. With `--cnn`, also `cnn` (model name to yaw and pitch in degrees) and `cnn_ms` (milliseconds for that model)
 - `target`: phase `calibration`, `validation`, or `drift`, plus `shown`, `start`, and `end`. Calibration targets also have `pose`: `normal`, `back`, or `close`
 - `click`: time and screen point, only if you click during the reading
 
@@ -123,3 +123,35 @@ The session on screen:
 3. Five check dots again, phase `drift`, in different areas from the calibration dots.
 
 Ally has to be stopped. If it is still running, the command refuses and tells you to run `python run.py stop`.
+
+## Compare with MobileGaze
+
+MobileGaze is an open-source gaze model (MIT license). It can be run on the same session, in memory, and scored against our tracker. The picture is still not saved.
+
+Download the model files once. They go in `state/models`, and a file that is already there is skipped:
+
+```
+python scripts/get_gaze_models.py
+```
+
+That fetches `mobileone_s0_gaze.onnx` and `resnet18_gaze.onnx`.
+
+Record with Ally stopped. `--cnn` names the models. Without it, nothing about the file changes.
+
+```
+python -m ally.gaze_record --person ada --glasses no --light bright --cnn mobileone_s0,resnet18
+```
+
+Score the recordings. Folders are searched recursively. A recording with no `cnn` numbers is skipped. The fit uses the calibration dots. The check dots (`validation`) and the later dots (`drift`) are scored, not used to fit.
+
+```
+python -m ally.gaze_cnn evaluate state/gaze_runs
+```
+
+Each model gets three rows:
+
+- `cnn`: the model's yaw and pitch, plus where the head is (from the face matrix), mapped onto the screen the way v4 maps an eye angle. A gain and an offset per axis are fit on the calibration dots.
+- `hybrid`: v4's eye terms and the model's two angles, in one fit of the eye angle the head would need.
+- `v4`: our tracker, for reference.
+
+For each of those, on validation and on drift: how far the median of a dot is from that dot, and whether it fell in the right 3x3 area; the median and 90th percentile of the error on single frames; and the median and 90th percentile of the jump from one frame to the next. `ms` is the median time that model took on a frame. A CSV is written in the current folder as `gaze_cnn.csv`, or where `--out` says (a `.csv` path, or a folder).

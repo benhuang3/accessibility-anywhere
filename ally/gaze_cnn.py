@@ -5,19 +5,28 @@ Yaw and pitch come back in degrees (the model's own bin decode, before it turns 
 into radians). Head pose is already inside those angles.
 
     python -m ally.gaze_record --cnn mobileone_s0,resnet18
+    python -m ally.gaze_cnn evaluate state/gaze_runs
 
 Model files live in the app state folder: state/models/<name>_gaze.onnx.
 Fetch them with python scripts/get_gaze_models.py.
+
+evaluate fits each recorded model on the calibration dots and scores it on the
+validation and drift dots, next to our v4 tracker.
 """
 
 from __future__ import annotations
 
+import argparse
+import csv
+import json
 import math
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
 
+from ally import gaze_model as gm
 from ally.senses.face import face_box
 
 # MobileGaze onnx_inference.py: ImageNet normalization, 90 bins of 4 degrees.
@@ -251,3 +260,451 @@ def load_models(spec: str, state_dir: Path) -> list[GazeCNN]:
         runner.load()
         runners.append(runner)
     return runners
+
+
+# ---------------------------------------------------------------- scoring
+# Eyes shut are not gaze. Same cutoff the live tracker uses when it keeps a frame.
+OPEN_MIN = 0.12
+APPROACHES = ("cnn", "hybrid", "v4")
+PHASES = ("validation", "drift")
+CSV_FIELDS = (
+    "file", "model", "approach", "phase", "error_px", "region_hits", "region_total",
+    "frame_median_px", "frame_p90_px", "jitter_median_px", "jitter_p90_px", "median_ms",
+)
+
+
+def project(features, gaze_yaw: float, gaze_pitch: float, screen, screen_mm):
+    """Screen point for a combined gaze angle, using v4's head-to-screen geometry.
+
+    gaze_yaw and gaze_pitch are radians in v4's signed convention (head angle plus
+    eye angle). tx, ty, tz are centimetres; the camera sits at the top centre.
+    """
+    sx, sy, _shy, _shp, stx, sty = gm._V4_SIGNS
+    _yaw, _pitch, tx, ty, tz = (float(x) for x in features[4:9])
+    if abs(tz) < gm._V4_MIN_DISTANCE_CM:
+        return None
+    if abs(gaze_yaw) >= 1.4 or abs(gaze_pitch) >= 1.4:
+        return None
+    kx, ky = gm._px_per_cm(screen, screen_mm)
+    distance = abs(tz)
+    return (
+        float(screen[0] / 2 + sx * (stx * tx + distance * math.tan(gaze_yaw)) * kx),
+        float(sy * (sty * ty + distance * math.tan(gaze_pitch)) * ky),
+    )
+
+
+def needed_combined(features, target, screen, screen_mm):
+    """Gaze angles (radians) that would land this head position on the target.
+
+    v4's needed eye angle plus the head's own yaw and pitch, so the result is the
+    full direction the camera-frame model should report.
+    """
+    eye = gm._v4_needed(features, target, screen, screen_mm)
+    if eye is None:
+        return None
+    _sx, _sy, shy, shp, _stx, _sty = gm._V4_SIGNS
+    yaw, pitch = float(features[4]), float(features[5])
+    return (eye[0] + shy * yaw, eye[1] + shp * pitch)
+
+
+def clamp_point(point, screen) -> tuple[float, float]:
+    """Same 10% margin gaze_model.predict uses, so the scores match validate."""
+    width, height = screen
+    return (
+        float(np.clip(point[0], -0.1 * width, 1.1 * width)),
+        float(np.clip(point[1], -0.1 * height, 1.1 * height)),
+    )
+
+
+def fit_cnn(samples, screen, screen_mm) -> dict | None:
+    """Least squares gain and offset per axis, from model degrees to v4's gaze angle.
+
+    samples are (features, target_xy, yaw_deg, pitch_deg) from the calibration dots.
+    """
+    angles, needed = [], []
+    for feat, target, yaw, pitch in samples:
+        full = needed_combined(feat, target, screen, screen_mm)
+        if full is None:
+            continue
+        angles.append((math.radians(float(yaw)), math.radians(float(pitch))))
+        needed.append(full)
+    if len(angles) < 2:
+        return None
+    design_x = np.asarray(angles, dtype=float)
+    design_y = np.asarray(needed, dtype=float)
+    gain, offset = np.zeros(2), np.zeros(2)
+    for axis in (0, 1):
+        columns = np.column_stack([design_x[:, axis], np.ones(len(design_x))])
+        coef, *_ = np.linalg.lstsq(columns, design_y[:, axis], rcond=None)
+        gain[axis], offset[axis] = (float(coef[0]), float(coef[1]))
+    return {
+        "gain": gain.tolist(), "offset": offset.tolist(),
+        "screen": [int(screen[0]), int(screen[1])],
+        "screen_mm": [float(screen_mm[0]), float(screen_mm[1])],
+    }
+
+
+def predict_cnn(model, features, yaw_deg, pitch_deg):
+    """Screen point from calibrated model angles and this frame's head position."""
+    gain, offset = model["gain"], model["offset"]
+    yaw = gain[0] * math.radians(float(yaw_deg)) + offset[0]
+    pitch = gain[1] * math.radians(float(pitch_deg)) + offset[1]
+    point = project(features, yaw, pitch, model["screen"], model["screen_mm"])
+    if point is None:
+        return None
+    return clamp_point(point, model["screen"])
+
+
+def hybrid_terms(features, yaw_deg, pitch_deg) -> np.ndarray:
+    """v4's eye terms, then the model's yaw and pitch in radians, then the constant."""
+    eye = gm._v4_eye_terms(features)
+    angles = np.array([math.radians(float(yaw_deg)), math.radians(float(pitch_deg))], dtype=float)
+    return np.concatenate([eye[:-1], angles, eye[-1:]])
+
+
+def fit_hybrid(samples, screen, screen_mm, lam: float = 1e-3) -> dict | None:
+    """One regression from eye terms plus model angles onto the needed eye angle.
+
+    Same ridge as v4. samples are (features, target_xy, yaw_deg, pitch_deg).
+    """
+    rows, needed = [], []
+    for feat, target, yaw, pitch in samples:
+        eye = gm._v4_needed(feat, target, screen, screen_mm)
+        if eye is None:
+            continue
+        rows.append(hybrid_terms(feat, yaw, pitch))
+        needed.append(eye)
+    if len(rows) < 8:
+        return None
+    design = np.asarray(rows, dtype=float)
+    target = np.asarray(needed, dtype=float)
+    coef = np.linalg.solve(design.T @ design + lam * np.eye(design.shape[1]), design.T @ target)
+    return {
+        "coef": coef.tolist(),
+        "screen": [int(screen[0]), int(screen[1])],
+        "screen_mm": [float(screen_mm[0]), float(screen_mm[1])],
+    }
+
+
+def predict_hybrid(model, features, yaw_deg, pitch_deg):
+    """Screen point: predicted eye angle added to the head, then v4's projection."""
+    eye = hybrid_terms(features, yaw_deg, pitch_deg) @ np.asarray(model["coef"], dtype=float)
+    _sx, _sy, shy, shp, _stx, _sty = gm._V4_SIGNS
+    yaw, pitch = float(features[4]), float(features[5])
+    point = project(features, shy * yaw + float(eye[0]), shp * pitch + float(eye[1]),
+                    model["screen"], model["screen_mm"])
+    if point is None:
+        return None
+    return clamp_point(point, model["screen"])
+
+
+def _percentile(values, q: float):
+    if not values:
+        return None
+    return float(np.percentile(np.asarray(values, dtype=float), q))
+
+
+def score_frames(items, screen) -> dict:
+    """Per-target median error and 3x3 hits, plus per-frame error and jitter.
+
+    Jitter is the distance between consecutive frames of one dot, so the jump
+    from one dot to the next is not counted.
+    """
+    grouped: dict[tuple, list] = {}
+    events: dict[tuple, list] = {}
+    frame_errors = []
+    for item in items:
+        key = (float(item["target"][0]), float(item["target"][1]))
+        grouped.setdefault(key, []).append(item["point"])
+        events.setdefault(tuple(item["event"]), []).append(item)
+        frame_errors.append(float(np.hypot(item["point"][0] - key[0], item["point"][1] - key[1])))
+    per_target = []
+    hits = 0
+    for key, points in grouped.items():
+        med = np.median(np.asarray(points, dtype=float), axis=0)
+        per_target.append(float(np.hypot(med[0] - key[0], med[1] - key[1])))
+        hits += int(gm.region(float(med[0]), float(med[1]), screen) == gm.region(key[0], key[1], screen))
+    jitters = []
+    for event_items in events.values():
+        ordered = sorted(event_items, key=lambda it: it["t"])
+        for left, right in zip(ordered, ordered[1:]):
+            jitters.append(float(np.hypot(
+                left["point"][0] - right["point"][0], left["point"][1] - right["point"][1])))
+    return {
+        "error_px": float(np.median(per_target)) if per_target else None,
+        "region_hits": hits,
+        "region_total": len(grouped),
+        "frame_median_px": float(np.median(frame_errors)) if frame_errors else None,
+        "frame_p90_px": _percentile(frame_errors, 90),
+        "jitter_median_px": float(np.median(jitters)) if jitters else None,
+        "jitter_p90_px": _percentile(jitters, 90),
+    }
+
+
+def _screen_of(meta) -> tuple[int, int]:
+    raw = meta.get("screen") or (1920, 1080)
+    try:
+        return int(raw[0]), int(raw[1])
+    except (TypeError, ValueError, IndexError):
+        return 1920, 1080
+
+
+def _mm_of(meta) -> tuple[float, float]:
+    raw = meta.get("screen_mm")
+    if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+        try:
+            return float(raw[0]), float(raw[1])
+        except (TypeError, ValueError):
+            pass
+    return tuple(float(v) for v in gm.DEFAULT_SCREEN_MM)
+
+
+def read_rows(path: Path) -> list[dict]:
+    rows = []
+    with Path(path).open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def has_cnn(rows) -> bool:
+    return any(row.get("rec") == "frame" and isinstance(row.get("cnn"), dict) and row["cnn"] for row in rows)
+
+
+def _angles_of(frame, model: str):
+    raw = (frame.get("cnn") or {}).get(model)
+    if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+        return None
+    try:
+        return float(raw[0]), float(raw[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _features_of(frame, screen_mm):
+    got = gm.features_for_model(
+        {"features": "v4", "screen_mm": screen_mm},
+        frame.get("lm"), frame.get("bs"), frame.get("mat"), frame.get("w") or 0, frame.get("h") or 0,
+    )
+    if not got:
+        return None
+    feat, openness = got
+    try:
+        open_enough = float(openness) >= OPEN_MIN
+    except (TypeError, ValueError):
+        return None
+    if not open_enough or len(feat) < 9:
+        return None
+    return [float(v) for v in feat]
+
+
+def _targets(rows, phase: str) -> list[dict]:
+    return [row for row in rows if row.get("rec") == "target" and row.get("phase") == phase]
+
+
+def _inside(frame_t, target) -> bool:
+    try:
+        return float(target["start"]) <= float(frame_t) <= float(target["end"])
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def collect(frames, targets, screen_mm, model: str) -> list[dict]:
+    """Frames inside each dot that have this model's angles and an open eye."""
+    used = set()
+    rows = []
+    for index, target in enumerate(targets):
+        try:
+            xy = (float(target["x"]), float(target["y"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        event = (target.get("phase"), target.get("id"), target.get("start"), index)
+        for number, frame in enumerate(frames):
+            if number in used or not _inside(frame.get("t"), target):
+                continue
+            angles = _angles_of(frame, model)
+            feat = _features_of(frame, screen_mm)
+            if angles is None or feat is None:
+                continue
+            used.add(number)
+            rows.append({
+                "feat": feat, "target": xy, "yaw": angles[0], "pitch": angles[1],
+                "t": float(frame.get("t") or 0.0), "event": event,
+            })
+    return rows
+
+
+def _predict_row(approach: str, model, row):
+    if approach == "cnn":
+        return predict_cnn(model, row["feat"], row["yaw"], row["pitch"])
+    if approach == "hybrid":
+        return predict_hybrid(model, row["feat"], row["yaw"], row["pitch"])
+    return gm.predict(model, row["feat"])
+
+
+def _fit_approach(approach: str, samples, screen, screen_mm):
+    plain = [(row["feat"], row["target"]) for row in samples]
+    angled = [(row["feat"], row["target"], row["yaw"], row["pitch"]) for row in samples]
+    if approach == "cnn":
+        return fit_cnn(angled, screen, screen_mm)
+    if approach == "hybrid":
+        return fit_hybrid(angled, screen, screen_mm)
+    return gm.fit(plain, screen, "v4", screen_mm=screen_mm)
+
+
+def median_ms(frames, model: str):
+    values = []
+    for frame in frames:
+        raw = (frame.get("cnn_ms") or {}).get(model)
+        try:
+            values.append(float(raw))
+        except (TypeError, ValueError):
+            continue
+    if not values:
+        return None
+    return float(np.median(values))
+
+
+def score_recording(path, rows) -> list[dict]:
+    """Fit on calibration and score validation and drift, for cnn, hybrid, and v4."""
+    meta = next((row for row in rows if row.get("rec") == "meta"), {})
+    screen, screen_mm = _screen_of(meta), _mm_of(meta)
+    frames = [row for row in rows if row.get("rec") == "frame"]
+    names: list[str] = []
+    for frame in frames:
+        for name in frame.get("cnn") or {}:
+            if name not in names:
+                names.append(str(name))
+    results = []
+    label = Path(path).name
+    for name in names:
+        calibration = collect(frames, _targets(rows, "calibration"), screen_mm, name)
+        targets = {tuple(row["target"]) for row in calibration}
+        if len(targets) < 6:
+            print(f"{label}: {name} has {len(targets)} calibration dots, needs 6")
+            continue
+        cost = median_ms(frames, name)
+        for approach in APPROACHES:
+            try:
+                model = _fit_approach(approach, calibration, screen, screen_mm)
+            except (ValueError, np.linalg.LinAlgError) as exc:
+                print(f"{label}: {name} {approach} could not be fit ({exc})")
+                continue
+            if model is None:
+                print(f"{label}: {name} {approach} could not be fit")
+                continue
+            for phase in PHASES:
+                held = collect(frames, _targets(rows, phase), screen_mm, name)
+                items = []
+                for row in held:
+                    point = _predict_row(approach, model, row)
+                    if point is None:
+                        continue
+                    items.append({"target": row["target"], "point": point, "t": row["t"], "event": row["event"]})
+                stats = score_frames(items, screen)
+                results.append({
+                    "file": str(path), "model": name, "approach": approach, "phase": phase,
+                    "median_ms": None if cost is None else round(cost, 2), **stats,
+                })
+    return results
+
+
+def recording_paths(paths) -> list[Path]:
+    found, seen = [], set()
+    for raw in paths:
+        path = Path(raw)
+        candidates = sorted(path.rglob("*.jsonl")) if path.is_dir() else [path]
+        for item in candidates:
+            key = str(item.resolve()) if item.exists() else str(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            if not item.is_file():
+                print(f"No such recording: {item}")
+                continue
+            found.append(item)
+    return found
+
+
+def csv_destination(out) -> Path:
+    if not out:
+        return Path.cwd() / "gaze_cnn.csv"
+    path = Path(out)
+    if path.suffix.lower() == ".csv":
+        return path
+    return path / "gaze_cnn.csv"
+
+
+def _write_csv(dest: Path, rows: list[dict]) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with dest.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: "" if row.get(key) is None else row.get(key) for key in CSV_FIELDS})
+
+
+def _print_table(rows: list[dict]) -> None:
+    headers = (
+        "file", "model", "approach", "phase", "target px", "areas",
+        "frame p50", "frame p90", "jitter p50", "jitter p90", "ms",
+    )
+    print("| " + " | ".join(headers) + " |")
+    print("|" + "|".join(["---"] * len(headers)) + "|")
+    for row in rows:
+        areas = f"{row['region_hits']}/{row['region_total']}" if row.get("region_total") else ""
+
+        def cell(value):
+            return "" if value is None else f"{value:.1f}"
+
+        cells = [
+            Path(row["file"]).name, row["model"], row["approach"], row["phase"],
+            cell(row.get("error_px")), areas,
+            cell(row.get("frame_median_px")), cell(row.get("frame_p90_px")),
+            cell(row.get("jitter_median_px")), cell(row.get("jitter_p90_px")),
+            cell(row.get("median_ms")),
+        ]
+        print("| " + " | ".join(str(item) for item in cells) + " |")
+
+
+def evaluate(paths, out=None) -> list[dict]:
+    """Score every recording under paths that stored cnn angles. Prints a table and writes a CSV."""
+    scored: list[dict] = []
+    saw = False
+    for path in recording_paths(paths):
+        rows = read_rows(path)
+        if not has_cnn(rows):
+            continue
+        saw = True
+        scored.extend(score_recording(path, rows))
+    if not saw:
+        print("No recordings with gaze-model angles.")
+    _print_table(scored)
+    dest = csv_destination(out)
+    _write_csv(dest, scored)
+    print(f"\nCSV: {dest}")
+    return scored
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m ally.gaze_cnn")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    cmd = sub.add_parser("evaluate", help="score recordings that include cnn angles")
+    cmd.add_argument("paths", nargs="+")
+    cmd.add_argument("--out", default=None, help="CSV file or folder (default: ./gaze_cnn.csv)")
+    args = parser.parse_args(argv)
+    evaluate(args.paths, args.out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
