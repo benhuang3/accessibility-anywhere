@@ -205,69 +205,38 @@ def fixation(points, t0, t1, radius_px):
     return {'x': float(np.median(window[:, 0])), 'y': float(np.median(window[:, 1])), 'start': pts[best['start_index']][0], 'end': pts[best['end_index']][0], 'samples': len(window), 'spread_px': spread}
 
 class Corrector:
-    """Refine a gaze model with accepted mouse-click targets."""
+    """Correct consistent head-movement drift from recent mouse clicks."""
 
     def __init__(self, model):
         self.base = model
         self.model = model
         self.samples = []
-        self.affine = None
+        self.errors = deque(maxlen=6)
 
     def add(self, features, target, t):
-        """Accept an on-target click and return whether it was stored."""
-        pred = self.predict(features)
-        if np.hypot(pred[0] - target[0], pred[1] - target[1]) >= 300:
-            return False
-        self.samples.append((features, tuple(target), float(t)))
+        """Store a click and update the translation after four-of-six consensus."""
+        base_prediction = np.asarray(predict(self.base, features))
+        error = np.asarray(target, dtype=float) - base_prediction
+        sample = (features, tuple(target), float(t), error)
+        self.samples.append(sample)
         self.samples = self.samples[-50:]
-        if len(self.samples) >= 8:
-            self._refine()
+        self.errors.append(sample)
+        if len(self.errors) == 6:
+            vectors = np.asarray([item[3] for item in self.errors])
+            median = np.median(vectors, axis=0)
+            inliers = np.linalg.norm(vectors - median, axis=1) <= 150
+            if int(inliers.sum()) >= 4:
+                consensus = np.median(vectors[inliers], axis=0)
+                before = np.median(np.linalg.norm(vectors[inliers], axis=1))
+                after = np.median(np.linalg.norm(vectors[inliers] - consensus, axis=1))
+                if after < before:
+                    self.model = dict(self.base)
+                    self.model['offset'] = consensus.tolist()
         return True
-
-    def _refine(self):
-        """Fit refit and affine candidates on early clicks; select by later clicks."""
-        split = max(6, int(len(self.samples) * 0.8))
-        training = self.samples[:split]
-        held_out = self.samples[split:]
-        if len(held_out) < 2:
-            return
-        base_predictions = np.asarray([predict(self.base, f) for f, _, _ in held_out])
-        held_targets = np.asarray([target for _, target, _ in held_out])
-        best_error = float(np.median(np.linalg.norm(base_predictions - held_targets, axis=1)))
-        best_model = self.base
-        best_affine = None
-        calibration = [(f, tuple(point)) for f, point in self.base.get('training_samples', [])]
-        combined = calibration + [(f, target) for f, target, _ in training]
-        try:
-            candidate = fit(combined, self.base['screen'], self.base.get('features', 'v1'))
-            predictions = np.asarray([predict(candidate, f) for f, _, _ in held_out])
-            error = float(np.median(np.linalg.norm(predictions - held_targets, axis=1)))
-            if error < best_error:
-                best_error, best_model = error, candidate
-        except (ValueError, np.linalg.LinAlgError):
-            pass
-        train_predictions = np.asarray([predict(self.base, f) for f, _, _ in training])
-        train_targets = np.asarray([target for _, target, _ in training])
-        design = np.column_stack([train_predictions, np.ones(len(train_predictions))])
-        residual = train_targets - train_predictions
-        penalty = np.diag([1.0, 1.0, 0.01])
-        correction = np.linalg.solve(design.T @ design + penalty, design.T @ residual)
-        affine = np.vstack([np.eye(2) + correction[:2], correction[2]])
-        affine_predictions = np.column_stack([base_predictions, np.ones(len(base_predictions))]) @ affine
-        affine_error = float(np.median(np.linalg.norm(affine_predictions - held_targets, axis=1)))
-        if affine_error < best_error:
-            best_model, best_affine = self.base, affine
-        self.model = best_model
-        self.affine = best_affine
 
     def predict(self, features):
         """Return the current corrected screen prediction."""
-        if self.affine is not None:
-            raw = np.array(predict(self.base, features))
-            p = np.r_[raw, 1.0] @ self.affine
-        else:
-            p = np.array(predict(self.model, features))
-        return tuple(map(float, p))
+        return predict(self.model, features)
 
     def info(self):
         """Return the accepted click count and current estimated error."""

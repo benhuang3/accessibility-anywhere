@@ -109,12 +109,12 @@ class GazeModelTests(unittest.TestCase):
         m = gm.fit(samples, (1920, 1080))
         c = gm.Corrector(m)
         self.assertTrue(c.add(samples[0][0], samples[0][1], 0))
-        self.assertFalse(c.add(samples[0][0], (900, 900), 1))
+        self.assertTrue(c.add(samples[0][0], (900, 900), 1))
         for i in range(8):
             c.add(samples[i][0], samples[i][1], i + 1)
-        self.assertEqual(c.info()['samples_used'], 9)
+        self.assertEqual(c.info()['samples_used'], 10)
 
-    def test_corrector_refines_shifted_model_and_preserves_good_model(self):
+    def test_corrector_recovers_large_shift_and_preserves_good_model(self):
         targets = [(100, 100), (960, 100), (1820, 100), (100, 540), (960, 540),
                    (1820, 540), (100, 980), (960, 980), (1820, 980)]
         samples = [([x / 1920, y / 1080, 0, 0, 0, 0, 0, 0, 1], (x, y))
@@ -122,8 +122,8 @@ class GazeModelTests(unittest.TestCase):
         model = gm.fit(samples, (1920, 1080))
         shifted = dict(model)
         shifted['coef'] = [row[:] for row in model['coef']]
-        shifted['coef'][0][0] += 150
-        shifted['coef'][0][1] += 150
+        shifted['coef'][0][0] += 800
+        shifted['coef'][0][1] += 600
         corrector = gm.Corrector(shifted)
         before = np.mean([np.linalg.norm(np.asarray(gm.predict(shifted, f)) - target)
                           for f, target in samples])
@@ -132,9 +132,8 @@ class GazeModelTests(unittest.TestCase):
             self.assertTrue(corrector.add(features, target, index))
         after = np.mean([np.linalg.norm(np.asarray(corrector.predict(f)) - target)
                          for f, target in samples])
-        self.assertGreater(before - after, 100)
-        prediction = corrector.predict(samples[0][0])
-        self.assertFalse(corrector.add(samples[0][0], (prediction[0] + 300, prediction[1]), 11))
+        self.assertGreater(before, 900)
+        self.assertLess(after, 150)
 
         good_corrector = gm.Corrector(model)
         good_before = np.mean([np.linalg.norm(np.asarray(gm.predict(model, f)) - target)
@@ -144,7 +143,20 @@ class GazeModelTests(unittest.TestCase):
             self.assertTrue(good_corrector.add(features, target, index))
         good_after = np.mean([np.linalg.norm(np.asarray(good_corrector.predict(f)) - target)
                               for f, target in samples])
-        self.assertLessEqual(good_after, good_before)
+        self.assertLess(good_after, 150)
+
+    def test_corrector_ignores_scattered_click_errors(self):
+        targets = [(100, 100), (960, 100), (1820, 100), (100, 540), (960, 540),
+                   (1820, 540), (100, 980), (960, 980), (1820, 980)]
+        samples = [([x / 1920, y / 1080, 0, 0, 0, 0, 0, 0, 1], (x, y)) for x, y in targets]
+        model = gm.fit(samples, (1920, 1080))
+        corrector = gm.Corrector(model)
+        original = [corrector.predict(f) for f, _ in samples]
+        clicks = [(100, 100), (1820, 980), (960, 540), (100, 980), (1820, 100), (960, 100),
+                  (100, 540), (1820, 540), (960, 980), (100, 100), (1820, 980), (960, 540)]
+        for index, target in enumerate(clicks):
+            corrector.add(samples[index % len(samples)][0], target, index)
+        self.assertEqual([corrector.predict(f) for f, _ in samples], original)
 
     def test_evaluator_tiny_recording(self):
         with tempfile.TemporaryDirectory() as td:
