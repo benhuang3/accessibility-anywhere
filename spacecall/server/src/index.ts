@@ -1,4 +1,5 @@
 import { schema, table, t, SenderError, type ReducerCtx } from 'spacetimedb/server';
+import { profileTable } from './profile.ts';
 
 const incident = table({ name: 'incident' }, {
   room_id: t.string().primaryKey(),
@@ -53,9 +54,34 @@ const screenFrameEvent = table({ name: 'screen_frame_event', public: true, event
   server_at: t.timestamp()
 });
 
-const spacetime = schema({ incident, presence, audioFrameEvent, videoFrameEvent, screenFrameEvent });
+const faceProfile = profileTable();
+const spacetime = schema({ incident, presence, audioFrameEvent, videoFrameEvent, screenFrameEvent,
+  face_profile: faceProfile });
 export default spacetime;
 type Context = ReducerCtx<typeof spacetime.schemaType>;
+
+// Face profile is private by default. Its only read path is a sender-filtered view.
+export const save_face_profile = spacetime.reducer({ profile_json: t.string() }, (ctx, { profile_json }) => {
+  if (new TextEncoder().encode(profile_json).length > 64 * 1024) throw new SenderError('Profile exceeds 64 KB');
+  let parsed: unknown;
+  try { parsed = JSON.parse(profile_json); } catch { throw new SenderError('Invalid profile JSON'); }
+  if (!parsed || typeof parsed !== 'object' || (parsed as {version?: unknown}).version !== 1) {
+    throw new SenderError('Invalid profile');
+  }
+  const row = { owner: ctx.sender, profile_json, version: 1, updated_at: ctx.timestamp };
+  if (ctx.db.face_profile.owner.find(ctx.sender)) ctx.db.face_profile.owner.update(row);
+  else ctx.db.face_profile.insert(row);
+});
+
+export const delete_face_profile = spacetime.reducer({}, ctx => {
+  if (ctx.db.face_profile.owner.find(ctx.sender)) ctx.db.face_profile.owner.delete(ctx.sender);
+});
+
+export const own_face_profile = spacetime.view({ name: 'own_face_profile', public: true },
+  t.array(faceProfile.rowType), ctx => {
+    const row = ctx.db.face_profile.owner.find(ctx.sender);
+    return row ? [row] : [];
+  });
 
 const TTL_US = 2n * 60n * 60n * 1_000_000n;
 const ROOM = /^[A-Za-z0-9_-]{16,64}$/;

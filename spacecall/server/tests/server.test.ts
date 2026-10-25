@@ -155,3 +155,20 @@ test('disconnect ends call and stale disconnect cannot close a newer connection'
   f.harness.withReducerTx(reconnected, ctx => module.client_disconnected(ctx, {}));
   assert.equal(f.harness.db.incident.room_id.find(room)?.status, 'ended');
 });
+
+test('face profiles are private to their owner, upserted and deletable', () => {
+  const f = fixture();
+  const profile = JSON.stringify({ version: 1, gaze: { coef: [1, 2] } });
+  f.harness.withReducerTx(f.elder, ctx => module.save_face_profile(ctx, { profile_json: profile }));
+  assert.equal(module.own_face_profile(f.harness.viewContext(f.outsider)).length, 0);
+  assert.equal(module.own_face_profile(f.harness.viewContext(f.elder))[0].profile_json, profile);
+  f.harness.withReducerTx(f.elder, ctx => module.save_face_profile(ctx, { profile_json: profile }));
+  assert.equal([...f.harness.db.face_profile.iter()].length, 1);
+  assert.throws(() => f.harness.withReducerTx(f.elder, ctx => module.save_face_profile(ctx, {
+    profile_json: JSON.stringify({ version: 1, fill: 'x'.repeat(64 * 1024) })
+  })));
+  f.harness.withReducerTx(f.outsider, ctx => module.delete_face_profile(ctx, {}));
+  assert.equal(f.harness.db.face_profile.owner.find(f.harness.viewContext(f.elder).sender)?.profile_json, profile);
+  f.harness.withReducerTx(f.elder, ctx => module.delete_face_profile(ctx, {}));
+  assert.equal(module.own_face_profile(f.harness.viewContext(f.elder)).length, 0);
+});

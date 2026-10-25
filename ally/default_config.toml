@@ -222,6 +222,9 @@ auto_alert = false             # send the trusted contact a push automatically o
 
 # Applied when Ally starts and on every page you open in Chrome.
 [profile]
+sync = "off"
+host = "https://maincloud.spacetimedb.com"
+database = "ally-call"
 page_zoom = 0              # e.g. 1.25 = 125% on every site; 0 = leave Chrome's zoom alone
 min_font_px = 0            # e.g. 18 = no text smaller than 18px in Chrome; 0 = off
 page_styles = []           # styles from [page_styles] for every page, e.g. ["focus_ring"]
